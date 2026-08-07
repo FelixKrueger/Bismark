@@ -522,6 +522,57 @@ Run **two arms: `--five_base_baseq 0` and `> 0`.** Under §3.6 the masked run is
 
 ---
 
+## 10b. Implementation notes (2026-08-07)
+
+**Implemented and green.** `cargo fmt --check` clean, `cargo clippy --all-targets` clean, full `cargo test -p bismark` green (1469 lib + 116 aligner-cli + 7 new integration + all other suites, 0 failures).
+
+| Piece | Where |
+|---|---|
+| Per-record algorithm + 21 unit tests | `rust/bismark/src/aligner/five_base_bisulfite.rs` |
+| CLI flag, mutual exclusion, driver | `rust/bismark/src/aligner/{cli.rs, mod.rs}` |
+| 7 integration gates | `rust/bismark/tests/aligner_five_base_bisulfite.rs` |
+| Docs / CHANGELOG / Milestones | `docs/.../rust/illumina-5-base.md`, `CHANGELOG.md`, `rust/README.md` |
+
+### End-to-end validation — the feature is proven, not just tested
+
+Run against the real 5-Base BAM from `EXPERIMENT_patter_swap.md`, using **stock, unmodified** `patter`:
+
+| Route | METH / total | Methylation |
+|---|---|---|
+| stock `patter` + raw 5-Base BAM | 0 / 152 | **0.0 %** ❌ |
+| patched `patter` + raw 5-Base BAM | 152 / 152 | 100.0 % ✅ |
+| **stock `patter` + converted BAM** | **152 / 152** | **100.0 %** ✅ |
+
+Ground truth is 100 % (pUC19 fully CpG-methylated); Bismark's own `XM` agrees (`Z=168, z=0`). So the converter makes **unmodified** wgbs_tools correct, and agrees call-for-call with the independent `patter` patch. Flip rate on that input was exactly `1.000000` (872/872); on the bisulfite fixture exactly `0.000000` with the SAM body **byte-identical**.
+
+### Deviations from the plan
+
+| # | Deviation | Why |
+|---|---|---|
+| D1 | Typed `FiveBaseBisulfiteError` (thiserror) converted to `AlignerError::Validation` at the driver boundary, rather than the plan's flat signature | Gives the unit tests structural matching while keeping CLI behaviour consistent with the rest of the aligner |
+| D2 | **noodles owns the `@PG` chain.** Our `@PG` gets a distinct ID as planned (T6), but noodles re-links the chain on serialisation, so an input's `@PG ID:samtools PP:Bismark` comes out as `PP:bismark-five-base-bisulfite` — the chain stays internally consistent but no longer reflects the true running order. Setting `PP` explicitly does not prevent it | Metadata only; nothing in Bismark or `bam2pat` walks `PP`. Recorded in a code comment, including "do not fix by dropping the `@PG`" — a re-encoded BAM must carry a record that it was |
+| D3 | **New guard not in the plan:** an input with records read but **none re-encoded** now fails loud | Found by the uBAM test. Every uBAM record is unmapped, so all took the verbatim pass-through path and the run "succeeded" while emitting a copy of the input — the user would believe they had converted something. Exactly the silent-no-op class §3.6 exists to prevent |
+
+### Iteration log
+
+`#1` — Module compiled first try; one `unused_mut` on the reference-reconstruction closure. Fixed (CI runs `-D warnings`, so a warning is a failure).
+
+`#2` — 18/21 unit tests passed; **all three failures were my test data, not the code.** `gaps_are_never_written` expected `CCACGTAC` but got `CCACGTAN` — offset 7 is a reference `C` with a scoreable base and no call, so §3.6 correctly masked it. `insertions_are_never_written` used `'C'` as an XM byte (not in the vocabulary) and correctly raised `InvalidXmByte`. `asymmetric_calls_edit_the_correct_positions` put a call at a `G`, correctly raising `SeqNotInPair`. Rewrote all three against hand-verified records; the masking cases now assert the *contrast* between a gap position and a genuine uncalled cytosine, which is what the positional conjunct buys.
+
+`#3` — Driver compiled after fixing four import/type errors (`Tag` path, `RecordBuf` path, program-tag constants, `BismarkIoError` needing `map_err` — `AlignerError` has no `From`).
+
+`#4` — `@PG` chain investigated and D2 recorded. First attempt set `PP` to the input's last program to force an append; noodles ignored it and re-linked anyway. Comment corrected to state the observed behaviour rather than the intended fix — a comment asserting something untrue is worse than none.
+
+`#5` — 6/7 integration tests passed; the uBAM case exposed D3. Added the fail-loud guard and tightened the test to assert the message explains nothing was convertible.
+
+`#6` — `cargo fmt` reformatted three files (error-attribute wrapping, closure params). Clippy and the full suite green.
+
+### Not done — deliberately out of scope
+
+- **§9.5's independent from-genome `NM`/`MD` oracle.** The per-record round-trip proof (§3.4 step 2) already validates the reconstruction on *every* record of every input, including the deletion path, and the committed fixture confirms the `NM` identity on real data. A second oracle would be worth adding if `MD` handling ever changes.
+- **§9.8's `XG` ⟺ FLAG assertion** over `nondir_pe_1030.bam`. The equivalence was verified by hand and in `PLAN_REVIEW_B` §1.3; it is not yet a test. **Worth adding** — it is load-bearing and invisible to the idempotence gate.
+- **§9.9 real-data concordance** needs Mike's data.
+
 ## 11. Self-Review
 
 **What rev 1 changed and why.** Both reviewers verified the algorithm independently across all four SE indices and all eight PE mate/index combinations; §3.1's three properties and the idempotence *argument* hold. Every rev-1 change is in validation, I/O plumbing, or §3.6.

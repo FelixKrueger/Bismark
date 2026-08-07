@@ -181,6 +181,18 @@ pub struct Cli {
     /// align pipeline is skipped.
     #[arg(long = "five_base_consensus_from_bam", value_name = "BAM")]
     pub five_base_consensus_from_bam: Vec<std::path::PathBuf>,
+    /// `[#1095]` Re-encode one or more EXISTING 5-Base BAM(s) into BISULFITE convention and
+    /// write `<stem>.bisulfite.bam` per input — no re-alignment. At each called cytosine the
+    /// base becomes what bisulfite chemistry would have produced (`C`/`G` if `XM` says
+    /// methylated, `T`/`A` if not), so the file is a drop-in for tools that read `SEQ` rather
+    /// than `XM` — notably `wgbs_tools bam2pat` and `UXM_deconv`, which produce systematically
+    /// INVERTED calls on 5-Base data. `XM` itself is left untouched. NEVER use this as the
+    /// primary BAM: its `SEQ` no longer matches the sequencer, and genuine `C>T` variants are
+    /// encoded as methylation, so it must not feed a variant caller. Output is read-order —
+    /// `bam2pat` needs it coordinate-sorted and indexed. Requires `--illumina_5base`; needs no
+    /// `--genome`. When set, the normal align pipeline is skipped.
+    #[arg(long = "five_base_bisulfite_bam", value_name = "BAM")]
+    pub five_base_bisulfite_bam: Vec<std::path::PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,

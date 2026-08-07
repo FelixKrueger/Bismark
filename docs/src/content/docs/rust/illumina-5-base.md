@@ -83,6 +83,46 @@ bismark --illumina_5base --five_base_umi_qname --five_base_consensus \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
 
+### Interop: `--five_base_bisulfite_bam` (for `wgbs_tools` / UXM)
+
+Some downstream tools read methylation out of the BAM's `SEQ` rather than out of `XM`. The
+clearest example is [`wgbs_tools`](https://github.com/nloyfer/wgbs_tools) — its `bam2pat`
+compares the read base at each CpG against the reference (`C`/`G` = methylated, `T`/`A` = not),
+which is why it needs a genome. 5-Base `SEQ` holds the raw read and 5-Base chemistry is the
+inverse of bisulfite, so those tools produce **systematically inverted** calls on 5-Base data —
+not noisy, inverted.
+
+`--five_base_bisulfite_bam` re-encodes an existing 5-Base BAM into bisulfite convention: at
+each called cytosine the base becomes what bisulfite chemistry would have produced, taken from
+the `XM` tag Bismark already wrote. It needs no genome and no re-alignment, and `XM` is left
+untouched — so the output is still readable by Bismark's own extractor, and `bam2pat --ds_test`
+(which does read `XM`) keeps working.
+
+```sh
+# re-encode, then sort + index: bam2pat REFUSES a BAM that is not SO:coordinate
+bismark --illumina_5base --five_base_bisulfite_bam sample_pe.bam
+samtools sort -o sample_pe.bisulfite.sorted.bam sample_pe.bisulfite.bam
+samtools index sample_pe.bisulfite.sorted.bam
+wgbstools bam2pat --genome hg38 sample_pe.bisulfite.sorted.bam
+```
+
+The genome you aligned against must use the **same chromosome naming** as your
+`wgbstools init_genome` (so `chr1`, not `1`). A total mismatch fails early and loudly; a
+*partial* one silently drops the contigs that do not match.
+
+:::caution
+This is never the primary BAM. Its `SEQ` no longer matches what the sequencer read, and
+because 5-Base cannot separate a genuine `C>T` from 5mC without the opposite strand, real
+variants are encoded as methylation. Harmless for fragment-level CpG tools like UXM; **do not
+feed it to a variant caller.**
+:::
+
+The run reports a **flip rate**, which is exactly `1.000` for 5-Base input and `0.000` for
+bisulfite input, because every called position necessarily changes under inversion. Anything in
+between means the input is mixed or partly converted, and the run fails rather than writing a
+file that is half one convention and half the other. Running the converter on an ordinary
+bisulfite BAM is therefore a no-op by construction, and that identity is a CI gate.
+
 ## Validation
 
 The concordance evidence (per-CpG Pearson r and call-agreement vs DRAGEN, and the

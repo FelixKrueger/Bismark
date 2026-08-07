@@ -34,6 +34,7 @@ pub mod config;
 pub mod convert;
 pub mod discovery;
 pub mod error;
+pub mod five_base_bisulfite;
 pub mod five_base_deconv;
 pub mod five_base_duplex;
 pub mod genome;
@@ -162,10 +163,25 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    // Mutual exclusion FIRST: both of the standalone-over-existing-BAM paths `return`, so a
+    // check placed beside either dispatch would never fire for the other one.
+    if !cli.five_base_consensus_from_bam.is_empty() && !cli.five_base_bisulfite_bam.is_empty() {
+        return Err(AlignerError::Validation(
+            "--five_base_consensus_from_bam and --five_base_bisulfite_bam are mutually \
+             exclusive: the first collapses duplex families, the second re-encodes SEQ. \
+             Run them one after the other if you want both."
+                .into(),
+        ));
+    }
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
         return run_five_base_consensus_standalone(cli, &command_line);
+    }
+    // #1095 standalone bisulfite-convention re-encode over EXISTING BAM(s) — same shape,
+    // but needs no genome: the reference is reconstructed per record from MD.
+    if !cli.five_base_bisulfite_bam.is_empty() {
+        return run_five_base_bisulfite_standalone(cli, &command_line);
     }
     let mut config = resolve(cli, command_line)?;
     // #1025: transcode any alternative binary read inputs into temp FASTQ BEFORE
@@ -581,6 +597,284 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         umi_swap,
         cli.five_base_min_mapq,
     )
+}
+
+/// `[#1095]` Render a `RecordBuf`'s CIGAR back to its SAM text form, which is what
+/// [`output::make_mismatch_string`] and [`methylation::parse_cigar`] both take.
+fn cigar_to_string(rec: &noodles_sam::alignment::RecordBuf) -> String {
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    let mut s = String::new();
+    for op in rec.cigar().as_ref() {
+        let c = match op.kind() {
+            Kind::Match => 'M',
+            Kind::Insertion => 'I',
+            Kind::Deletion => 'D',
+            Kind::SoftClip => 'S',
+            Kind::Skip => 'N',
+            Kind::HardClip => 'H',
+            Kind::Pad => 'P',
+            Kind::SequenceMatch => '=',
+            Kind::SequenceMismatch => 'X',
+        };
+        s.push_str(&op.len().to_string());
+        s.push(c);
+    }
+    s
+}
+
+/// `[#1095]` Re-encode existing 5-Base BAM(s) into bisulfite convention — no re-alignment,
+/// **no genome**. See [`crate::aligner::five_base_bisulfite`] for the per-record algorithm.
+///
+/// Reads via raw `noodles_bam::io::Reader` rather than [`crate::io::BamReader`], which
+/// silently drops unmapped reads and requires Bismark tags at the reader: this path must copy
+/// non-Bismark-shaped records through verbatim so the output stays a faithful sibling of its
+/// input.
+fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Result<()> {
+    use crate::aligner::five_base_bisulfite::{XgStrand, reencode};
+    use noodles_sam::alignment::RecordBuf;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::Sequence;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+    use noodles_sam::header::record::value::map::program::tag::{
+        COMMAND_LINE, PREVIOUS_PROGRAM_ID, VERSION,
+    };
+
+    if !cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--five_base_bisulfite_bam requires --illumina_5base (it is a 5-Base interop \
+             shim; on bisulfite input the re-encode is a no-op by construction)"
+                .into(),
+        ));
+    }
+
+    let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&out_dir)?;
+
+    for bam in &cli.five_base_bisulfite_bam {
+        let mut reader = noodles_bam::io::Reader::new(std::io::BufReader::new(
+            std::fs::File::open(bam).map_err(|e| {
+                AlignerError::Validation(format!("bisulfite: open {}: {e}", bam.display()))
+            })?,
+        ));
+        let in_header = reader.read_header()?;
+
+        // Copy the input header and append our own @PG. It needs a DISTINCT id: the input
+        // already carries `ID:Bismark`, and duplicate @PG IDs are invalid SAM.
+        let mut header = in_header.clone();
+        let mut prog = noodles_sam::header::record::value::Map::<
+            noodles_sam::header::record::value::map::Program,
+        >::default();
+        // Chain onto the first program in the header. NOTE: noodles owns the `@PG` chain and
+        // re-links it on serialisation, so a later program's `PP` ends up pointing at this
+        // node regardless of what we ask for — e.g. an input's `@PG ID:samtools PP:Bismark`
+        // comes out as `PP:bismark-five-base-bisulfite`. The chain stays internally
+        // consistent but no longer reflects the true running order. Metadata only; nothing in
+        // Bismark or `bam2pat` walks `PP`. Do not "fix" it by dropping the `@PG` — a BAM whose
+        // SEQ has been re-encoded must carry a record that it was.
+        if let Some(first) = in_header.programs().as_ref().keys().next() {
+            prog.other_fields_mut()
+                .insert(PREVIOUS_PROGRAM_ID, first.clone());
+        }
+        prog.other_fields_mut().insert(
+            VERSION,
+            bstr::BString::from(crate::aligner::BISMARK_VERSION.as_bytes()),
+        );
+        prog.other_fields_mut().insert(
+            COMMAND_LINE,
+            bstr::BString::from(format!("\"bismark {command_line}\"").into_bytes()),
+        );
+        header.programs_mut().as_mut().insert(
+            bstr::BString::from(&b"bismark-five-base-bisulfite"[..]),
+            prog,
+        );
+
+        let stem = bam
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "input".to_string());
+        let out_path = out_dir.join(format!("{stem}.bisulfite.bam"));
+        let report_path = out_dir.join(format!("{stem}.bisulfite_report.txt"));
+        eprintln!(
+            ">>> Re-encoding {} into bisulfite convention -> {} <<<",
+            bam.display(),
+            out_path.display()
+        );
+
+        let mut writer = crate::io::BamWriter::from_path(&out_path, header).map_err(|e| {
+            AlignerError::Validation(format!("bisulfite: open {}: {e}", out_path.display()))
+        })?;
+        let (mut n_read, mut n_conv, mut n_pass) = (0u64, 0u64, 0u64);
+        let (mut letters, mut flipped, mut masked) = (0u64, 0u64, 0u64);
+        let mut warned_secondary = false;
+
+        for rec in reader.record_bufs(&in_header) {
+            let mut rec: RecordBuf = rec?;
+            n_read += 1;
+            let flags = u16::from(rec.flags());
+
+            // Unmapped / secondary / supplementary: copy verbatim. Bismark writes unmapped
+            // reads to FASTQ rather than the BAM and filters secondaries upstream, so these
+            // arise only from third-party input — but dropping them would silently change
+            // the record set.
+            if flags & 0x4 != 0 || flags & 0x100 != 0 || flags & 0x800 != 0 {
+                if flags & (0x100 | 0x800) != 0 && !warned_secondary {
+                    eprintln!(
+                        "Warning: {} contains secondary/supplementary alignments; they are \
+                         copied through unchanged (Bismark does not emit them).",
+                        bam.display()
+                    );
+                    warned_secondary = true;
+                }
+                writer
+                    .write_raw_record(&rec)
+                    .map_err(|e| AlignerError::Validation(format!("bisulfite: write: {e}")))?;
+                n_pass += 1;
+                continue;
+            }
+
+            let qname = rec
+                .name()
+                .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
+                .unwrap_or_else(|| "<unnamed>".to_string());
+            let ctx = |what: &str| {
+                AlignerError::Validation(format!(
+                    "bisulfite: {} record {qname}: {what}. This does not look like a Bismark \
+                     BAM — the converter reads XM/XR/XG/MD/NM.",
+                    bam.display()
+                ))
+            };
+
+            let data = rec.data();
+            let xm = crate::io::tags::xm(data)
+                .map_err(|e| ctx(&format!("{e}")))?
+                .to_vec();
+            // XR is not used by the re-encode but its absence means the record was not
+            // produced by Bismark, so require it rather than proceed on a guess.
+            crate::io::tags::xr(data).map_err(|e| ctx(&format!("{e}")))?;
+            let xg_raw = crate::io::tags::xg(data)
+                .map_err(|e| ctx(&format!("{e}")))?
+                .to_vec();
+            let md_old = crate::io::tags::md(data)
+                .map_err(|e| ctx(&format!("{e}")))?
+                .map(|m| String::from_utf8_lossy(m).into_owned())
+                .ok_or_else(|| ctx("no MD tag; the reference cannot be reconstructed"))?;
+            let nm_old = crate::io::tags::nm(data)
+                .map_err(|e| ctx(&format!("{e}")))?
+                .ok_or_else(|| ctx("no NM tag"))? as i64;
+
+            let xg = XgStrand::from_tag(&xg_raw, &qname)
+                .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
+            let cigar = cigar_to_string(&rec);
+            let seq: Vec<u8> = rec.sequence().as_ref().to_vec();
+
+            let out = reencode(&seq, &xm, xg, &cigar, &md_old, nm_old, &qname)
+                .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
+
+            letters += u64::from(out.letters);
+            flipped += u64::from(out.flipped);
+            masked += u64::from(out.masked);
+
+            *rec.sequence_mut() = Sequence::from(out.seq);
+            // `Data::insert` replaces in place and preserves field order, so overwriting
+            // NM/MD cannot reorder the tag block.
+            rec.data_mut()
+                .insert(Tag::from(*b"NM"), Value::from(out.nm as i32));
+            rec.data_mut().insert(
+                Tag::from(*b"MD"),
+                Value::String(bstr::BString::from(out.md)),
+            );
+            writer
+                .write_raw_record(&rec)
+                .map_err(|e| AlignerError::Validation(format!("bisulfite: write: {e}")))?;
+            n_conv += 1;
+        }
+        writer
+            .finish()
+            .map_err(|e| AlignerError::Validation(format!("bisulfite: finish: {e}")))?;
+
+        // An input whose every record was copied verbatim yields an output that is just a copy.
+        // Succeeding there would hand the user a file they believe is converted — the exact
+        // silent no-op this feature exists to avoid. An entirely EMPTY BAM is different and is
+        // allowed through below (there is nothing to be wrong about).
+        if n_read > 0 && n_conv == 0 {
+            return Err(AlignerError::Validation(format!(
+                "bisulfite: {} contained {n_read} record(s) but none could be re-encoded — all \
+                 were unmapped, secondary or supplementary. The output would be a copy of the \
+                 input. Is this an aligned Bismark BAM? (An unaligned uBAM has no XM tag.)",
+                bam.display()
+            )));
+        }
+
+        // The flip rate is a hard discriminator on the FILE: exactly 1.0 for 5-Base input and
+        // 0.0 for bisulfite, because every letter position necessarily flips under inversion.
+        // Anything in between means a mixed or already-partly-converted input.
+        let rate = if letters == 0 {
+            0.0
+        } else {
+            flipped as f64 / letters as f64
+        };
+        if letters > 0 && flipped != 0 && flipped != letters {
+            return Err(AlignerError::Validation(format!(
+                "bisulfite: {} has a methylation-call flip rate of {rate:.6} ({flipped} of \
+                 {letters} calls). It must be exactly 0 (already bisulfite convention) or 1 \
+                 (5-Base). A value in between means the input is mixed or partly converted; \
+                 refusing rather than writing a file that is half one convention and half the \
+                 other.",
+                bam.display()
+            )));
+        }
+
+        let convention = if letters == 0 {
+            "no methylation calls"
+        } else if flipped == 0 {
+            "already bisulfite convention (input was NOT 5-Base) — output is unchanged"
+        } else {
+            "5-Base input, re-encoded to bisulfite convention"
+        };
+        let report = format!(
+            "Bismark 5-Base -> bisulfite-convention re-encode ({})\n\n\
+             input BAM\t{}\n\
+             output BAM\t{}\n\n\
+             records read\t{n_read}\n\
+             records re-encoded\t{n_conv}\n\
+             records copied verbatim (unmapped/secondary)\t{n_pass}\n\n\
+             methylation calls\t{letters}\n\
+             bases flipped\t{flipped}\n\
+             flip rate\t{rate:.6}\n\
+             no-call cytosines masked to N\t{masked}\n\n\
+             verdict\t{convention}\n",
+            crate::aligner::BISMARK_VERSION,
+            bam.display(),
+            out_path.display(),
+        );
+        std::fs::write(&report_path, &report)?;
+        eprint!("{report}");
+
+        if masked > 0 {
+            eprintln!(
+                "Note: {masked} no-call cytosine(s) were masked to N. This input appears to \
+                 have been produced with --five_base_baseq: those positions keep the raw \
+                 5-Base base in SEQ, which downstream SEQ-reading tools would score with \
+                 INVERTED polarity. N makes them a no-call instead."
+            );
+        }
+        eprintln!(
+            "Note: the output is READ-ORDER. `wgbs_tools bam2pat` refuses a BAM whose @HD is \
+             not SO:coordinate, so sort and index it first:\n  \
+             samtools sort -o {0}.sorted.bam {0} && samtools index {0}.sorted.bam\n  \
+             wgbstools bam2pat --genome <genome> {0}.sorted.bam\n\
+             The genome you aligned against must use the SAME chromosome naming as your \
+             `wgbstools init_genome` (so chr1, not 1). A total mismatch fails early and \
+             loudly; a PARTIAL one silently drops the contigs that do not match.",
+            out_path.display()
+        );
+        eprintln!(
+            "Note: SEQ in {} no longer matches the sequencer, and genuine C>T variants are \
+             encoded as methylation. Never use it as the primary BAM or for variant calling.",
+            out_path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Dispatch the convert→align→merge pipeline. SE and PE each fold all library
