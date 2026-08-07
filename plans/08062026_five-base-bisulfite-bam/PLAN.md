@@ -567,6 +567,25 @@ Ground truth is 100 % (pUC19 fully CpG-methylated); Bismark's own `XM` agrees (`
 
 `#6` — `cargo fmt` reformatted three files (error-attribute wrapping, closure params). Clippy and the full suite green.
 
+### Review round (2026-08-07) — dual code review + coverage audit
+
+`CODE_REVIEW_A.md` (algorithm), `CODE_REVIEW_B.md` (driver/contract), `COVERAGE.md` (Mode B, 100 items). **No Critical findings; both reviewers confirmed the algorithm correct.** A independently re-derived the §3.1.2 `XG` table at all four indices, confirmed the `NM` identity character-for-character, proved the `run_left > 0` guard rejects no valid `MD` (three adjacent-deletion cases), and verified the masking rule end-to-end by synthesising a masked input — exactly one `N`, `NM` 10→11, `MD` patched surgically, other seven records byte-identical. B verified header/tag/mate fidelity by dumping raw BAM header text, and got byte-identical output over `synth_barcode_10k…_pe.bam` (12974 records) and `nondir_pe_1030.bam` (all four strand indices).
+
+**Fixed in this round:**
+
+| Finding | Fix |
+|---|---|
+| **H1 (both reviewers)** — every failure path after the writer opened left a valid-looking `.bisulfite.bam` on disk. `BamWriter`'s `Drop` writes the BGZF EOF marker, so it passed `samtools quickcheck`; A additionally found a **mid-stream per-record failure** leaves a *partial* such file. Four places claimed refusal (error text, CHANGELOG, docs, `rust/README.md`) — all were false | The fallible per-input section is wrapped so `?` lands locally and **every** error path removes the output and the report. Verified: `exit 1`, no files left |
+| **H2/H3** — the load-bearing idempotence gate **no-opped in CI**: `rust_ci.yml` installs minimap2 only, and 3 gates skip when `samtools` is absent | `samtools_available()` now **panics when `$CI` is set** (the same guard `aligner_five_base_groundtruth.rs` uses for minimap2), and `samtools` added to the `test` job |
+| **A's §9.5 oracle** — the from-genome `MD`/`NM` oracle §10b listed as *not done*; A built it and it passed | Committed as two unit tests. The hard case (`3S5M2D4M1I4M1D3M`: two deletions + soft clip + insertion) agrees with an **independent** oracle — `ref_seq` built explicitly, `MD`/`NM` derived without consulting the input `MD` — at `5^GA4G1A1^T0G1A0` / `NM 11`. That is `rebuild_md_with_deletions` validated by a second route |
+| **`U`/`u`/`X`/`H` exercised nowhere** (coverage) — the fixture's letter census is `Z`/`x`/`h` only, so 4 of 8 letters had no coverage | New `unknown_context_letters_are_re_encoded` covers all four. Note the risk was smaller than the plan feared: the match has a fail-loud `other =>` arm, so *deleting* `U` errors rather than silently half-converting; the test guards against the plausible wrong repair (`b'U' \| b'u' => None`) |
+| **The `MD` half of the round-trip proof untested** (A LOW-2b) | `rejects_a_record_whose_md_fails_the_round_trip` |
+| My **vacuous assertion** in the uBAM test — `!exists() \|\| err.contains(..)` short-circuits on the message, so the file check never ran. It was guarding H1 | Now unconditional, with a comment recording why |
+| B: three opaque `io::Error`s propagated bare | Now name the path; the `read_header` one tells SAM/CRAM users to `samtools view -b` first |
+| A: a duplicated doc-comment block | Removed |
+
+**Gates after the round:** `fmt` clean, `clippy` 0, **79 suites ok / 0 failed**, 25 unit + 7 integration tests for this feature.
+
 ### Not done — deliberately out of scope
 
 - **§9.5's independent from-genome `NM`/`MD` oracle.** The per-record round-trip proof (§3.4 step 2) already validates the reconstruction on *every* record of every input, including the deletion path, and the committed fixture confirms the `NM` identity on real data. A second oracle would be worth adding if `MD` handling ever changes.

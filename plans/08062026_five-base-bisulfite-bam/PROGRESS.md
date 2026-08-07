@@ -22,8 +22,10 @@
 | **Plan rev 2** | ✅ Done | 9 changes (T1–T9). **§3.6's mechanism replaced outright**: keys on the reference base `reconstruct_ref` already provides, so the CLI flag, `@PG` parser, conflict rule and fail-loud fallback are all deleted. Now has **no tunable behaviour at all** |
 | Soft-clip fixture | ✅ **Done 2026-08-06** | `tests/data/five_base_bisulfite/` — 8 SE records over pUC19, leading **and** trailing clips, both indel kinds, both `XG` values. Byte-identical Rust vs live Perl v0.25.1. Confirmed 4 of the plan's invariants empirically |
 | **Implementation** | ✅ **DONE 2026-08-07** | `five_base_bisulfite.rs` (21 unit tests) + CLI/dispatch/driver + 7 integration gates + docs/CHANGELOG/Milestones. fmt + clippy + full suite green. **End-to-end proven: stock unmodified `patter` reports 0.0 % on the raw 5-Base BAM and 100.0 % on the converted one**, matching ground truth and agreeing call-for-call with the independent `patter` patch. See `PLAN.md` §10b for deviations (D1–D3) and the iteration log |
-| Code review | ⏳ **NEXT** | Dual reviewers + coverage audit, per the workflow |
-| PR → `dev` | ⬜ Not started | |
+| Code review | ✅ **Done 2026-08-07** | `CODE_REVIEW_A.md` (algorithm, 244 ln) + `CODE_REVIEW_B.md` (driver/contract, 342 ln) + `COVERAGE.md` (Mode B, 100 items). **No Critical**; both confirmed the algorithm correct and verified it independently at scale. Coverage verdict was INCOMPLETE (22 items, 19 not self-reported) — all in validation, none in behaviour |
+| Review fixes | ✅ **Done 2026-08-07** | H1 (failure paths left a valid-looking output — **both** reviewers), H2/H3 (the gate no-opped in CI), A's two §9.5 oracle cases, `U`/`u`/`X`/`H` coverage, the `MD` round-trip branch, and my own vacuous assertion. See `PLAN.md` §10b "Review round". Gates: fmt clean, clippy 0, 79 suites ok |
+| Remaining known gaps | ⚠️ Documented, not closed | Unmapped pass-through has no committed test (no tracked fixture has unmapped records **and** `MD`; behaviour verified in review — note in the test file); §9.8 `XG` ⟺ FLAG assertion; PE + 4-strand committed coverage; A's MEDIUM-1 lower-case `MD` guard |
+| PR → `dev` | ⏳ **NEXT** | |
 | Code review | ⬜ Not started | Dual reviewers + coverage audit |
 | PR → `dev` | ⬜ Not started | |
 

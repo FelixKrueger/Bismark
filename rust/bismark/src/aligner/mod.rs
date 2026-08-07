@@ -648,7 +648,12 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
     }
 
     let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(&out_dir)?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        AlignerError::Validation(format!(
+            "bisulfite: --output_dir {}: {e}",
+            out_dir.display()
+        ))
+    })?;
 
     for bam in &cli.five_base_bisulfite_bam {
         let mut reader = noodles_bam::io::Reader::new(std::io::BufReader::new(
@@ -656,7 +661,15 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
                 AlignerError::Validation(format!("bisulfite: open {}: {e}", bam.display()))
             })?,
         ));
-        let in_header = reader.read_header()?;
+        // Naming the file matters here: a SAM or CRAM input fails inside BGZF with a bare
+        // "failed to fill whole buffer".
+        let in_header = reader.read_header().map_err(|e| {
+            AlignerError::Validation(format!(
+                "bisulfite: {} is not a readable BAM: {e}. SAM/CRAM input is not supported \
+                 here — convert it with `samtools view -b` first.",
+                bam.display()
+            ))
+        })?;
 
         // Copy the input header and append our own @PG. It needs a DISTINCT id: the input
         // already carries `ID:Bismark`, and duplicate @PG IDs are invalid SAM.
@@ -700,129 +713,164 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             out_path.display()
         );
 
-        let mut writer = crate::io::BamWriter::from_path(&out_path, header).map_err(|e| {
-            AlignerError::Validation(format!("bisulfite: open {}: {e}", out_path.display()))
-        })?;
-        let (mut n_read, mut n_conv, mut n_pass) = (0u64, 0u64, 0u64);
-        let (mut letters, mut flipped, mut masked) = (0u64, 0u64, 0u64);
-        let mut warned_secondary = false;
+        // Every failure from here on must remove the partial output. `BamWriter`'s `Drop`
+        // writes the BGZF EOF marker, so a leftover file passes `samtools quickcheck` and
+        // would be taken for a finished conversion — while the error text says it was
+        // refused. Wrapping the fallible section means `?` lands here and the cleanup below
+        // runs on EVERY error path, including a mid-stream per-record failure.
+        #[allow(clippy::type_complexity)]
+        let converted = (|| -> Result<(u64, u64, u64, u64, u64, u64)> {
+            let mut writer = crate::io::BamWriter::from_path(&out_path, header).map_err(|e| {
+                AlignerError::Validation(format!("bisulfite: open {}: {e}", out_path.display()))
+            })?;
+            let (mut n_read, mut n_conv, mut n_pass) = (0u64, 0u64, 0u64);
+            let (mut letters, mut flipped, mut masked) = (0u64, 0u64, 0u64);
+            let mut warned_secondary = false;
 
-        for rec in reader.record_bufs(&in_header) {
-            let mut rec: RecordBuf = rec?;
-            n_read += 1;
-            let flags = u16::from(rec.flags());
+            for rec in reader.record_bufs(&in_header) {
+                let mut rec: RecordBuf = rec?;
+                n_read += 1;
+                let flags = u16::from(rec.flags());
 
-            // Unmapped / secondary / supplementary: copy verbatim. Bismark writes unmapped
-            // reads to FASTQ rather than the BAM and filters secondaries upstream, so these
-            // arise only from third-party input — but dropping them would silently change
-            // the record set.
-            if flags & 0x4 != 0 || flags & 0x100 != 0 || flags & 0x800 != 0 {
-                if flags & (0x100 | 0x800) != 0 && !warned_secondary {
-                    eprintln!(
-                        "Warning: {} contains secondary/supplementary alignments; they are \
+                // Unmapped / secondary / supplementary: copy verbatim. Bismark writes unmapped
+                // reads to FASTQ rather than the BAM and filters secondaries upstream, so these
+                // arise only from third-party input — but dropping them would silently change
+                // the record set.
+                if flags & 0x4 != 0 || flags & 0x100 != 0 || flags & 0x800 != 0 {
+                    if flags & (0x100 | 0x800) != 0 && !warned_secondary {
+                        eprintln!(
+                            "Warning: {} contains secondary/supplementary alignments; they are \
                          copied through unchanged (Bismark does not emit them).",
-                        bam.display()
-                    );
-                    warned_secondary = true;
+                            bam.display()
+                        );
+                        warned_secondary = true;
+                    }
+                    writer
+                        .write_raw_record(&rec)
+                        .map_err(|e| AlignerError::Validation(format!("bisulfite: write: {e}")))?;
+                    n_pass += 1;
+                    continue;
                 }
+
+                let qname = rec
+                    .name()
+                    .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
+                    .unwrap_or_else(|| "<unnamed>".to_string());
+                let ctx = |what: &str| {
+                    AlignerError::Validation(format!(
+                        "bisulfite: {} record {qname}: {what}. This does not look like a Bismark \
+                     BAM — the converter reads XM/XR/XG/MD/NM.",
+                        bam.display()
+                    ))
+                };
+
+                let data = rec.data();
+                let xm = crate::io::tags::xm(data)
+                    .map_err(|e| ctx(&format!("{e}")))?
+                    .to_vec();
+                // XR is not used by the re-encode but its absence means the record was not
+                // produced by Bismark, so require it rather than proceed on a guess.
+                crate::io::tags::xr(data).map_err(|e| ctx(&format!("{e}")))?;
+                let xg_raw = crate::io::tags::xg(data)
+                    .map_err(|e| ctx(&format!("{e}")))?
+                    .to_vec();
+                let md_old = crate::io::tags::md(data)
+                    .map_err(|e| ctx(&format!("{e}")))?
+                    .map(|m| String::from_utf8_lossy(m).into_owned())
+                    .ok_or_else(|| ctx("no MD tag; the reference cannot be reconstructed"))?;
+                let nm_old = crate::io::tags::nm(data)
+                    .map_err(|e| ctx(&format!("{e}")))?
+                    .ok_or_else(|| ctx("no NM tag"))? as i64;
+
+                let xg = XgStrand::from_tag(&xg_raw, &qname)
+                    .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
+                let cigar = cigar_to_string(&rec);
+                let seq: Vec<u8> = rec.sequence().as_ref().to_vec();
+
+                let out = reencode(&seq, &xm, xg, &cigar, &md_old, nm_old, &qname)
+                    .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
+
+                letters += u64::from(out.letters);
+                flipped += u64::from(out.flipped);
+                masked += u64::from(out.masked);
+
+                *rec.sequence_mut() = Sequence::from(out.seq);
+                // `Data::insert` replaces in place and preserves field order, so overwriting
+                // NM/MD cannot reorder the tag block.
+                rec.data_mut()
+                    .insert(Tag::from(*b"NM"), Value::from(out.nm as i32));
+                rec.data_mut().insert(
+                    Tag::from(*b"MD"),
+                    Value::String(bstr::BString::from(out.md)),
+                );
                 writer
                     .write_raw_record(&rec)
                     .map_err(|e| AlignerError::Validation(format!("bisulfite: write: {e}")))?;
-                n_pass += 1;
-                continue;
+                n_conv += 1;
             }
-
-            let qname = rec
-                .name()
-                .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
-                .unwrap_or_else(|| "<unnamed>".to_string());
-            let ctx = |what: &str| {
-                AlignerError::Validation(format!(
-                    "bisulfite: {} record {qname}: {what}. This does not look like a Bismark \
-                     BAM — the converter reads XM/XR/XG/MD/NM.",
-                    bam.display()
-                ))
-            };
-
-            let data = rec.data();
-            let xm = crate::io::tags::xm(data)
-                .map_err(|e| ctx(&format!("{e}")))?
-                .to_vec();
-            // XR is not used by the re-encode but its absence means the record was not
-            // produced by Bismark, so require it rather than proceed on a guess.
-            crate::io::tags::xr(data).map_err(|e| ctx(&format!("{e}")))?;
-            let xg_raw = crate::io::tags::xg(data)
-                .map_err(|e| ctx(&format!("{e}")))?
-                .to_vec();
-            let md_old = crate::io::tags::md(data)
-                .map_err(|e| ctx(&format!("{e}")))?
-                .map(|m| String::from_utf8_lossy(m).into_owned())
-                .ok_or_else(|| ctx("no MD tag; the reference cannot be reconstructed"))?;
-            let nm_old = crate::io::tags::nm(data)
-                .map_err(|e| ctx(&format!("{e}")))?
-                .ok_or_else(|| ctx("no NM tag"))? as i64;
-
-            let xg = XgStrand::from_tag(&xg_raw, &qname)
-                .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
-            let cigar = cigar_to_string(&rec);
-            let seq: Vec<u8> = rec.sequence().as_ref().to_vec();
-
-            let out = reencode(&seq, &xm, xg, &cigar, &md_old, nm_old, &qname)
-                .map_err(|e| AlignerError::Validation(format!("bisulfite: {e}")))?;
-
-            letters += u64::from(out.letters);
-            flipped += u64::from(out.flipped);
-            masked += u64::from(out.masked);
-
-            *rec.sequence_mut() = Sequence::from(out.seq);
-            // `Data::insert` replaces in place and preserves field order, so overwriting
-            // NM/MD cannot reorder the tag block.
-            rec.data_mut()
-                .insert(Tag::from(*b"NM"), Value::from(out.nm as i32));
-            rec.data_mut().insert(
-                Tag::from(*b"MD"),
-                Value::String(bstr::BString::from(out.md)),
-            );
             writer
-                .write_raw_record(&rec)
-                .map_err(|e| AlignerError::Validation(format!("bisulfite: write: {e}")))?;
-            n_conv += 1;
-        }
-        writer
-            .finish()
-            .map_err(|e| AlignerError::Validation(format!("bisulfite: finish: {e}")))?;
+                .finish()
+                .map_err(|e| AlignerError::Validation(format!("bisulfite: finish: {e}")))?;
 
-        // An input whose every record was copied verbatim yields an output that is just a copy.
-        // Succeeding there would hand the user a file they believe is converted — the exact
-        // silent no-op this feature exists to avoid. An entirely EMPTY BAM is different and is
-        // allowed through below (there is nothing to be wrong about).
-        if n_read > 0 && n_conv == 0 {
-            return Err(AlignerError::Validation(format!(
-                "bisulfite: {} contained {n_read} record(s) but none could be re-encoded — all \
+            // An input whose every record was copied verbatim yields an output that is just a copy.
+            // Succeeding there would hand the user a file they believe is converted — the exact
+            // silent no-op this feature exists to avoid. An entirely EMPTY BAM is different and is
+            // allowed through below (there is nothing to be wrong about).
+            if n_read > 0 && n_conv == 0 {
+                return Err(AlignerError::Validation(format!(
+                    "bisulfite: {} contained {n_read} record(s) but none could be re-encoded — all \
                  were unmapped, secondary or supplementary. The output would be a copy of the \
                  input. Is this an aligned Bismark BAM? (An unaligned uBAM has no XM tag.)",
-                bam.display()
-            )));
-        }
+                    bam.display()
+                )));
+            }
 
-        // The flip rate is a hard discriminator on the FILE: exactly 1.0 for 5-Base input and
-        // 0.0 for bisulfite, because every letter position necessarily flips under inversion.
-        // Anything in between means a mixed or already-partly-converted input.
+            // The flip rate is a hard discriminator on the FILE: exactly 1.0 for 5-Base input and
+            // 0.0 for bisulfite, because every letter position necessarily flips under inversion.
+            // Anything in between means a mixed or already-partly-converted input.
+            let rate = if letters == 0 {
+                0.0
+            } else {
+                flipped as f64 / letters as f64
+            };
+            if letters > 0 && flipped != 0 && flipped != letters {
+                return Err(AlignerError::Validation(format!(
+                    "bisulfite: {} has a methylation-call flip rate of {rate:.6} ({flipped} of \
+                 {letters} calls). It must be exactly 0 (already bisulfite convention) or 1 \
+                 (5-Base). A value in between means the input is mixed or partly converted; \
+                 refusing rather than writing a file that is half one convention and half the \
+                 other.",
+                    bam.display()
+                )));
+            }
+
+            Ok((n_read, n_conv, n_pass, letters, flipped, masked))
+        })();
+        let (n_read, n_conv, n_pass, letters, flipped, masked) = match converted {
+            Ok(v) => v,
+            Err(e) => {
+                // Best-effort: a leftover file is the failure mode being fixed, so removal
+                // failing is worth saying out loud rather than swallowing.
+                for stale in [&out_path, &report_path] {
+                    match std::fs::remove_file(stale) {
+                        Ok(()) => {}
+                        // Never created (e.g. the writer itself failed to open) — nothing to do.
+                        Err(rm) if rm.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(rm) => eprintln!(
+                            "Warning: could not remove the partial output {}: {rm}. Delete it \
+                             by hand — it is NOT a completed conversion.",
+                            stale.display()
+                        ),
+                    }
+                }
+                return Err(e);
+            }
+        };
         let rate = if letters == 0 {
             0.0
         } else {
             flipped as f64 / letters as f64
         };
-        if letters > 0 && flipped != 0 && flipped != letters {
-            return Err(AlignerError::Validation(format!(
-                "bisulfite: {} has a methylation-call flip rate of {rate:.6} ({flipped} of \
-                 {letters} calls). It must be exactly 0 (already bisulfite convention) or 1 \
-                 (5-Base). A value in between means the input is mixed or partly converted; \
-                 refusing rather than writing a file that is half one convention and half the \
-                 other.",
-                bam.display()
-            )));
-        }
 
         let convention = if letters == 0 {
             "no methylation calls"
@@ -847,7 +895,9 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             bam.display(),
             out_path.display(),
         );
-        std::fs::write(&report_path, &report)?;
+        std::fs::write(&report_path, &report).map_err(|e| {
+            AlignerError::Validation(format!("bisulfite: write {}: {e}", report_path.display()))
+        })?;
         eprint!("{report}");
 
         if masked > 0 {

@@ -665,8 +665,6 @@ mod tests {
         assert_eq!((out.letters, out.flipped), (2, 2));
     }
 
-    /// Asymmetric `XM` on a reverse-strand-shaped record: a 5'-oriented write would put the
-    /// methylated call at the wrong end and this asserts the exact string.
     /// Asymmetric `XM` — one methylated call near the start, one unmethylated near the end.
     /// A 5'-oriented write would swap which end changes, so this asserts the exact string.
     #[test]
@@ -763,6 +761,111 @@ mod tests {
         let out = reencode(b"ACGTACGT", b".Z...Z..", XgStrand::Ct, "8M", "8", 0, "full").unwrap();
         assert_eq!(out.masked, 0);
         assert_eq!(out.seq, b"ACGTACGT");
+    }
+
+    // ---- the deletion path: an independent from-genome oracle -------------------------
+    // These two cases come from CODE_REVIEW_A, which built the from-genome MD/NM oracle the
+    // plan listed as not-done and confirmed both against a reference supplied EXPLICITLY
+    // (never reconstructed from MD, so it is not asserting a function equals itself). They
+    // exercise `rebuild_md_with_deletions` -- the verbatim Perl port whose own comments read
+    // "Perl dies -- unreachable" -- on a much denser MD than the round-trip proof had seen.
+    // Inputs re-derived here mechanically; the recorded NM (8 and 19) matches the review's.
+
+    /// Deletion with a mismatch immediately abutting it on both sides.
+    #[test]
+    fn oracle_deletion_with_abutting_mismatches() {
+        let out = reencode(
+            b"ATGTATGATGAGATGT",
+            b".Z.Z.Z..Z....Z.Z",
+            XgStrand::Ct,
+            "8M2D8M",
+            "1C1C1C2^GA0C4C1C0",
+            8,
+            "oracle1",
+        )
+        .unwrap();
+        // Every methylated cytosine flips T->C, so the read becomes the reference and the
+        // only remaining edit distance is the 2 deleted bases.
+        assert_eq!(out.seq, b"ACGCACGACGAGACGC");
+        assert_eq!(out.nm, 2);
+        assert_eq!(out.md, "8^GA8");
+        assert_eq!((out.letters, out.flipped, out.masked), (6, 6, 0));
+    }
+
+    /// The hard one: leading soft clip + two deletions + an insertion, with non-cytosine
+    /// mismatches interleaved so `MD` stays dense after conversion.
+    #[test]
+    fn oracle_two_deletions_soft_clip_and_insertion() {
+        let out = reencode(
+            b"AAAATGTATGTTATTTTTTT",
+            b"....Z.Z.Z.ZZ..Z.Z.Z.",
+            XgStrand::Ct,
+            "3S5M2D4M1I4M1D3M",
+            "1C1C1^GA0C1C0C0G0C0A0C0^T0G0C0A0",
+            19,
+            "oracle2",
+        )
+        .unwrap();
+        assert_eq!(out.seq, b"AAAACGCACGCCATCTCTCT");
+        // Both values come from an INDEPENDENT oracle: `ref_seq` built explicitly, then MD/NM
+        // derived from (seq_new, ref_seq, CIGAR) without consulting the input MD. The review's
+        // figures were 13/"5^GA3C0G1A1^T0G0C0A0" for its own XM (6 flips); this record was
+        // re-derived and has 8, so the emitted values legitimately differ -- what is being
+        // gated is agreement with the oracle, not with the review's numbers.
+        assert_eq!(out.nm, 11);
+        assert_eq!(out.md, "5^GA4G1A1^T0G1A0");
+        assert_eq!(out.flipped, out.letters, "every 5-Base call must flip");
+        assert_eq!(
+            out.masked, 0,
+            "soft-clipped/inserted bases are ref_seq X, never masked"
+        );
+    }
+
+    /// The `MD` half of the round-trip proof (the `NM` half is covered above). Review LOW-2b.
+    #[test]
+    fn rejects_a_record_whose_md_fails_the_round_trip() {
+        // NM 0 is consistent with an all-match read, but MD "8" describes 8 aligned bases
+        // while the CIGAR has 4 -- so the reconstruction cannot reproduce the recorded MD.
+        let e = reencode(b"ACGT", b"....", XgStrand::Ct, "4M", "8", 0, "q").unwrap_err();
+        assert!(
+            matches!(e, FiveBaseBisulfiteError::MalformedMd { .. })
+                || matches!(e, FiveBaseBisulfiteError::RoundTripFailed { .. }),
+            "expected an MD failure, got {e:?}"
+        );
+    }
+
+    /// `U`/`u` (unknown context) must be re-encoded like any other call. Nothing exercised
+    /// them before: the fixture's letter census is Z/x/h only, so a change making them a
+    /// silent skip rather than a hard error would have gone unnoticed (review + coverage).
+    #[test]
+    fn unknown_context_letters_are_re_encoded() {
+        // Reference ACGTACGT; 5-Base methylated at both reference Cs, reported as U (an N in
+        // the genomic context window) rather than Z.
+        let up = reencode(
+            b"ATGTATGT",
+            b".U...u..",
+            XgStrand::Ct,
+            "8M",
+            "1C3C2",
+            2,
+            "uu",
+        )
+        .unwrap();
+        assert_eq!(up.seq, b"ACGTATGT", "U must flip to C; u must stay T");
+        assert_eq!((up.letters, up.flipped), (2, 1));
+        // And the upper-case CHG/CHH letters, likewise absent from every fixture.
+        let xh = reencode(
+            b"ATGTATGT",
+            b".X...H..",
+            XgStrand::Ct,
+            "8M",
+            "1C3C2",
+            2,
+            "xh",
+        )
+        .unwrap();
+        assert_eq!(xh.seq, b"ACGTACGT", "X and H are both methylated -> C");
+        assert_eq!((xh.letters, xh.flipped), (2, 2));
     }
 
     // ---- fail-loud ------------------------------------------------------------------

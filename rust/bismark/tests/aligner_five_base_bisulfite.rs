@@ -40,11 +40,21 @@ fn fixture() -> PathBuf {
 }
 
 fn samtools_available() -> bool {
-    Command::new("samtools")
+    let present = Command::new("samtools")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // Fail loud in CI: these gates must not pass vacuously (#1095 review HIGH-3; the same
+    // guard `aligner_five_base_groundtruth.rs` uses for minimap2). A silent skip left the
+    // load-bearing idempotence gate reporting green in CI while asserting nothing.
+    if !present && std::env::var_os("CI").is_some() {
+        panic!(
+            "samtools not found but $CI is set: the #1095 gates compare decompressed SAM text \
+             and require it. Refusing to no-op."
+        );
+    }
+    present
 }
 
 fn sam_body(bam: &Path) -> String {
@@ -264,11 +274,22 @@ fn rejects_input_without_bismark_tags() {
         err.contains("none could be re-encoded") || err.contains("XM"),
         "message should explain nothing was convertible; got:\n{err}"
     );
+    // Unconditional. An earlier version was `!exists() || err.contains(..)`, which
+    // short-circuits on the message and so never checked the file — the very defect it
+    // claimed to guard (review HIGH-1).
     assert!(
         !tmp.path()
             .join("BS-seq_10K_se_trimmed_from_TrimGalore.bisulfite.bam")
-            .exists()
-            || err.contains("none could be re-encoded"),
-        "must not leave a file the user would mistake for a conversion"
+            .exists(),
+        "a refused run must leave NO output: BamWriter's Drop writes the BGZF EOF marker, so a \
+         leftover file passes `samtools quickcheck` and reads as a finished conversion"
     );
 }
+
+// NOTE — the unmapped/secondary pass-through (§3.7) has NO committed test. It needs a BAM
+// with unmapped records AND full Bismark tags, and no tracked fixture has both (the
+// `filter_nonconversion/se_unmapped` records carry no `MD`, and the Trim Galore uBAMs are
+// untracked and have no tags at all). The behaviour itself was verified during review by
+// crafting such a record: a `FLAG 4` record with tags passes through with its tags intact.
+// Closing this properly means adding an unmapped record to the `five_base_bisulfite` fixture,
+// which would invalidate the record/call counts asserted above.
