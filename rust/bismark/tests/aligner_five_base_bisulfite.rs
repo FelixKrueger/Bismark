@@ -99,6 +99,13 @@ fn assert_bisulfite_round_trip(input: &Path, expected_records: usize) {
         eprintln!("skipping: samtools not on PATH");
         return;
     }
+    let before = sam_body(input);
+    assert_eq!(
+        before.lines().count(),
+        expected_records,
+        "fixture record count drifted"
+    );
+
     let tmp = tempfile::tempdir().unwrap();
     let out = run_converter(input, tmp.path());
     assert!(
@@ -110,13 +117,6 @@ fn assert_bisulfite_round_trip(input: &Path, expected_records: usize) {
     let stem = input.file_stem().unwrap().to_string_lossy();
     let produced = tmp.path().join(format!("{stem}.bisulfite.bam"));
     assert!(produced.exists(), "no output BAM written");
-
-    let before = sam_body(input);
-    assert_eq!(
-        before.lines().count(),
-        expected_records,
-        "fixture record count drifted"
-    );
     // Compare decompressed SAM bodies, not bytes: BGZF block boundaries are writer-dependent
     // and `NM` is re-encoded as i32, so a byte comparison would fail for reasons that have
     // nothing to do with the conversion.
@@ -162,6 +162,7 @@ fn assert_xg_iff_flag(bam: &Path) -> Vec<(String, u16, String)> {
         let qname = fields.next().unwrap().to_string();
         let flag: u16 = fields.next().unwrap().parse().unwrap();
         let xg = fields
+            .skip(9) // RNAME..QUAL — search only the optional tags
             .find_map(|f| f.strip_prefix("XG:Z:"))
             .unwrap_or_else(|| panic!("record without XG tag: {line}"))
             .to_string();
@@ -174,6 +175,13 @@ fn assert_xg_iff_flag(bam: &Path) -> Vec<(String, u16, String)> {
         census.push((qname, flag, xg));
     }
     census
+}
+
+fn count_of(census: &[(String, u16, String)], flag: u16, xg: &str) -> usize {
+    census
+        .iter()
+        .filter(|(_, f, x)| *f == flag && x == xg)
+        .count()
 }
 
 /// The converter's encoding table keys on `XG` and its orientation handling on FLAG; their
@@ -189,16 +197,10 @@ fn xg_ct_iff_forward_flags_over_all_four_strand_indices() {
     }
     let census = assert_xg_iff_flag(&dedup_fixture("nondir_pe_1030.bam"));
     assert_eq!(census.len(), 20, "fixture record count drifted");
-    let count = |flag: u16, xg: &str| {
-        census
-            .iter()
-            .filter(|(_, f, x)| *f == flag && x == xg)
-            .count()
-    };
-    assert_eq!(count(99, "CT"), 4);
-    assert_eq!(count(147, "CT"), 4);
-    assert_eq!(count(83, "GA"), 6);
-    assert_eq!(count(163, "GA"), 6);
+    assert_eq!(count_of(&census, 99, "CT"), 4);
+    assert_eq!(count_of(&census, 147, "CT"), 4);
+    assert_eq!(count_of(&census, 83, "GA"), 6);
+    assert_eq!(count_of(&census, 163, "GA"), 6);
     for pair in census.chunks(2) {
         let [(q1, f1, _), (q2, f2, _)] = pair else {
             panic!("odd record count in a paired fixture");
@@ -221,14 +223,8 @@ fn xg_iff_flag_holds_on_the_se_fixture() {
     }
     let census = assert_xg_iff_flag(&fixture());
     assert_eq!(census.len(), 8, "fixture record count drifted");
-    let count = |flag: u16, xg: &str| {
-        census
-            .iter()
-            .filter(|(_, f, x)| *f == flag && x == xg)
-            .count()
-    };
-    assert_eq!(count(0, "CT"), 4);
-    assert_eq!(count(16, "GA"), 4);
+    assert_eq!(count_of(&census, 0, "CT"), 4);
+    assert_eq!(count_of(&census, 16, "GA"), 4);
 }
 
 /// The report must say so too — 0 flips, 0 masked. `flipped == 0` is the file-level assertion

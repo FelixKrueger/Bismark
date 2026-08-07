@@ -10,8 +10,8 @@
 | Plan Review | ✅ Complete | PLAN_REVIEW_A.md, PLAN_REVIEW_B.md (dual, independent) |
 | Impl Plan | ✅ Complete | PLAN.md §5 (rev 1) served as the implementation plan |
 | Implementation | ✅ Complete | 11/11 gates green; falsifiability observed; fmt+clippy clean (PLAN.md §12) |
-| Code Review | 📋 Planned | — |
-| Coverage | 📋 Planned | — |
+| Code Review | ✅ Complete | CODE_REVIEW_A.md + CODE_REVIEW_B.md — both APPROVE; 3 agreed Low fixes applied |
+| Coverage | ✅ Complete | COVERAGE.md — Verdict COMPLETE (21 DONE, 1 documented DEVIATED, 1 PENDING = PR CI run) |
 
 ## History
 

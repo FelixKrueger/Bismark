@@ -242,3 +242,16 @@ Implemented exactly per §5 — **no deviations**. Single pass, no failed iterat
 - Hygiene: `cargo fmt -p bismark -- --check` clean; `clippy --all-targets -- -D warnings` clean
   on default **and** `rammap-inprocess` (G26/G27).
 - §9's "all six CI jobs green" row pends the PR run (the only validation not executable locally).
+
+**Post-review fixes (2026-08-07)** — dual code review verdicts: **A APPROVE, B APPROVE** (no
+Critical/High/Medium); coverage audit **COMPLETE** (21 DONE, 1 documented DEVIATED, 1 PENDING =
+the PR run). The three Low findings both reviewers agreed on were applied: record-count census
+moved *before* the converter run (cleaner drift attribution); duplicated `count` closure hoisted
+to `count_of()`; `XG` scan tag-scoped with `.skip(9)`. Re-verified: 11/11 green, fmt clean,
+clippy `-D warnings` clean on default + `rammap-inprocess`. Not adopted (recommendations, out of
+plan scope): Gate 1 over the synth fixture (B verified 0 violations across its 12,974 records —
+free coverage if ever wanted); PE header/`@PG` preservation gate (A; body-only comparison is the
+§9.1 contract, header pinned on SE). Notable extra evidence from review: A ran the suite with
+`CI=1` and samtools off PATH — all five samtools-gated tests fail loudly, proving the guard
+live; B pulled dev run 31204223600's logs — both feature jobs fail with exactly 3 guard panics
+and nothing else, verifying assumption 7.
