@@ -1,169 +1,101 @@
-# Session Handoff — 2026-08-07
+# Session Handoff — 2026-08-08
 
-**[#1095](https://github.com/FelixKrueger/Bismark/issues/1095) is implemented, dual-code-reviewed and pushed to `dev`.** It stays OPEN and unreleased on purpose.
+**Everything from the last handoff's menu is closed or waiting on outsiders.** `dev` is at **`31bae51`**, clean, pushed, in sync — and its CI is **fully green for the first time since `7be9dde`**.
 
-> 🚫 **DO NOT CUT A RELEASE.** Felix's decision (2026-08-07): work is still settling and new issues keep arriving, so the release must be a deliberate cut at a chosen point, not a by-product of landing a feature. A `dev`→`master` merge **is** the release signal in this repo. PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) was opened for that and **closed as premature** — reopening it restores the full body verbatim when a 3.2.0 cut is actually wanted. The five version literals still reading `3.1.0` are **correct for now**; leave them.
+> 🚫 **STILL NO RELEASE.** `dev`→`master` = the release signal; the 3.2.0 cut stays a deliberate act (reopen PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) when wanted). `dev` is now ~24 commits ahead of `master`. The five version literals reading `3.1.0` remain correct — leave them.
 
-**Next session's job — pick from these, none of which needs a release:**
+**Next session: nothing is urgent.** Watch two external threads:
 
-1. **Upstream `nloyfer/wgbs_tools` PR** (`DRAFT_upstream_wgbs_tools_PR.md`) — now has *both* a synthetic control and real-sample confirmation from the reporter. Only validation **check 2** remains: EM-seq `.pat` byte-identical with the patch present but not enabled. An hour with the machinery in `EXPERIMENT_patter_swap.md`. Also still needs `patter`'s CLI plumbing read before it's a real patch.
-2. **Two worthwhile #1095 validation gaps** (§5 G9) — the `XG` ⟺ FLAG assertion over `nondir_pe_1030.bam` (load-bearing and invisible to the idempotence gate) and PE / four-strand committed coverage. Both codify properties already verified in review.
-3. **@Danielsm8's contig-intersection result** on #787 — awaiting; not a blocker.
-
-`dev` is at **`29face8`**, clean, pushed, in sync.
+1. **[nloyfer/wgbs_tools#120](https://github.com/nloyfer/wgbs_tools/pull/120)** — the `--five_base` polarity flag, **submitted 2026-08-08**, awaiting the maintainer. Fork `FelixKrueger/wgbs_tools`, branch `five-base-polarity`, commit `fd16352`. If revisions are requested, see §5 (wgbs_tools gotchas) before touching anything.
+2. **Bismark #787** — @Danielsm8 still hasn't answered the contig-intersection diagnostic (last comment remains ours, `5220352348`). Not a blocker.
 
 ---
 
 ## 1. What we accomplished
 
-Eleven commits from `fab3e27`. **#1095 went the whole pipeline in one session:** diagnosis → plan (rev 0→2) → dual plan review + targeted section review → fixture → implementation → dual code review + coverage audit → review fixes.
+Three commits on `dev` (`a33ac4e..31bae51`, 12 files, +1303/−59); PR #1097 squash-carried five feature-branch commits.
 
 | Commit | What |
 |---|---|
-| `ffa1176`, `5bf8b55`, `6cff75b`, `5694cf9` | Handoffs (this is the 5th) |
-| `bfdf207`, `5859d59`, `d0a86c5` | Plan rev 0 → 1 → 2, with `PLAN_REVIEW_A/B/36.md` |
-| `0e4c705` | Soft-clip + indel fixture, oracle-validated |
-| `18ff591` | `patter` two-constant swap experiment |
-| **`6a3ea0d`** | **Implementation** — `--five_base_bisulfite_bam` |
-| **`7be9dde`** | **Dual code review + coverage audit, and the fixes** |
+| `26eb28a` | **wgbs_tools check 2 closed** — flag-gated `--five_base` patch written (plumbing read first), byte-identity proven at 3 levels, draft finalized, patch file saved |
+| `fc265ba` | **PR [#1097](https://github.com/FelixKrueger/Bismark/pull/1097) merged** — the two #1095 validation gates + the CI samtools repair (full pipeline: plan rev 0→1, dual plan review, implement, dual code review A+B APPROVE, coverage COMPLETE, 3 agreed Low fixes, CI 6/6 green) |
+| `31bae51` | **Upstream PR submitted** as nloyfer/wgbs_tools#120 |
 
-**The feature is proven, not just tested.** With **stock, unmodified** `patter` on a fully CpG-methylated 5-Base control:
+**wgbs_tools evidence (check 2, "we broke nothing"):** patch-present-flag-off `.pat` is **byte-identical** to stock for (a) `patter` standalone on synthetic mixed-methylation PE bisulfite, (b) `patter` standalone on **real WGBS chr21** — 59,250 pat lines, 0 differences, (c) a full `wgbstools bam2pat` run (patched vs stock `bam2pat.py`, decompressed `.pat.gz`). Positive controls: flag-on = exact per-line C↔T mirror in all three settings, and **byte-identical to the old unconditional-swap binary** — carrying checks 1/4 over by observation. All four validation checks now pass; full record in `plans/08062026_five-base-bisulfite-bam/EXPERIMENT_patter_flag_gated.md` + `five_base_wgbs_tools.patch`.
 
-| Route | METH / total | Methylation |
-|---|---|---|
-| stock `patter` + raw 5-Base BAM | 0 / 152 | **0.0 %** |
-| patched `patter` + raw 5-Base BAM | 152 / 152 | 100.0 % |
-| **stock `patter` + converted BAM** | **152 / 152** | **100.0 %** |
-
-Ground truth 100 %; Bismark's own `XM` agrees (`Z=168, z=0`). Flip rate exactly `1.000000` on 5-Base input, `0.000000` on the bisulfite fixture with a byte-identical SAM body.
-
-**@Danielsm8 confirmed it on real data** ([`5219193146`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5219193146)): after the `patter` patch + UCSC hg38, *"when I do this and run it through uxm, it works!!!!!!!!!!!!!"*, with a paired-EM-Seq figure. Four replies posted on #787; the last ([`5220352348`](https://github.com/FelixKrueger/Bismark/issues/787#issuecomment-5220352348)) gives him the contig-intersection diagnostic and tells him he can drop the patched `wgbs_tools` once he uses the converter.
-
----
+**#1097 (branch `1095-validation-gates`, G23 branch-first honored):**
+- **Gate 1 (§9.8):** `XG == "CT" ⟺ FLAG ∉ {16,83,163}` per record over `nondir_pe_1030.bam` (record census 4/4/6/6 + **pair-structure census** pinning the #1030 swap `(147,99)×4/(163,83)×6`) and the SE fixture (`(CT,0)×4/(GA,16)×4` — the only committed FLAG-16 witness).
+- **Gate 2:** idempotence round-trip parameterised over both PE dedup fixtures (20 and 12,974 records, byte-identical).
+- **CI repair:** samtools mirrored into `rammap-inprocess` + `binseq-input` jobs — they run the #1095 gates and had been red on `dev` since `7be9dde` (exactly 3 samtools-guard panics each, verified from the run logs).
+- Every census constant measured off the fixtures; every new assertion observed failing once under sabotage before being trusted; 11/11 green, fmt + clippy clean (default + `rammap-inprocess`).
 
 ## 2. What's still pending
 
 | Item | State |
 |---|---|
-| **Release (3.2.0)** | **Deliberately deferred** — see the banner at the top. `dev` is 22 commits / ~13 issues ahead of `master`; the cut happens when Felix chooses it, not when a feature lands. Reopen PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) then, and bump the five literals |
-| **#1095** | Stays OPEN by design (a `dev` merge does not close issues — G25). Its work is complete on `dev` |
-| Upstream `wgbs_tools` PR | Drafted, unsent. Checks 1 + 4 pass (synthetic) and check 3 is effectively satisfied by the reporter's figure. **Check 2 outstanding** + reading `patter`'s CLI plumbing |
-| @Danielsm8 | His ~80 % vs usual ~98 % marker recovery is very likely the **partial contig intersection** (G15); diagnostic sent, awaiting his result. Not a blocker |
-| **Known #1095 gaps — documented, not closed** | See §5 G9. None is in behaviour |
+| wgbs_tools#120 | Submitted, awaiting nloyfer. Memory entry `project_wgbs_tools_upstream_pr.md` tracks it |
+| #787 | Awaiting @Danielsm8's contig-intersection result |
+| Release 3.2.0 | Deliberately deferred (banner above) |
+| Remaining G9 gaps (3 of 5) | Deliberately out of scope, recorded in `plans/08072026_1095-validation-gates/PLAN.md` Open-3: unmapped pass-through fixture, lower-case `MD`, fixture letter census |
+| Declined review extensions | Gate 1 over the synth fixture (reviewer verified 0 violations — free if wanted); PE header/`@PG` preservation gate. Both in PLAN §12 |
 | PR #1091 (rapidgzip) | Open, not ours, untouched |
-
----
 
 ## 3. Key decisions (with rationale)
 
 | Decision | Rationale |
 |---|---|
-| **Converter, not direct `.pat` emission** | The reporter's goal is comparable 5-Base and EM-seq arms. A converted BAM enters at the **front** of his path so both arms pass the same filters; `.pat` injects past every filter. Also avoids owning wgbs_tools' per-genome CpG index |
-| **A flag on the aligner, not a subcommand** | Mirrors `--five_base_consensus_from_bam`; no new permanent subcommand + classic alias for a niche shim |
-| **§3.6 masking keys on the reconstructed reference, not `QUAL` + `@PG`** | Rev 1 reached outside the record for data it already held, and got the units wrong doing it. The replacement is provably exactly the leak set and provably empty without masking — so the idempotence gate covers it. Deleted a CLI flag, a header parser, a conflict rule and a fail-loud fallback. **The feature has no tunable behaviour at all** |
-| **Reuse `output::make_mismatch_string` + `hemming_dist`** | Matching `rebuild_md_with_deletions` byte-for-byte otherwise is real work for no gain. Validated by an independent oracle (G6) |
-| **Refused runs remove their output** (review H1) | `BamWriter`'s `Drop` writes the BGZF EOF marker, so a leftover passed `samtools quickcheck` while four places claimed refusal. Contract now matches the text |
-| **`samtools_available()` panics under `$CI`** (review H2/H3) | A silent skip left the load-bearing gate green in CI while asserting nothing. Mirrors the existing minimap2 guard |
-| **Documented the unmapped-pass-through test gap rather than faking it** | No tracked fixture has unmapped records **and** `MD`. Behaviour was verified in review by crafting such a record; a broken or misleading test would be worse than a recorded gap |
-| **Closed #1081/#1092 manually** | Felix's call, against earlier advice to let the release merge do it |
-
----
+| **CI samtools fix carried in the gates branch**, not a separate `dev` hotfix | Two line-edits that belong with the #1095 follow-up; the PR's green feature jobs then demonstrate repair + new gates in one run (Felix accepted this) |
+| **Gate 1 set-form only** (`FLAG ∉ {16,83,163}`); bit gloss deleted | `FLAG & 0x10` is provably false on PE — FLAG 147 is reverse *and* `XG:CT` (10/20 fixture records). Both plan reviewers caught my rev-0 self-contradiction |
+| **Pair-structure census added to Gate 1** | "Only fixture with all four XG/FLAG combinations" was false — the synth PE fixture has all four at *record* level; `nondir_pe_1030.bam`'s uniqueness is the *pair-level* #1030 swap, which a record census can't guard |
+| samtools-text gates, not noodles | Idiom-consistency with the whole file; the CI panic guard already prevents silent skips. A noodles port is a coherent future whole-file refactor |
+| Only both-reviewer Low fixes applied post-review | Census-before-converter, hoisted `count_of`, tag-scoped XG scan. Scope extensions declined and recorded rather than silently absorbed |
+| **#120 posture: friendly paragraph + folded AI-assisted details** | Felix asked for friendly/human; global upstream rules demand the short visible paragraph, reasoning in the commit message. `add_cpg_counts.h` sibling constants disclosed as optional follow-up |
+| wgbs_tools patch overrides public `OT`/`OB` in `main.cpp`, no header/constructor change | The only construction site is `main.cpp`; the entire behaviour change sits inside the flag's `if`, making "default path untouched" reviewable by inspection and provable by the byte gate |
 
 ## 4. Files modified
 
 | Path | |
 |---|---|
-| `rust/bismark/src/aligner/five_base_bisulfite.rs` | **New** — the per-record algorithm + 25 unit tests |
-| `rust/bismark/src/aligner/{mod.rs, cli.rs}` | The flag, mutual exclusion, driver, H1 cleanup |
-| `rust/bismark/tests/aligner_five_base_bisulfite.rs` | **New** — 7 integration gates |
-| `rust/bismark/tests/data/five_base_bisulfite/` | **New** — oracle-validated soft-clip fixture (20K) |
-| `.github/workflows/rust_ci.yml` | samtools added to the `test` job |
-| `CHANGELOG.md`, `rust/README.md`, `docs/…/rust/illumina-5-base.md` | Entry, Milestones line, "Interop" section |
-| `plans/08062026_five-base-bisulfite-bam/` | PLAN (rev 2 + §10b notes), PROGRESS, 3 plan reviews, 2 code reviews, COVERAGE, the `patter` experiment, 3 reply drafts, the upstream PR draft |
+| `rust/bismark/tests/aligner_five_base_bisulfite.rs` | 7 → 11 gates: `assert_xg_iff_flag` + 2 contract tests, `assert_bisulfite_round_trip` + 2 PE tests, `dedup_fixture`, `count_of` |
+| `.github/workflows/rust_ci.yml` | samtools in both feature jobs (identical blocks — one `replace_all`) |
+| `plans/08072026_1095-validation-gates/` | **New feature dir**: PLAN (rev 1 + §12), PROGRESS, PLAN_REVIEW_A/B, CODE_REVIEW_A/B, COVERAGE (Verdict COMPLETE) |
+| `plans/08062026_five-base-bisulfite-bam/` | DRAFT (now marked SUBMITTED #120), **new** `EXPERIMENT_patter_flag_gated.md`, **new** `five_base_wgbs_tools.patch` |
 | `SESSION_HANDOFF.md` | This document |
 
-**Outside the repo:** `gh` scopes now include `project`; 4 comments on #787; #1095 created + board fields; #1081/#1092 closed.
-
----
+**Outside the repo:** fork `FelixKrueger/wgbs_tools` created (branch `five-base-polarity`, commit `fd16352`); memory `project_wgbs_tools_upstream_pr.md` + MEMORY.md line added; Bismark PRs #1097 (merged) and nloyfer/wgbs_tools#120 (open) created.
 
 ## 5. Gotchas and constraints
 
-### #1095 — the design facts (verified repeatedly; do not re-derive)
+### New this session
 
-**G1 — the three load-bearing properties.** Confirmed by four independent reviews *and* empirically on the fixture: (1) `len(XM) == len(SEQ)` with `XM[i]` ↔ `SEQ[i]` in BAM space, `XM` reversed in lockstep with `SEQ` (SE `output.rs:443-450`/`:463-467`, **PE `:671-675`/`:694-698`**); (2) `XG:Z:CT` ⇒ ref base `C`, pair `(C,T)`, `GA` ⇒ `G`, `(G,A)` — ⚠️ **emergent**, since `methylation_call` branches on **`XR`** (`methylation.rs:575`); (3) `I`/`S` pad the genomic window with `b'X'` without advancing the reference cursor, so `XM` is structurally `'.'` at every clipped/inserted position.
+**H1 — 🔑 `patter` flags must FOLLOW the two positionals** (`patter DICT REGION [flags]`). A leading flag becomes the dict path and the error surfaces as `tabix: unrecognized option '--five_base'` — and the run produces an **empty** output file, which makes a "differs from stock" check pass vacuously. `bam2pat.py` appends flags after positionals, so the CLI patch is consistent.
 
-**G2 — 🔑 never use `iter_aligned()` here.** 5'-oriented positions + skips `I`/`S`; writing at `read_pos_5p` silently reverses every OB read's edits. The fixture's `9S81M`/`81M9S` asymmetric pair is the guard.
+**H2 — `wgbstools init_genome` silently filters non-chromosome contig names** (`is_valid_chrome`, `init_genome.py:278`: `^(chr)?(\d+|[XYM]|MT)$`). Symptom: "Invalid input argument / No objects to concatenate". Rename the contig (e.g. `pUC19` → `chr1`) for end-to-end runs.
 
-**G3 — `NM` includes insertions AND soft-clipped bases** (`hemming_dist` counts the `b'X'` padding — its doc says *"intentionally counted"*), plus deleted bases. Proven on the fixture: `ot_softclip` `20 = 11 + 0 + 9 + 0`. An earlier plan revision stated this backwards.
+**H3 — `gh pr checks --watch` can miss late-registering jobs.** It reported 5 job types green while `binseq-input` was absent from the snapshot; the run was actually 6/6. **Declare CI green only from `gh run view <id> --json jobs`.**
 
-**G4 — the §3.6 masking rule.** Mask `b'N'` iff `XM[i] == '.'` **and** `ref_seq[i] == ref_base` **and** `SEQ[i] ∈ {meth, unmeth}`. Provably empty without masking, because at a genomic `C` the CT branch emits a letter for `C` **or** `T` with no further guard (`methylation.rs:587-596`). The PE call site of the leak is `mod.rs:1695-1697`, **not** the SE helper (whose only caller passes `baseq = 0`).
+**H4 — the dual-driver CI trap, concretely:** any tool-availability panic guard added to tests must be mirrored into **both** feature jobs (`rammap-inprocess`, `binseq-input`) — they run `cargo test -p bismark` too. The minimap2 guard was mirrored when added; samtools' wasn't, and `dev` sat red from `7be9dde` until #1097.
 
-**G5 — `reconstruct_ref` is triply load-bearing:** it feeds `NM`, `MD` **and** the masking set. Guarded by the per-record round-trip proof (reconstruct → assert it reproduces `NM_old`/`MD_old` → only then emit).
+**H5 — shell traps:** a bare `===` token in a compound command aborts it in this zsh env (`=word` triggers =command expansion). A Bash call containing `rm -rf` is denied by the permission layer — use fresh directory names instead of cleanup.
 
-**G6 — the deletion path is oracle-validated.** `rebuild_md_with_deletions` (verbatim Perl port, own comments read *"Perl dies — unreachable"*) agrees with an **independent** from-genome oracle on `3S5M2D4M1I4M1D3M` → `5^GA4G1A1^T0G1A0`, `NM 11`. Committed as `oracle_two_deletions_soft_clip_and_insertion`.
+**H6 — `wgbstools bam2pat --no_beta`** skips the beta step, which otherwise exits 127 unless `stdin2beta` is also compiled (`setup.py -t` builds only named targets). The `.pat.gz` is complete before the beta step either way.
 
-**G7 — refused runs must leave no output.** `BamWriter`'s `Drop` writes the BGZF EOF marker (`io/write.rs:36-40`), so any leftover passes `samtools quickcheck` and reads as a finished conversion. The fallible section is wrapped so every error path (including mid-stream per-record failure) removes the output *and* the report. **Do not unwrap that structure.**
+**H7 — Bismark drops a PE pair whose mate sits at POS 1** from the BAM while the report still counts it as a unique alignment (fixture `m002_OB_0`, pUC19 fragment [0,180)). Boundary quirk, not chased; don't let it confuse a record-count reconciliation.
 
-**G8 — the gates must not be able to skip.** `samtools_available()` panics when `$CI` is set, and CI installs samtools. Before this, three gates — including the load-bearing idempotence gate — reported green in CI while asserting nothing.
+**H8 — `chunks(2)` pair logic on Bismark PE BAMs is sound** only because R1/R2 are file-order adjacent with shared QNAME — assert both (the Gate 1 pair census does).
 
-**G9 — remaining #1095 gaps, all in validation:**
-- **Unmapped/secondary pass-through has no committed test.** Needs a BAM with unmapped records **and** `MD`; no tracked fixture has both (`filter_nonconversion/se_unmapped` has no `MD`; the Trim Galore uBAMs are untracked and tagless). Behaviour verified in review. Closing it means adding an unmapped record to the `five_base_bisulfite` fixture, which invalidates the record/call counts other tests assert.
-- **§9.8 `XG` ⟺ FLAG assertion** over `nondir_pe_1030.bam` — verified by hand and in `PLAN_REVIEW_B` §1.3, and invisible to the idempotence gate. Cheap; worth adding.
-- **Committed tests are single-end and cover 2 of 4 strand indices** on a PE-only feature. Reviewer B confirmed byte-identity over `nondir_pe_1030.bam` (all four) and `synth_barcode_10k…_pe.bam` (12974 records) — so adding those gates codifies a verified property.
-- **A lower-case `MD` base** silently misses a mask (`parse_md` accepts any ASCII letter; `ref_base` is upper-case). Only reachable via a non-Bismark BAM (`samtools calmd`).
-- Fixture letter census is `Z`/`x`/`h` only; `z`/`X`/`H`/`U`/`u` are covered by unit tests, not by the fixture.
+### Carried forward (verbatim-critical)
 
-**G10 — `bam2pat` requires coordinate-sorted AND indexed input** (`is_bam_sorted` **skips the BAM entirely** on a non-`coordinate` `@HD`, and Bismark writes `SO:unsorted`), so the sort/index note is mandatory. Chromosome naming must match `wgbstools init_genome`; a total mismatch fails early in `set_regions`, a **partial** one silently drops contigs — the leading suspect for the reporter's 80 %.
+**G13 — 🔑 `wgbs_tools` `setup.py` does NOT fail on a compile error** (the `raise` is commented out, `setup.py:33`). A broken module prints red `FAIL`, exits 0, and the old binary stays. Always `cmp` binaries after a rebuild.
 
-**G11 — noodles owns the `@PG` chain** and re-links a later program's `PP` regardless of what we set, so the output's chain stays internally consistent but misstates running order. Metadata only. Don't "fix" it by dropping the `@PG`.
+**G19/G20 — 🔑 vacuous verification + reviewer fallibility.** Both bit again this session: the empty-output "DIFFERS" (H1) and the checks-list missing job (H3) were caught only by looking at *what kind* of result appeared; and my own rev-0 plan carried a provably-false bit-form that only the dual review caught. A check whose failure you have never observed is not yet a check; verify contested reviewer claims against source, never pick a reviewer.
 
-**G12 — `MM`/`ML` tags are ruled out non-obviously:** `patter` auto-detects them but throws `"Unrecognized bam format: paired end and nanopore"`, and 5-Base is PE-only.
+**G21/G22 — `gh` traps:** `gh api` doesn't paginate by default (truncated page ≙ absent record); quote URLs containing `?` (zsh globs); `gh`/`git push`/`curl` need `dangerouslyDisableSandbox`; `$TMPDIR` differs between sandboxed and unsandboxed calls.
 
-### wgbs_tools / experiment mechanics
+**G23 — BRANCH FIRST** — honored this session (`1095-validation-gates` → PR #1097 → squash into `dev`); keep it that way. **G25** — merging to `dev` does not close linked issues. **G28/G29** — check `git status` before `gh pr merge --delete-branch`; verify a squash-merge by `git diff <tip> origin/dev` (expect 0 lines) + PR state, never ancestry.
 
-**G13 — 🔑 `wgbs_tools`' `setup.py` does NOT fail on a compile error** — the `raise` is commented out (`setup.py:33`). A broken module prints a red `FAIL`, the loop continues, the process exits 0, and the **old binary stays**. This was the reporter's whole problem. Use `python3 setup.py -t <target> -v` and `cmp` the binaries.
+**G26/G27 — Rust CI gates:** workflow-scope `RUSTFLAGS: -D warnings` means feature-gated warnings fail CI while local default gates stay green — run `cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings`; `cargo fmt --check` is its own job.
 
-**G14 — the `patter` swap is CONFIRMED** (`EXPERIMENT_patter_swap.md`): `OT{'C','T',0,0}`→`{'T','C',0,0}`, `OB{'G','A',1,1}`→`{'A','G',1,1}` takes 0.0 %→100.0 % against a 100 % ground truth, **each strand independently** (OT 68 calls, OB 84). Now also confirmed on the reporter's real data.
+### #1095 design facts
 
-**G15 — running `patter` standalone**, no `wgbstools init_genome` needed: build the CpG dict as `chrom\t<1-based locus>\t<index>`, `bgzip`, `tabix -s 1 -b 2 -e 2`; PE needs `match_maker`; `samtools view -q 10 -F 1796 -f 3 <bam> | match_maker | patter <dict> <region> --min_cpg 1 --clip 0`; `.pat` alphabet is `METH='C'`, `UNMETH='T'`; strand selectors are OT `{99,147}` / OB `{83,163}`.
-
-**G16 — `--illumina_5base` needs a minimap2 index to exist** even though it aligns to the *unconverted* genome: `bismark_genome_preparation --minimap2 <dir>`. The error names `BS_CT.mmi` and is misleading about why.
-
-**G17 — 🔑 mate ≠ strand when generating PE reads.** R1/R2 are two ends of **one** converted molecule (R2 = revcomp of the strand R1 came from); OT/OB are two **different** molecules. Getting this wrong produces reads Bismark correctly refuses to call (`XM = '.'`), which looks like a Bismark bug. Cost one wrong experiment.
-
-**G18 — `bismark --output_dir <dir>` requires the directory to exist.**
-
-### Process and tooling
-
-**G19 — 🔑 the recurring failure mode this session: vacuous verification.** Six instances, every one caught only by *running* something: a plan gate naming unaligned uBAMs as its fixtures; a forward test asserting via `extract_calls`, which the converter cannot affect; an `NM` invariant stated backwards; an assertion using `!exists() || err.contains(..)`, which short-circuits past the property it names; three CI gates that skip silently; and a shell check printing "H1 FIXED" while `exit=127` meant the binary never ran. **A check whose failure you have never observed is not yet a check.**
-
-**G20 — do not take agent reviewers at face value.** A reviewer's CIGAR census was wrong about indel coverage; another called a vacuous test "sound"; a code reviewer's oracle expected `NM 13` where the correct answer for the re-derived input was `11`. Conversely, reviewers found the two things nobody else did (the `--five_base_baseq` leak; H1). **Verify contested claims against source; never pick a reviewer.**
-
-**G21 — three `gh` reporting traps.** `gh api` never paginates by default and a truncated page is indistinguishable from an absent record (this produced a false negative on a cross-reference). `gh project item-list --format json` omits keys for unset fields. A stale single-select option ID is a **silent no-match** — verify by read-back.
-
-**G22 — `gh project` needs the `project` scope and an interactive TTY to grant it** (`gh auth refresh` backgrounded fails with `context deadline exceeded`). Quote `gh api` URLs containing `?` — zsh globs it. `$TMPDIR` differs between sandboxed and `dangerouslyDisableSandbox` calls. `gh`/`git fetch,push`/`curl` need the sandbox flag. A `Bash` call containing `rm -rf` was denied by the permission layer.
-
-**G23 — 🔑 BRANCH FIRST. Feature work must not go straight onto `dev`.** The convention is: feature branch → PR into `dev`; `dev`→`master` = release. #1095 was committed directly to `dev` across seven commits, and that had three consequences worth avoiding next time:
-
-1. **It removed the normal review-and-merge step.** #1095 never got a feature PR, so its diff was never reviewed in GitHub's UI — the dual reviewers read the commit instead. Equivalent in rigour, but it leaves no PR trail and nothing to point a collaborator at.
-2. **It made `dev`→`master` the only PR that could be opened**, which is why "open the PR" produced a *release* proposal (#1096, closed as premature).
-3. **`dev` now accumulates unreleased work with no staging boundary** — 22 commits ahead of `master` across ~13 issues — which is exactly the "release at an arbitrary point" pressure Felix pushed back on.
-
-So: `git switch -c <feature>` before the first commit of any new feature, PR it into `dev`, and keep `dev`→`master` reserved for a deliberate cut. That also restores the option of holding a change back when a release isn't wanted.
-
-**G24 — `git add -A plans/` over-stages.** Dozens of unrelated pre-existing untracked plan files from other features live under `plans/`; stage this feature's paths explicitly.
-
-**G25 — merging to `dev` does not close linked issues** (only the default branch does).
-
-### Carried forward
-
-**G26 — 🔑 the feature-build gate.** `.github/workflows/rust_ci.yml:15` sets `RUSTFLAGS: "-D warnings"` at **workflow** scope, so a warning in `#[cfg(feature = "rammap-inprocess")]` code fails CI while both obvious local gates stay green:
-```
-RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
-```
-
-**G27 — `cargo fmt --check` is its own CI job**, and `cargo fmt` will reformat error attributes and closure params. Run `cargo fmt -p bismark -- --check` before pushing.
-
-**G28 — `gh pr merge --delete-branch` aborts its LOCAL step if the tree is dirty**, printing `failed to run git`, which reads like the merge failed. Check `git status` first; then `gh pr view --json state` before retrying.
-
-**G29 — squash-merge hides merge status.** Verify with `git diff <commit> origin/dev` (expect 0 lines) + `gh pr list --head <branch> --state merged`. Never infer from ancestry.
+The 12 design facts (G1–G12 of the previous handoff: `iter_aligned()` ban, `NM` counting soft-clips, the §3.6 masking rule, `Drop`-writes-EOF refusal contract, etc.) now live in `plans/08062026_five-base-bisulfite-bam/PLAN.md` §9–§10b and its reviews — consult those before touching `five_base_bisulfite.rs`; do not re-derive them.
