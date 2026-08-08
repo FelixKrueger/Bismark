@@ -1,5 +1,6 @@
-> **Draft — not submitted. Technically ready; submission awaits Felix's go-ahead.**
-> Proposed PR to [`nloyfer/wgbs_tools`](https://github.com/nloyfer/wgbs_tools) (base: `master` @ `6f24bed`).
+> ✅ **SUBMITTED 2026-08-08 as [nloyfer/wgbs_tools#120](https://github.com/nloyfer/wgbs_tools/pull/120)** —
+> fork `FelixKrueger/wgbs_tools`, branch `five-base-polarity`, commit `fd16352` (base: `master` @ `6f24bed`).
+> Body as below but with a friendlier visible paragraph (final text on the PR). Awaiting maintainer.
 >
 > ✅ **All four validation checks pass** (2026-08-07/08):
 > - **1 & 4** — measured on the unconditional swap (`EXPERIMENT_patter_swap.md`: 0.0 %→100.0 %
