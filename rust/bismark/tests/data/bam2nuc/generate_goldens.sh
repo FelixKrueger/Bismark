@@ -23,8 +23,8 @@ set -euo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-PERL_BAM2NUC="$REPO_ROOT/bam2nuc"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
+PERL_BAM2NUC="$REPO_ROOT/legacy_perl/bam2nuc"
 SAMTOOLS="${SAMTOOLS:-$(command -v samtools)}"
 
 echo "repo root      : $REPO_ROOT"

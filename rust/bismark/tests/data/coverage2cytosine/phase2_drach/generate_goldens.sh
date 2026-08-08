@@ -12,7 +12,7 @@
 # --drach ignores --zero_based and --CX (early-exit) — same discipline as phase1.
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-C2C="$(cd "$HERE/../../../../.." && pwd)/coverage2cytosine"
+C2C="$(cd "$HERE/../../../../../.." && pwd)/legacy_perl/coverage2cytosine"
 cd "$HERE"
 
 mkfa() { mkdir -p "$1"; printf '%b' "$2" > "$1/genome.fa"; }

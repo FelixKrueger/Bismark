@@ -54,7 +54,7 @@
 # Auto-detects --paired-end from the @PG header (matches Perl behaviour).
 #
 # Environment overrides:
-#   PERL_BIN                — path to bismark_methylation_extractor (default: ./bismark_methylation_extractor)
+#   PERL_BIN                — path to bismark_methylation_extractor (default: ./legacy_perl/bismark_methylation_extractor)
 #   RUST_BIN                — path to bismark-methylation-extractor-rs (default: cargo bin in workspace)
 #
 # Output:
@@ -131,7 +131,7 @@ fi
 # ─── Repo root + binary paths ─────────────────────────────────────────
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PERL_BIN="${PERL_BIN:-$REPO_ROOT/bismark_methylation_extractor}"
+PERL_BIN="${PERL_BIN:-$REPO_ROOT/legacy_perl/bismark_methylation_extractor}"
 # Build the Rust binary in release mode for fair speed comparison.
 if [[ -z "${RUST_BIN:-}" ]]; then
   echo "==> building bismark-methylation-extractor-rs (release)..." >&2
