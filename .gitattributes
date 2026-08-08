@@ -7,7 +7,7 @@
 
 # Vendored web assets (plot.ly bundle + embedded HTML report templates).
 *.ly               linguist-vendored
-plotly/**          linguist-vendored
+legacy_perl/plotly/** linguist-vendored
 **/plotly/**       linguist-vendored
 *.html             linguist-vendored
 

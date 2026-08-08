@@ -457,13 +457,13 @@ fn version_flag_prints_provenance() {
 
 // ── Perl-vs-Rust byte identity (the §7 gate; auto-skips if tooling absent) ──
 
-/// Locate the Perl `methylation_consistency` at the repo root and confirm
+/// Locate the Perl `methylation_consistency` in repo-root `legacy_perl/` and confirm
 /// `perl` + `samtools` are on PATH. Returns the script path, or `None` (the
 /// caller then skips) if anything is missing — so this test runs locally /
 /// on colossal where the tooling exists, and is a graceful no-op elsewhere.
 fn perl_script() -> Option<std::path::PathBuf> {
-    let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../methylation_consistency");
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../legacy_perl/methylation_consistency");
     if !script.exists() {
         return None;
     }

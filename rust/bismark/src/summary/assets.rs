@@ -105,9 +105,10 @@ mod tests {
         // Drift guard: the vendored `assets/` bytes embedded via `include_str!`
         // must equal the CANONICAL repo `plotly/` files (Perl's source of truth),
         // so the publishable vendored copy can't silently drift. Runs only under
-        // `cargo test` (workspace present) — reads `../../plotly` at runtime, so
-        // it does NOT affect `cargo package`'s verify-build.
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly");
+        // `cargo test` (workspace present) — reads `../../legacy_perl/plotly` at
+        // runtime, so it does NOT affect `cargo package`'s verify-build.
+        let base =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/plotly");
         for (name, raw) in [
             ("plot.ly", PLOTLY_RAW),
             ("bismark.logo", BISMARK_LOGO_RAW),

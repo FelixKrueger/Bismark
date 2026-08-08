@@ -26,7 +26,7 @@
 #     --cells "a b c"   subset of cell names to run (default: all; cx runs first)
 #     --disk-floor-gb N pre-flight + per-cell free-space floor in GiB (default 30)
 #     --keep-all        keep large outputs even on PASS (default: purge on pass)
-#     --perl-c2c PATH   Perl coverage2cytosine (default: $PERL_C2C or repo-root ./coverage2cytosine)
+#     --perl-c2c PATH   Perl coverage2cytosine (default: $PERL_C2C or repo ./legacy_perl/coverage2cytosine)
 #     --rust-c2c PATH   Rust binary (default: $RUST_C2C or rust/target/release/coverage2cytosine_rs)
 #     -h|--help
 #
@@ -117,7 +117,7 @@ OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 # 5. Perl coverage2cytosine present + version == v0.25.1 (§3.1.5; A-M1/B-M1).
 #    The c2c banner prints "coverage2cytosine" + a line "Version: v0.25.1" —
 #    NOT the extractor's "Bismark Extractor Version:" format.
-[[ -n "$PERL_C2C" ]] || PERL_C2C="$REPO_ROOT/coverage2cytosine"
+[[ -n "$PERL_C2C" ]] || PERL_C2C="$REPO_ROOT/legacy_perl/coverage2cytosine"
 [[ -r "$PERL_C2C" ]] || usage_err "Perl coverage2cytosine not found: $PERL_C2C (set --perl-c2c or \$PERL_C2C; on oxy use the bismark-test env binary)"
 PERL_VERS_OUT="$("$PERL_C2C" --version 2>&1 || true)"
 if ! { grep -q 'coverage2cytosine' <<<"$PERL_VERS_OUT" && grep -qE 'Version: v0\.25\.1[[:space:]]*$' <<<"$PERL_VERS_OUT"; }; then

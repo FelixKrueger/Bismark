@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn perl_script() -> Option<PathBuf> {
-    // crate dir = .../rust/bismark-summary ; Perl script = repo-root/bismark2summary
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bismark2summary");
-    let plotly = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly/plot.ly");
+    // crate dir = .../rust/bismark ; Perl script = repo-root legacy_perl/bismark2summary
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/bismark2summary");
+    let plotly = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/plotly/plot.ly");
     if !p.exists() || !plotly.exists() {
         return None;
     }

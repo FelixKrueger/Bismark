@@ -25,7 +25,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-PERL_FNC="${PERL_FNC:-/Users/fkrueger/Github/Bismark/filter_non_conversion}"
+PERL_FNC="${PERL_FNC:-$(cd "$(dirname "$0")/../../../../.." && pwd)/legacy_perl/filter_non_conversion}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

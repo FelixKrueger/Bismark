@@ -3,6 +3,10 @@
 
 ## Unreleased
 
+### Repository layout
+
+- **The legacy Perl toolchain moved from the repository root to [`legacy_perl/`](legacy_perl).** The 12 Perl scripts, their `plotly/` report assets, `test_data.fastq`, and the Perl-era release packager now live in `legacy_perl/`; the repository root is Rust-first. Nothing changes for any installed package — bioconda/Homebrew/containers build from `rust/` or from the immutable `v0.25.1` tag. Old `blob/master/<script>` deep links break (GitHub does not redirect file moves); use the [`v0.25.1` tag](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) for stable Perl references. If you run the Perl scripts from a clone on your `PATH`, point it at `legacy_perl/` (or check out `v0.25.1`).
+
 ### All tools
 
 - **Short options are accepted in either letter case again, matching Perl Bismark ([#1084](https://github.com/FelixKrueger/Bismark/issues/1084)).** Perl's `Getopt::Long` is case-insensitive by default, so Perl Bismark accepted `-N`/`-L` *and* `-n`/`-l` for the Bowtie 2 seed settings — and its own help documents the uppercase spellings (`-n`/`-l` are described there as retired Bowtie 1's flags). The Rust CLI copied Perl's lowercase declarations verbatim, but clap is case-sensitive, so `bismark -N 1 -L 20` — the form the documentation shows — was rejected. Both spellings now work, so existing command lines and scripts port unchanged. Likewise `-v` is accepted alongside `-V` for `--version` across the suite, as Perl accepted it via single-dash abbreviation. Reported by @alexg9010.

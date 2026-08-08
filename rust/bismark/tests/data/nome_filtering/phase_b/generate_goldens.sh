@@ -6,7 +6,7 @@
 # identical to each `.golden` (the gzip container itself is impl-dependent, so
 # we compare post-decompression — SPEC §6/P8).
 set -eo pipefail
-NOME="$(cd "$(dirname "$0")/../../../../.." && pwd)/NOMe_filtering"
+NOME="$(cd "$(dirname "$0")/../../../../../.." && pwd)/legacy_perl/NOMe_filtering"
 
 run() {  # <case-stem>  [extra perl flags...]
   local stem="$1"; shift

@@ -113,7 +113,7 @@ mkdir -p "$OUT_DIR"
 OUT_DIR=$(cd "$OUT_DIR" && pwd)  # canonicalize
 
 # 3. Perl bismark_methylation_extractor version assertion (rev 1 I8)
-PERL_BIN="${PERL_BIN:-$REPO_ROOT/bismark_methylation_extractor}"
+PERL_BIN="${PERL_BIN:-$REPO_ROOT/legacy_perl/bismark_methylation_extractor}"
 if [[ ! -x "$PERL_BIN" ]]; then
   echo "error: Perl binary not executable: $PERL_BIN" >&2
   echo "       Activate the 'bioinf' micromamba env on colossal or set PERL_BIN." >&2

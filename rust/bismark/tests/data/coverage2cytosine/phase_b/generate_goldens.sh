@@ -2,7 +2,7 @@
 # Regenerate Phase-B byte-identity goldens from the repo's Perl coverage2cytosine
 # (v0.25.1, self-contained Perl). Run from this directory (tests/data/phase_b).
 set -eo pipefail
-C2C="$(cd "$(dirname "$0")/../../../../.." && pwd)/coverage2cytosine"
+C2C="$(cd "$(dirname "$0")/../../../../../.." && pwd)/legacy_perl/coverage2cytosine"
 for mode in default cx zero thr; do
   case $mode in
     default) flags=();;

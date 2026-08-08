@@ -10,7 +10,7 @@
 > faithful default path, faster, and lower-memory — and this is the **supported default**. Get it via
 > [Installation](#installation) (`mamba install -c bioconda bismark`, cargo, container, or prebuilt binaries) and see the
 > **[Rust suite overview](https://felixkrueger.github.io/Bismark/rust/overview/)**.
-> The original **Perl `v0.25.x`** (the scripts at this repo root) is now **legacy / maintenance-freeze**
+> The original **Perl `v0.25.x`** (now in [`legacy_perl/`](legacy_perl)) is **legacy / maintenance-freeze**
 > (critical fixes only; tagged [`v0.25.1`](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1)).
 > **New contributions should target the Rust suite** — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -57,7 +57,7 @@ brew install bismark
 
 ### Legacy: the Perl Bismark (v0.25.x)
 
-The original Perl scripts remain at this repo root (maintenance-freeze). To use them, download the [`v0.25.1` release](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) (or `mamba install bismark=0.25.1`); they need [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/)/[HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)/[minimap2](https://lh3.github.io/minimap2/minimap2.html) **and** [Samtools](http://www.htslib.org/) on the `PATH`.
+The original Perl scripts live in [`legacy_perl/`](legacy_perl) (maintenance-freeze). To use them, download the [`v0.25.1` release](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) (or `mamba install bismark=0.25.1`); they need [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/)/[HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml)/[minimap2](https://lh3.github.io/minimap2/minimap2.html) **and** [Samtools](http://www.htslib.org/) on the `PATH`.
 
 ## Links
 

@@ -9,7 +9,7 @@
 # pos shifts; only the 3 context columns are coordinate-invariant).
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-C2C="$(cd "$HERE/../../../../.." && pwd)/coverage2cytosine"
+C2C="$(cd "$HERE/../../../../../.." && pwd)/legacy_perl/coverage2cytosine"
 cd "$HERE"
 
 mkfa() { mkdir -p "$1"; printf '%b' "$2" > "$1/genome.fa"; }
