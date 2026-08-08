@@ -14,6 +14,7 @@
 
 ## History
 
+- 2026-08-08: **PR #1098 MERGED** (squash → dev `5e40555`; all 4 CI runs on `0f358d8` green, jobs enumerated; G29 verified 0-line diff; branch pruned) — **feature COMPLETE**
 - 2026-08-08: Code Review + Coverage → ✅ Complete (A+B APPROVE, 0 Critical/High; coverage COMPLETE 63 items; contested execute-bit finding applied with B's dissent recorded; Commit 3 = 8 review fixes; PR #1098 CI green on 19cb7db, re-verification pending on Commit 3)
 - 2026-08-08: Implementation → ✅ Complete (Commits dea61f9 + 19cb7db; PR #1098 opened; all V-rows green)
 - 2026-08-08: Plan → rev 2 (dual-review findings folded in: +9 consumers, golden-script up-count repair, legacy_perl_layout.rs existence test, V0 baseline + rewritten V1–V9, perl-oracle scope corrected, packager accepted-as-broken as Open-5, counts/sizes fixed, §12 declined-scope register added)

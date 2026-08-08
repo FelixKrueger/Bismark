@@ -1,101 +1,76 @@
-# Session Handoff — 2026-08-08
+# Session Handoff — 2026-08-08 (legacy_perl move)
 
-**Everything from the last handoff's menu is closed or waiting on outsiders.** `dev` is at **`31bae51`**, clean, pushed, in sync — and its CI is **fully green for the first time since `7be9dde`**.
+**This session moved the frozen Perl toolchain out of the repository root into `legacy_perl/`** — PR [#1098](https://github.com/FelixKrueger/Bismark/pull/1098), branch `legacy-perl-move`, three commits (`dea61f9` pure move → `19cb7db` consumer fixes + layout gate → `0f358d8` review fixes). Full pipeline ran: plan rev 0→2, dual plan review (REQUEST CHANGES ×2, all folded), implement with sabotage-first validation, dual code review (**APPROVE ×2**, 0 Critical/High), coverage audit (**COMPLETE**, 63 items).
 
-> 🚫 **STILL NO RELEASE.** `dev`→`master` = the release signal; the 3.2.0 cut stays a deliberate act (reopen PR [#1096](https://github.com/FelixKrueger/Bismark/pull/1096) when wanted). `dev` is now ~24 commits ahead of `master`. The five version literals reading `3.1.0` remain correct — leave them.
+> ✅ **MERGED.** All 4 CI runs on `0f358d8` green with every job enumerated via `gh run view --json jobs` (6/6 Rust CI incl. `perl-oracle byte-identity` + both feature jobs; `BismarkCI` = the 44 `./legacy_perl/` invocations end-to-end). Squashed into `dev` as **`5e40555`** (2026-08-08 11:02 UTC); G29-verified (`git diff 0f358d8 origin/dev` = 0 lines, PR state MERGED); branch pruned locally + remotely; local `dev` synced.
 
-**Next session: nothing is urgent.** Watch two external threads:
-
-1. **[nloyfer/wgbs_tools#120](https://github.com/nloyfer/wgbs_tools/pull/120)** — the `--five_base` polarity flag, **submitted 2026-08-08**, awaiting the maintainer. Fork `FelixKrueger/wgbs_tools`, branch `five-base-polarity`, commit `fd16352`. If revisions are requested, see §5 (wgbs_tools gotchas) before touching anything.
-2. **Bismark #787** — @Danielsm8 still hasn't answered the contig-intersection diagnostic (last comment remains ours, `5220352348`). Not a blocker.
-
----
+> 🚫 **STILL NO RELEASE.** `dev`→`master` = the release signal; 3.2.0 stays a deliberate act (PR #1096). The five `3.1.0` version literals remain correct. #1098 rides the 3.2.0 train via its CHANGELOG "Repository layout" entry.
 
 ## 1. What we accomplished
 
-Three commits on `dev` (`a33ac4e..31bae51`, 12 files, +1303/−59); PR #1097 squash-carried five feature-branch commits.
-
 | Commit | What |
 |---|---|
-| `26eb28a` | **wgbs_tools check 2 closed** — flag-gated `--five_base` patch written (plumbing read first), byte-identity proven at 3 levels, draft finalized, patch file saved |
-| `fc265ba` | **PR [#1097](https://github.com/FelixKrueger/Bismark/pull/1097) merged** — the two #1095 validation gates + the CI samtools repair (full pipeline: plan rev 0→1, dual plan review, implement, dual code review A+B APPROVE, coverage COMPLETE, 3 agreed Low fixes, CI 6/6 green) |
-| `31bae51` | **Upstream PR submitted** as nloyfer/wgbs_tools#120 |
+| `dea61f9` | **Pure `git mv`** (24 renames, 0 edits): 12 Perl scripts, `copy_bismark_files_for_release.pl`, `plotly/` (10 files), `test_data.fastq` → `legacy_perl/` |
+| `19cb7db` | **All 24 consumer code sites fixed** (8 Rust oracle literals, 2 plotly drift guards, 7 golden scripts, 4 `scripts/` harnesses, 44 `ci_tests.yml` invocations) + **new `tests/legacy_perl_layout.rs`** (unconditional existence gate) + `.gitattributes`/`.dockerignore`/README/CHANGELOG/rust-README prose |
+| `0f358d8` | **Dual-review fixes**: layout gate now asserts execute bits (`cfg(unix)`), drift-guard messages name `legacy_perl/plotly/`, `rust/README.md:102` emphasis inverted, `.gitattributes` realigned, 2 shell polish items + review/coverage artifacts committed |
 
-**wgbs_tools evidence (check 2, "we broke nothing"):** patch-present-flag-off `.pat` is **byte-identical** to stock for (a) `patter` standalone on synthetic mixed-methylation PE bisulfite, (b) `patter` standalone on **real WGBS chr21** — 59,250 pat lines, 0 differences, (c) a full `wgbstools bam2pat` run (patched vs stock `bam2pat.py`, decompressed `.pat.gz`). Positive controls: flag-on = exact per-line C↔T mirror in all three settings, and **byte-identical to the old unconditional-swap binary** — carrying checks 1/4 over by observation. All four validation checks now pass; full record in `plans/08062026_five-base-bisulfite-bam/EXPERIMENT_patter_flag_gated.md` + `five_base_wgbs_tools.patch`.
-
-**#1097 (branch `1095-validation-gates`, G23 branch-first honored):**
-- **Gate 1 (§9.8):** `XG == "CT" ⟺ FLAG ∉ {16,83,163}` per record over `nondir_pe_1030.bam` (record census 4/4/6/6 + **pair-structure census** pinning the #1030 swap `(147,99)×4/(163,83)×6`) and the SE fixture (`(CT,0)×4/(GA,16)×4` — the only committed FLAG-16 witness).
-- **Gate 2:** idempotence round-trip parameterised over both PE dedup fixtures (20 and 12,974 records, byte-identical).
-- **CI repair:** samtools mirrored into `rammap-inprocess` + `binseq-input` jobs — they run the #1095 gates and had been red on `dev` since `7be9dde` (exactly 3 samtools-guard panics each, verified from the run logs).
-- Every census constant measured off the fixtures; every new assertion observed failing once under sabotage before being trusted; 11/11 green, fmt + clippy clean (default + `rammap-inprocess`).
+**Validation record** (PLAN.md §12): baseline battery 72 ok on `dev` → post-move sabotage failed **exactly the 20 predicted loud gates** while 13 skip-capable summary/template oracles stayed *silently* green (the hazard the layout gate closes) → post-fix 73 ok = baseline+1, 0 failed → layout gate observed red under deliberate sabotage → fmt + clippy (default **and** `rammap-inprocess`) clean → Perl `bismark2report` proven to splice plotly from the new home.
 
 ## 2. What's still pending
 
 | Item | State |
 |---|---|
-| wgbs_tools#120 | Submitted, awaiting nloyfer. Memory entry `project_wgbs_tools_upstream_pr.md` tracks it |
-| #787 | Awaiting @Danielsm8's contig-intersection result |
-| Release 3.2.0 | Deliberately deferred (banner above) |
-| Remaining G9 gaps (3 of 5) | Deliberately out of scope, recorded in `plans/08072026_1095-validation-gates/PLAN.md` Open-3: unmapped pass-through fixture, lower-case `MD`, fixture letter census |
-| Declined review extensions | Gate 1 over the synth fixture (reviewer verified 0 violations — free if wanted); PE header/`@PG` preservation gate. Both in PLAN §12 |
-| PR #1091 (rapidgzip) | Open, not ours, untouched |
+| §13 follow-ups (deliberately not absorbed) | `perl-oracle` EXPECTED=13→26 hardening; centralized `legacy_perl_script()` helper; both recorded in PLAN.md §13 |
+| V9 `.dockerignore` proof | Optional; retire at next `release.yml dry_run=true` |
+| wgbs_tools#120 | Unchanged — submitted 2026-08-08, zero maintainer activity (checked this session) |
+| Bismark #787 | Unchanged — closed, last comment ours (contig-intersection diagnostic), @Danielsm8 silent; their UXM worked after UCSC-hg38 rebuild |
+| Release 3.2.0 | Deliberately deferred (banner) |
 
 ## 3. Key decisions (with rationale)
 
 | Decision | Rationale |
 |---|---|
-| **CI samtools fix carried in the gates branch**, not a separate `dev` hotfix | Two line-edits that belong with the #1095 follow-up; the PR's green feature jobs then demonstrate repair + new gates in one run (Felix accepted this) |
-| **Gate 1 set-form only** (`FLAG ∉ {16,83,163}`); bit gloss deleted | `FLAG & 0x10` is provably false on PE — FLAG 147 is reverse *and* `XG:CT` (10/20 fixture records). Both plan reviewers caught my rev-0 self-contradiction |
-| **Pair-structure census added to Gate 1** | "Only fixture with all four XG/FLAG combinations" was false — the synth PE fixture has all four at *record* level; `nondir_pe_1030.bam`'s uniqueness is the *pair-level* #1030 swap, which a record census can't guard |
-| samtools-text gates, not noodles | Idiom-consistency with the whole file; the CI panic guard already prevents silent skips. A noodles port is a coherent future whole-file refactor |
-| Only both-reviewer Low fixes applied post-review | Census-before-converter, hoisted `count_of`, tag-scoped XG scan. Scope extensions declined and recorded rather than silently absorbed |
-| **#120 posture: friendly paragraph + folded AI-assisted details** | Felix asked for friendly/human; global upstream rules demand the short visible paragraph, reasoning in the commit message. `add_cpg_counts.h` sibling constants disclosed as optional follow-up |
-| wgbs_tools patch overrides public `OT`/`OB` in `main.cpp`, no header/constructor change | The only construction site is `main.cpp`; the entire behaviour change sits inside the flag's `if`, making "default path untouched" reviewable by inspection and provable by the byte gate |
+| Directory named `legacy_perl/` | Felix's explicit choice (over `perl/`) |
+| Python coverage helpers stay at root | Felix's manual-review veto of the plan's default |
+| Layout gate = unskippable existence test now; `EXPECTED=26` CI hardening deferred to §13 | Reviewer B's line: the CI extension alters what CI asserts, not where files live — wrong PR to smuggle it into. Reviewer A's fuller fix recorded, not absorbed |
+| Golden scripts' up-counts **repaired**, not preserved | All 7 were already broken (resolved to `rust/` — multicall-consolidation relic, verified empirically); they're the reproducibility record for checked-in goldens |
+| `copy_bismark_files_for_release.pl` moved **accepted-broken** (Open-5) | Already dead today (`Docs/make_docs.pl` inputs don't exist); superseded by `release.yml`; documented rather than fixed |
+| Execute-bit assertion applied despite reviewer disagreement | A: Medium (bit is load-bearing for 44 workflow steps); B: skippable (CI catches it loudly). ~10 lines, strengthens the gate's actual contract; B's dissent recorded in PLAN §12 |
+| `license.txt` stays at root | `release.yml:137` packages it from there — the one near-miss the inventory caught |
+| Root symlinks rejected | Defeats the landing-page goal; GitHub blob URLs don't follow symlinks anyway |
 
 ## 4. Files modified
 
-| Path | |
-|---|---|
-| `rust/bismark/tests/aligner_five_base_bisulfite.rs` | 7 → 11 gates: `assert_xg_iff_flag` + 2 contract tests, `assert_bisulfite_round_trip` + 2 PE tests, `dedup_fixture`, `count_of` |
-| `.github/workflows/rust_ci.yml` | samtools in both feature jobs (identical blocks — one `replace_all`) |
-| `plans/08072026_1095-validation-gates/` | **New feature dir**: PLAN (rev 1 + §12), PROGRESS, PLAN_REVIEW_A/B, CODE_REVIEW_A/B, COVERAGE (Verdict COMPLETE) |
-| `plans/08062026_five-base-bisulfite-bam/` | DRAFT (now marked SUBMITTED #120), **new** `EXPERIMENT_patter_flag_gated.md`, **new** `five_base_wgbs_tools.patch` |
-| `SESSION_HANDOFF.md` | This document |
+All on branch `legacy-perl-move` (see the 3 commits): `legacy_perl/**` (24 moved), 10 Rust test/src files + 1 new test, 7 golden scripts + `nome_gate.sh`, 4 `scripts/` harnesses, `.github/workflows/ci_tests.yml`, `.gitattributes`, `.dockerignore`, `README.md`, `rust/README.md`, `CHANGELOG.md`, `plans/08082026_legacy-perl-move/` (PLAN rev 2 + §12 notes, PROGRESS, PLAN_REVIEW_A/B, CODE_REVIEW_A/B, COVERAGE).
 
-**Outside the repo:** fork `FelixKrueger/wgbs_tools` created (branch `five-base-polarity`, commit `fd16352`); memory `project_wgbs_tools_upstream_pr.md` + MEMORY.md line added; Bismark PRs #1097 (merged) and nloyfer/wgbs_tools#120 (open) created.
+**Outside the PR:** project `CLAUDE.md` updated (still untracked, as before); `.claude/settings.local.json:7-27` holds now-stale absolute-path permission entries → expect re-prompts (cosmetic, local).
 
 ## 5. Gotchas and constraints
 
 ### New this session
 
-**H1 — 🔑 `patter` flags must FOLLOW the two positionals** (`patter DICT REGION [flags]`). A leading flag becomes the dict path and the error surfaces as `tabix: unrecognized option '--five_base'` — and the run produces an **empty** output file, which makes a "differs from stock" check pass vacuously. `bam2pat.py` appends flags after positionals, so the CLI patch is consistent.
+**N1 — 🔑 `gh run list --commit <short-sha>` silently matches NOTHING.** It needs the full 40-char SHA; with a short one the result is an empty list, so any "0 runs incomplete" check passes **vacuously** (bit this session's first CI watcher). Guard every completion check with a count assertion (`length >= expected`), and pass `$(git rev-parse <short>)`.
 
-**H2 — `wgbstools init_genome` silently filters non-chromosome contig names** (`is_valid_chrome`, `init_genome.py:278`: `^(chr)?(\d+|[XYM]|MT)$`). Symptom: "Invalid input argument / No objects to concatenate". Rename the contig (e.g. `pUC19` → `chr1`) for end-to-end runs.
+**N2 — libtest swallows skip notices on passing tests.** The 12 `summary_perl_oracle.rs` oracles + `summary_template_drift.rs` pass with **zero output** when the Perl script is missing (stdout only shown on failure) — even the one test that prints a notice. A skip-capable test's green is unverifiable from its own output; count/name-presence assertions are the only honest gate.
 
-**H3 — `gh pr checks --watch` can miss late-registering jobs.** It reported 5 job types green while `binseq-input` was absent from the snapshot; the run was actually 6/6. **Declare CI green only from `gh run view <id> --json jobs`.**
+**N3 — oracle-battery ok-counts are toolchain-sensitive.** The `oracle_`/`byte_identical` filters incidentally match ~38 non-Perl unit tests whose population shifts with rustc/features (72 vs 73 across runs of the same tree). Only same-session back-to-back counts are comparable; the durable invariant is the 34-name Perl-dependent population (list in CODE_REVIEW_A).
 
-**H4 — the dual-driver CI trap, concretely:** any tool-availability panic guard added to tests must be mirrored into **both** feature jobs (`rammap-inprocess`, `binseq-input`) — they run `cargo test -p bismark` too. The minimap2 guard was mirrored when added; samtools' wasn't, and `dev` sat red from `7be9dde` until #1097.
+**N4 — `bismark` crate ships `tests/` in its crates.io tarball** (no `include`/`exclude`), so the layout gate — like the pre-existing drift guards — fails under `cargo test` outside a full checkout, and `.dockerignore` now prunes `legacy_perl/` so a Docker-context `cargo test` would too (nothing does that today). If ever closed: gate on a workspace marker, never on `legacy_perl/` (that would reintroduce skippability). PLAN §13.6.
 
-**H5 — shell traps:** a bare `===` token in a compound command aborts it in this zsh env (`=word` triggers =command expansion). A Bash call containing `rm -rf` is denied by the permission layer — use fresh directory names instead of cleanup.
+**N5 — cargo needs an unsandboxed call to unpack new registry deps** (`~/.cargo/registry` is sandbox-write-denied): first `--features rammap-inprocess` build in a session may die "Operation not permitted". Retry unsandboxed once; subsequent sandboxed builds work.
 
-**H6 — `wgbstools bam2pat --no_beta`** skips the beta step, which otherwise exits 127 unless `stdin2beta` is also compiled (`setup.py -t` builds only named targets). The `.pat.gz` is complete before the beta step either way.
-
-**H7 — Bismark drops a PE pair whose mate sits at POS 1** from the BAM while the report still counts it as a unique alignment (fixture `m002_OB_0`, pUC19 fragment [0,180)). Boundary quirk, not chased; don't let it confuse a record-count reconciliation.
-
-**H8 — `chunks(2)` pair logic on Bismark PE BAMs is sound** only because R1/R2 are file-order adjacent with shared QNAME — assert both (the Gate 1 pair census does).
+**N6 — moved-path facts for future edits:** the Perl scripts find each other and plotly via `$RealBin` (extractor→bedGraph/c2c, bismark→bam2nuc, report/summary→plotly) — anything moved must move as a set with `plotly/`. `use lib "$RealBin/../lib"` is a no-op both sides. `ci_tests.yml` outputs land in the job CWD (repo root), so only program paths carry the `legacy_perl/` prefix.
 
 ### Carried forward (verbatim-critical)
 
-**G13 — 🔑 `wgbs_tools` `setup.py` does NOT fail on a compile error** (the `raise` is commented out, `setup.py:33`). A broken module prints red `FAIL`, exits 0, and the old binary stays. Always `cmp` binaries after a rebuild.
+**G13/G19/G20** — vacuous verification (N1/N2 are fresh instances); a check whose failure you have never observed is not yet a check; verify contested reviewer claims at source (twice this session both contested claims resolved in B's favor: golden scripts already broken; 11/12 summary oracles silent).
 
-**G19/G20 — 🔑 vacuous verification + reviewer fallibility.** Both bit again this session: the empty-output "DIFFERS" (H1) and the checks-list missing job (H3) were caught only by looking at *what kind* of result appeared; and my own rev-0 plan carried a provably-false bit-form that only the dual review caught. A check whose failure you have never observed is not yet a check; verify contested reviewer claims against source, never pick a reviewer.
+**G21/G22** — `gh`/`git push`/`curl` need `dangerouslyDisableSandbox`; `gh api` doesn't paginate; quote URLs with `?`. **H3** — declare CI green only from `gh run view <id> --json jobs`. **H4** — mirror any tool-availability guard into BOTH feature jobs. **H5** — bare `===` aborts zsh compound commands; `rm -rf` denied by permissions.
 
-**G21/G22 — `gh` traps:** `gh api` doesn't paginate by default (truncated page ≙ absent record); quote URLs containing `?` (zsh globs); `gh`/`git push`/`curl` need `dangerouslyDisableSandbox`; `$TMPDIR` differs between sandboxed and unsandboxed calls.
+**G23** — BRANCH FIRST (honored: `legacy-perl-move`). **G25** — merging to `dev` closes no issues. **G28/G29** — `git status` before `gh pr merge --delete-branch`; verify squash by `git diff <tip> origin/dev` = 0 lines + PR state, never ancestry.
 
-**G23 — BRANCH FIRST** — honored this session (`1095-validation-gates` → PR #1097 → squash into `dev`); keep it that way. **G25** — merging to `dev` does not close linked issues. **G28/G29** — check `git status` before `gh pr merge --delete-branch`; verify a squash-merge by `git diff <tip> origin/dev` (expect 0 lines) + PR state, never ancestry.
+**Session grep is a ugrep wrapper** — `grep -c` etc. can return nothing; use `command grep` for anything load-bearing (bit this session).
 
-**G26/G27 — Rust CI gates:** workflow-scope `RUSTFLAGS: -D warnings` means feature-gated warnings fail CI while local default gates stay green — run `cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings`; `cargo fmt --check` is its own job.
+### Prior-session context (still live)
 
-### #1095 design facts
-
-The 12 design facts (G1–G12 of the previous handoff: `iter_aligned()` ban, `NM` counting soft-clips, the §3.6 masking rule, `Drop`-writes-EOF refusal contract, etc.) now live in `plans/08062026_five-base-bisulfite-bam/PLAN.md` §9–§10b and its reviews — consult those before touching `five_base_bisulfite.rs`; do not re-derive them.
+wgbs_tools#120 gotchas (patter flag order H1, init_genome contig filter H2, setup.py silent compile-fail G13) are in the 2026-08-08 morning handoff — recover via `git log -p SESSION_HANDOFF.md` if #120 gets maintainer feedback.
