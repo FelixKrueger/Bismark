@@ -9,7 +9,13 @@
 //! `SEQ` already carries meth/unmeth at every letter position — so it exercises the encoding
 //! table, the `XG`→pair mapping, the positional zip, OB-strand orientation, the `NM`/`MD`
 //! arithmetic, **and** the masking rule (whose set is provably empty on unmasked input) in
-//! one comparison, using a committed fixture and no 5-Base data.
+//! one comparison, using committed fixtures and no 5-Base data. It runs over three fixtures:
+//! the SE soft-clip/indel one and both PE dedup fixtures, including the #1030 non-directional
+//! BAM whose FLAG-swapped pairs cover all four strand indices.
+//!
+//! The `XG` ⟺ FLAG gates (§9.8) pin the Bismark-BAM data contract the converter's encoding
+//! table relies on; they run no converter code, and the contract is invisible to the
+//! idempotence gate (`methylation_call` branches on `XR`, so the agreement is emergent).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,6 +43,11 @@ fn fixture() -> PathBuf {
     data_dir()
         .join("five_base_bisulfite")
         .join("softclip_indel_se.bam")
+}
+
+/// Committed PE fixtures shared with the dedup tests.
+fn dedup_fixture(name: &str) -> PathBuf {
+    data_dir().join("dedup").join(name)
 }
 
 fn samtools_available() -> bool {
@@ -81,32 +92,139 @@ fn run_converter(input: &Path, out_dir: &Path) -> std::process::Output {
         .expect("run bismark")
 }
 
-/// 🔑 The idempotence gate. A bisulfite BAM in must give identical SAM text out.
-#[test]
-fn bisulfite_input_round_trips_to_identical_sam_text() {
+/// Round-trip body shared by the three idempotence gates. `expected_records` pins the
+/// input's record count so two empty streams can never satisfy the comparison.
+fn assert_bisulfite_round_trip(input: &Path, expected_records: usize) {
     if !samtools_available() {
         eprintln!("skipping: samtools not on PATH");
         return;
     }
+    let before = sam_body(input);
+    assert_eq!(
+        before.lines().count(),
+        expected_records,
+        "fixture record count drifted"
+    );
+
     let tmp = tempfile::tempdir().unwrap();
-    let out = run_converter(&fixture(), tmp.path());
+    let out = run_converter(input, tmp.path());
     assert!(
         out.status.success(),
         "converter failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let produced = tmp.path().join("softclip_indel_se.bisulfite.bam");
+    let stem = input.file_stem().unwrap().to_string_lossy();
+    let produced = tmp.path().join(format!("{stem}.bisulfite.bam"));
     assert!(produced.exists(), "no output BAM written");
-
     // Compare decompressed SAM bodies, not bytes: BGZF block boundaries are writer-dependent
     // and `NM` is re-encoded as i32, so a byte comparison would fail for reasons that have
     // nothing to do with the conversion.
     assert_eq!(
-        sam_body(&fixture()),
+        before,
         sam_body(&produced),
         "converting a bisulfite BAM must not change a single record"
     );
+}
+
+/// 🔑 The idempotence gate. A bisulfite BAM in must give identical SAM text out.
+#[test]
+fn bisulfite_input_round_trips_to_identical_sam_text() {
+    assert_bisulfite_round_trip(&fixture(), 8);
+}
+
+/// PE + all four strand indices: the #1030 non-directional fixture (every pair
+/// FLAG-swapped) must round-trip identically — the SE fixture covers only two of four.
+#[test]
+fn nondir_pe_all_four_strand_indices_round_trip_identically() {
+    assert_bisulfite_round_trip(&dedup_fixture("nondir_pe_1030.bam"), 20);
+}
+
+/// Real-scale PE: mate fields (`RNEXT`/`PNEXT`/`TLEN`), 42 records with indels, and
+/// QNAME-suffix barcodes survive re-encoding byte-for-byte.
+#[test]
+fn real_pe_with_mate_fields_and_indels_round_trips_identically() {
+    assert_bisulfite_round_trip(
+        &dedup_fixture("synth_barcode_10k_R1_val_1_bismark_bt2_pe.bam"),
+        12974,
+    );
+}
+
+// ---- XG ⟺ FLAG (§9.8) ----------------------------------------------------------------
+
+/// §9.8: `XG == "CT" ⟺ FLAG ∉ {16, 83, 163}` per record. Set form on purpose — the bit
+/// form (`FLAG & 0x10 == 0`) is FALSE on PE, where R2 of an OT pair (FLAG 147) is
+/// reverse-strand yet `XG:Z:CT`. Returns the (QNAME, FLAG, XG) census for the caller.
+fn assert_xg_iff_flag(bam: &Path) -> Vec<(String, u16, String)> {
+    let mut census = Vec::new();
+    for line in sam_body(bam).lines() {
+        let mut fields = line.split('\t');
+        let qname = fields.next().unwrap().to_string();
+        let flag: u16 = fields.next().unwrap().parse().unwrap();
+        let xg = fields
+            .skip(9) // RNAME..QUAL — search only the optional tags
+            .find_map(|f| f.strip_prefix("XG:Z:"))
+            .unwrap_or_else(|| panic!("record without XG tag: {line}"))
+            .to_string();
+        assert!(xg == "CT" || xg == "GA", "unexpected XG value {xg}");
+        assert_eq!(
+            xg == "CT",
+            !matches!(flag, 16 | 83 | 163),
+            "XG ⟺ FLAG contract violated: FLAG {flag}, XG {xg} ({qname})"
+        );
+        census.push((qname, flag, xg));
+    }
+    census
+}
+
+fn count_of(census: &[(String, u16, String)], flag: u16, xg: &str) -> usize {
+    census
+        .iter()
+        .filter(|(_, f, x)| *f == flag && x == xg)
+        .count()
+}
+
+/// The converter's encoding table keys on `XG` and its orientation handling on FLAG; their
+/// agreement is emergent (`methylation_call` branches on `XR`) and invisible to the
+/// idempotence gate. This test runs no converter code — it pins the data contract on the
+/// non-directional fixture, plus the #1030 pair structure that makes that fixture the
+/// non-directional guard (a directional regeneration passes the record census but not this).
+#[test]
+fn xg_ct_iff_forward_flags_over_all_four_strand_indices() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let census = assert_xg_iff_flag(&dedup_fixture("nondir_pe_1030.bam"));
+    assert_eq!(census.len(), 20, "fixture record count drifted");
+    assert_eq!(count_of(&census, 99, "CT"), 4);
+    assert_eq!(count_of(&census, 147, "CT"), 4);
+    assert_eq!(count_of(&census, 83, "GA"), 6);
+    assert_eq!(count_of(&census, 163, "GA"), 6);
+    for pair in census.chunks(2) {
+        let [(q1, f1, _), (q2, f2, _)] = pair else {
+            panic!("odd record count in a paired fixture");
+        };
+        assert_eq!(q1, q2, "file-order pair must share a QNAME");
+        assert!(
+            matches!((*f1, *f2), (147, 99) | (163, 83)),
+            "pair FLAGs must be #1030-swapped, got ({f1}, {f2}) for {q1}"
+        );
+    }
+}
+
+/// The same contract on the SE fixture — the only committed witness of FLAG `16` (the PE
+/// fixture's reverse FLAGs are 83/163), so every element of the §9.8 set is exercised.
+#[test]
+fn xg_iff_flag_holds_on_the_se_fixture() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let census = assert_xg_iff_flag(&fixture());
+    assert_eq!(census.len(), 8, "fixture record count drifted");
+    assert_eq!(count_of(&census, 0, "CT"), 4);
+    assert_eq!(count_of(&census, 16, "GA"), 4);
 }
 
 /// The report must say so too — 0 flips, 0 masked. `flipped == 0` is the file-level assertion
