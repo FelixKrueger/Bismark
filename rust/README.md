@@ -99,7 +99,7 @@ The final Perl release is **v0.25.1** — the byte-identity target the Rust suit
 conda install -c bioconda bismark=0.25.1            # bioconda
 ```
 
-Or run it from source: download the [v0.25.1 release](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) (or `git checkout v0.25.1`) — the Perl scripts (`bismark`, `deduplicate_bismark`, `bismark_methylation_extractor`, …) live in `legacy_perl/` (at the `v0.25.1` tag: the repository root) and need **Perl** + a **Bowtie 2 / HISAT2** backend + **samtools** on `PATH`.
+Or run it from source: download the [v0.25.1 release](https://github.com/FelixKrueger/Bismark/releases/tag/v0.25.1) (or `git checkout v0.25.1`) — the Perl scripts (`bismark`, `deduplicate_bismark`, `bismark_methylation_extractor`, …) sit at the repository root there (on `master`/`dev` they live in `legacy_perl/`) and need **Perl** + a **Bowtie 2 / HISAT2** backend + **samtools** on `PATH`.
 
 ## Combined-index alignment (v2, opt-in)
 

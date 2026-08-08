@@ -389,8 +389,28 @@ Executed in plan order; all validation rows satisfied. Evidence logs in the sess
    `crossbeam-epoch` under `~/.cargo`) — environmental, not code.
 4. `ci_tests.yml` edited via longest-name-first `replace_all` (44 verified) rather than sed.
 5. Project `CLAUDE.md` text updated as planned but remains untracked (its prior status).
-6. Golden-script up-count repairs verified empirically: all four sampled resolve to
-   `/Users/fkrueger/Github/Bismark` (was `…/Bismark/rust`).
+6. Golden-script up-count repairs verified empirically — and re-verified for **all seven** by
+   both code reviewers: every one resolves to `/Users/fkrueger/Github/Bismark` (was
+   `…/Bismark/rust`).
+7. **A 7th golden script was repaired** —
+   `tests/data/coverage2cytosine/phase3_ffs/generate_goldens.sh:12` — same relic, same fix.
+   §5(d)'s table of six was one short (a plan-inventory gap the implementation closed); the
+   true counts are **7 golden scripts / 24 code sites**. Caught by both code reviewers and the
+   coverage audit.
+8. **V2's ok-count is toolchain-sensitive** (code review A): the 72/73 counts were recorded
+   back-to-back on one toolchain (rustc 1.95.0) and hold there; A's independent re-run measured
+   72 with the full 34-name Perl-dependent population present and passing, because the
+   `oracle_`/`byte_identical` filters incidentally match ~38 non-Perl unit tests whose
+   population shifts with toolchain/features. The durable invariant is **name-presence**, which
+   both reviewers verified; treat the counts as same-session evidence only.
+
+**Post-review fixes applied (Commit 3):** execute-bit assertion added to the layout gate for
+the 12 scripts (`#[cfg(unix)]`; review A M2 — review B assessed it skippable, dissent noted);
+drift-guard assert messages + comments now name `legacy_perl/plotly/` (both reviewers);
+`.gitattributes` block realigned (both); `rust/README.md:102` emphasis inverted to lead with
+the tag layout its own instruction produces (both); `filter_nonconversion/generate_goldens.sh`
+reuses `HERE` instead of computing `dirname` twice (B); `c2c_byte_identity_matrix.sh:29` help
+text "repo" → "repo-root" (B).
 
 ## 13. Declined scope extensions & follow-ups (recorded, not absorbed)
 
@@ -408,3 +428,9 @@ Executed in plan order; all validation rows satisfied. Evidence logs in the sess
    story simple, and the branch is pushed whole (Assumption 9).
 5. **Env overrides for the five phase-level golden scripts** — declined as scope creep; their
    up-count is repaired here, which is the part that matters for reproducibility.
+6. **Published-crate tarball constraint** (code review A L6, informational): `bismark` ships
+   `tests/` in its crates.io tarball with no `include`/`exclude`, so the layout gate — like the
+   two pre-existing drift guards — fails under `cargo test` outside a full repo checkout
+   (including any future Docker-context test step, since `.dockerignore` now prunes
+   `legacy_perl/`). Nothing runs tests in those contexts today. If ever closed, gate on a
+   workspace marker — never on `legacy_perl/` itself, which would reintroduce skippability.

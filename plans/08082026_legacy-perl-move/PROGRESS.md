@@ -9,11 +9,13 @@
 | Plan | ✅ Complete | PLAN.md (rev 2 — all dual-review findings folded in; awaiting implementation trigger) |
 | Plan Review | ✅ Complete | PLAN_REVIEW_A.md + PLAN_REVIEW_B.md — both REQUEST CHANGES; all Critical+Important findings folded into rev 2 |
 | Implementation | ✅ Complete | All V-rows green: V1 sabotage = exactly the 20 predicted loud failures + 13 silent greens demonstrated; V2 = 73 ok (baseline+1, 0 fail); V3 layout gate red-under-sabotage; fmt+clippy×2 clean; PLAN.md §12 has notes + 6 minor deviations |
-| Code Review | ⬜ Not started | Dual reviewers post-implementation |
-| Coverage | ⬜ Not started | plan-manager audit |
+| Code Review | ✅ Complete | CODE_REVIEW_A.md + CODE_REVIEW_B.md — **both APPROVE** (0 Critical/High); agreed + unique fixes applied as Commit 3 (PLAN §12 post-review list) |
+| Coverage | ✅ Complete | COVERAGE.md — **Verdict COMPLETE** (63 items: 60 DONE, 3 documented deviations, 0 MISSING/PARTIAL); V6+V8 confirmed green from `gh run view --json jobs` |
 
 ## History
 
+- 2026-08-08: Code Review + Coverage → ✅ Complete (A+B APPROVE, 0 Critical/High; coverage COMPLETE 63 items; contested execute-bit finding applied with B's dissent recorded; Commit 3 = 8 review fixes; PR #1098 CI green on 19cb7db, re-verification pending on Commit 3)
+- 2026-08-08: Implementation → ✅ Complete (Commits dea61f9 + 19cb7db; PR #1098 opened; all V-rows green)
 - 2026-08-08: Plan → rev 2 (dual-review findings folded in: +9 consumers, golden-script up-count repair, legacy_perl_layout.rs existence test, V0 baseline + rewritten V1–V9, perl-oracle scope corrected, packager accepted-as-broken as Open-5, counts/sizes fixed, §12 declined-scope register added)
 - 2026-08-08: Plan Review → ✅ Complete (both REQUEST CHANGES; near-identical Critical sets independently derived; 2 inter-reviewer discrepancies resolved at source — golden scripts already broken today, 11/12 summary oracles skip silently)
 - 2026-08-08: Plan Review → 🔄 launched (dual independent reviewers, fresh contexts, PLAN_REVIEW_A/B.md)

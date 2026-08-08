@@ -26,7 +26,7 @@
 #     --cells "a b c"   subset of cell names to run (default: all; cx runs first)
 #     --disk-floor-gb N pre-flight + per-cell free-space floor in GiB (default 30)
 #     --keep-all        keep large outputs even on PASS (default: purge on pass)
-#     --perl-c2c PATH   Perl coverage2cytosine (default: $PERL_C2C or repo ./legacy_perl/coverage2cytosine)
+#     --perl-c2c PATH   Perl coverage2cytosine (default: $PERL_C2C or repo-root ./legacy_perl/coverage2cytosine)
 #     --rust-c2c PATH   Rust binary (default: $RUST_C2C or rust/target/release/coverage2cytosine_rs)
 #     -h|--help
 #

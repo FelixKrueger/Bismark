@@ -103,10 +103,9 @@ mod tests {
     #[test]
     fn vendored_assets_match_repo_plotly_files() {
         // Drift guard: the vendored `assets/` bytes embedded via `include_str!`
-        // must equal the CANONICAL repo `plotly/` files (Perl's source of truth),
-        // so the publishable vendored copy can't silently drift. Runs only under
-        // `cargo test` (workspace present) — reads `../../legacy_perl/plotly` at
-        // runtime, so it does NOT affect `cargo package`'s verify-build.
+        // must equal the canonical `legacy_perl/plotly/` files (Perl's source of
+        // truth), so the publishable vendored copy can't silently drift. Reads the
+        // path at test runtime, so `cargo package`'s verify-build is unaffected.
         let base =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/plotly");
         for (name, raw) in [
@@ -115,7 +114,10 @@ mod tests {
             ("bioinf.logo", BIOINF_LOGO_RAW),
         ] {
             let on_disk = std::fs::read_to_string(base.join(name)).unwrap();
-            assert_eq!(on_disk, raw, "vendored {name} drifted from plotly/{name}");
+            assert_eq!(
+                on_disk, raw,
+                "vendored {name} drifted from legacy_perl/plotly/{name}"
+            );
         }
     }
 }
