@@ -540,10 +540,7 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
             "--five_base_consensus_from_bam requires --genome <folder>".into(),
         ));
     };
-    let genome_dir = std::fs::canonicalize(genome_arg).map_err(|e| {
-        AlignerError::Validation(format!("consensus: --genome {}: {e}", genome_arg.display()))
-    })?;
-    let (fastas, _kind) = crate::aligner::discovery::discover_fastas(&genome_dir)?;
+    let fastas = crate::aligner::discovery::discover_genome_fasta_only(genome_arg)?.fastas;
     let genome = read_genome_into_memory(&fastas)?;
     let refid = build_refid(&genome);
     let header = generate_sam_header(&genome, command_line);
@@ -1908,9 +1905,10 @@ fn five_base_align_and_call_pe(
             break;
         }
         let (Some(a), Some(b)) = (a, b) else {
-            return Err(AlignerError::Validation(
-                "minimap2 produced fewer PE records than read pairs (desync)".into(),
-            ));
+            return Err(AlignerError::Validation(format!(
+                "{} produced fewer PE records than read pairs (desync)",
+                config.aligner.name()
+            )));
         };
         // Identify R1 (FLAG 0x40) and R2 (FLAG 0x80) within the pair.
         let (rec1, rec2) = if a.flag & 0x40 != 0 {
