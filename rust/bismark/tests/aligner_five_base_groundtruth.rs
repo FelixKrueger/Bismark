@@ -90,15 +90,9 @@ fn cpg_positions(reference: &[u8]) -> Vec<usize> {
         .collect()
 }
 
-/// Genome dir: raw `genome.fa` (the 5-Base path aligns against it) + dummy `BS_*.mmi`
-/// so index discovery passes (the 5-Base path passes the FASTA directly, not the mmi).
+/// Genome dir: raw `genome.fa` and nothing else — the 5-Base path aligns against the FASTA
+/// directly and requires no bisulfite index (#1099).
 fn write_genome(dir: &Path, reference: &[u8]) {
-    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
-    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
-    fs::create_dir_all(&ct).unwrap();
-    fs::create_dir_all(&ga).unwrap();
-    fs::write(ct.join("BS_CT.mmi"), b"x").unwrap();
-    fs::write(ga.join("BS_GA.mmi"), b"x").unwrap();
     let mut fa = Vec::new();
     fa.extend_from_slice(b">chr1\n");
     fa.extend_from_slice(reference);
@@ -752,12 +746,6 @@ fn load_controls_or_skip() -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// Genome dir with MULTIPLE named contigs (extends [`write_genome`]).
 fn write_genome_multi(dir: &Path, contigs: &[(&str, &[u8])]) {
-    let ct = dir.join("Bisulfite_Genome").join("CT_conversion");
-    let ga = dir.join("Bisulfite_Genome").join("GA_conversion");
-    fs::create_dir_all(&ct).unwrap();
-    fs::create_dir_all(&ga).unwrap();
-    fs::write(ct.join("BS_CT.mmi"), b"x").unwrap();
-    fs::write(ga.join("BS_GA.mmi"), b"x").unwrap();
     let mut fa = Vec::new();
     for (name, seq) in contigs {
         fa.extend_from_slice(format!(">{name}\n").as_bytes());

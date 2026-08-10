@@ -74,17 +74,25 @@ pub struct GenomeIndexes {
     /// Absolute path to the genome folder.
     pub genome_dir: PathBuf,
     /// `<genome>/Bisulfite_Genome/CT_conversion/BS_CT` (index basename).
+    ///
+    /// Unvalidated after `discover_genome_fasta_only`: `pipeline()`'s `five_base` short-circuit
+    /// returns `run_pe_five_base` before the chunk spawners and `emit_memory_warning` can stat it.
     pub ct_index_basename: PathBuf,
-    /// `<genome>/Bisulfite_Genome/GA_conversion/BS_GA` (index basename).
+    /// `<genome>/Bisulfite_Genome/GA_conversion/BS_GA` (index basename). Unvalidated after
+    /// `discover_genome_fasta_only`, as for `ct_index_basename`.
     pub ga_index_basename: PathBuf,
-    /// `true` if the large (`.bt2l`) index was found instead of the small one.
+    /// `true` if the large (`.bt2l`) index was found instead of the small one; always
+    /// `false` after `discover_genome_fasta_only`, which probes no index.
     pub large_index: bool,
     /// `<genome>/Bisulfite_Genome/Combined/BS_combined` (index basename) — the v2
     /// combined CT+GA index. `Some` iff a complete set (small `.bt2` OR large
-    /// `.bt2l`) is present; probed best-effort for **every** run (the cost is a
+    /// `.bt2l`) is present; probed best-effort for **every bisulfite** run (the cost is a
     /// directory stat). `--combined_index` runs require it (the `resolve` guard
     /// errors when this is `None`); faithful runs ignore it. Deviates from the
     /// PLAN §7 `PathBuf` (it must be optional — most genomes have no combined index).
+    ///
+    /// `discover_genome_fasta_only` probes nothing and yields `None`; safe because the
+    /// `--illumina_5base` scope guards reject every combined flag before that guard runs.
     pub combined_index_basename: Option<PathBuf>,
     /// Raw FASTA file(s), in byte-significant order (sets `@SQ` order, Phase 5).
     pub fastas: Vec<PathBuf>,
@@ -126,15 +134,22 @@ fn first_missing(aligner: Aligner, dir: &Path, stem: &str, large: bool) -> Optio
         .find(|f| !dir.join(f).is_file())
 }
 
-/// Discover the genome folder, validate the bisulfite indexes for `aligner`
-/// (Bowtie 2 `.bt2` or HISAT2 `.ht2`), and inventory the raw FASTA file(s).
-pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeIndexes> {
-    // Absolute path (Perl chdir + getcwd). canonicalize also verifies existence.
+/// The genome folder as an absolute path (Perl `chdir`+`getcwd`).
+///
+/// Both failure modes must stay `GenomeFolder`.
+fn absolute_genome_dir(genome_arg: &Path) -> Result<PathBuf> {
     let genome_dir = std::fs::canonicalize(genome_arg)
         .map_err(|_| AlignerError::GenomeFolder(genome_arg.to_path_buf()))?;
     if !genome_dir.is_dir() {
         return Err(AlignerError::GenomeFolder(genome_arg.to_path_buf()));
     }
+    Ok(genome_dir)
+}
+
+/// Discover the genome folder, validate the bisulfite indexes for `aligner`
+/// (Bowtie 2 `.bt2` or HISAT2 `.ht2`), and inventory the raw FASTA file(s).
+pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeIndexes> {
+    let genome_dir = absolute_genome_dir(genome_arg)?;
 
     let ct_dir = genome_dir.join("Bisulfite_Genome").join("CT_conversion");
     let ga_dir = genome_dir.join("Bisulfite_Genome").join("GA_conversion");
@@ -188,6 +203,34 @@ pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeInde
         genome_dir,
         large_index,
         combined_index_basename,
+        fastas,
+        fasta_kind,
+    })
+}
+
+/// Genome discovery for `--illumina_5base`: the folder and its raw FASTA only.
+///
+/// 5-Base aligns against the unconverted index given by `--five_base_index`, or with
+/// minimap2 against the FASTA directly, so the bisulfite CT/GA indexes are never opened
+/// and requiring them rejects a valid run (#1099).
+pub(crate) fn discover_genome_fasta_only(genome_arg: &Path) -> Result<GenomeIndexes> {
+    let genome_dir = absolute_genome_dir(genome_arg)?;
+    let ct_index_basename = genome_dir
+        .join("Bisulfite_Genome")
+        .join("CT_conversion")
+        .join("BS_CT");
+    let ga_index_basename = genome_dir
+        .join("Bisulfite_Genome")
+        .join("GA_conversion")
+        .join("BS_GA");
+    let (fastas, fasta_kind) = discover_fastas(&genome_dir)?;
+
+    Ok(GenomeIndexes {
+        genome_dir,
+        ct_index_basename,
+        ga_index_basename,
+        large_index: false,
+        combined_index_basename: None,
         fastas,
         fasta_kind,
     })
@@ -253,6 +296,70 @@ mod tests {
             fs::write(ga.join(format!("BS_GA.{n}.{ext}")), b"x").unwrap();
         }
         fs::write(dir.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+    }
+
+    /// #1099: a genome folder holding only a FASTA is valid for 5-Base and rejected by the
+    /// bisulfite entry point — the two assertions together are the fix.
+    #[test]
+    fn fasta_only_needs_no_bisulfite_index() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("genome.fa"), b">chr1\nACGT\n").unwrap();
+
+        let g = discover_genome_fasta_only(tmp.path()).unwrap();
+        assert_eq!(g.fastas.len(), 1);
+        assert_eq!(g.fasta_kind, FastaKind::Fa);
+        assert!(g.combined_index_basename.is_none());
+        assert!(!g.large_index);
+
+        assert!(matches!(
+            discover_genome(Aligner::Bowtie2, tmp.path()),
+            Err(AlignerError::FaultyIndex { .. })
+        ));
+    }
+
+    /// The shape `five_base_reference_fasta` hands straight to minimap2.
+    #[test]
+    fn fasta_only_accepts_a_gzipped_fasta() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("genome.fa.gz"), b"\x1f\x8b").unwrap();
+        let g = discover_genome_fasta_only(tmp.path()).unwrap();
+        assert_eq!(g.fasta_kind, FastaKind::FaGz);
+    }
+
+    #[test]
+    fn fasta_only_still_requires_a_fasta() {
+        let tmp = TempDir::new().unwrap();
+        assert!(matches!(
+            discover_genome_fasta_only(tmp.path()),
+            Err(AlignerError::NoFasta(_))
+        ));
+    }
+
+    /// Both entry points must report `GenomeFolder`, not `Io`: a plain `?` on `canonicalize`
+    /// in the shared prologue compiles and silently downgrades it.
+    #[test]
+    fn genome_folder_errors_survive_the_shared_prologue() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("no_such_dir");
+        let a_file = tmp.path().join("genome.fa");
+        fs::write(&a_file, b">chr1\nACGT\n").unwrap();
+
+        for probe in [missing.as_path(), a_file.as_path()] {
+            assert!(
+                matches!(
+                    discover_genome_fasta_only(probe),
+                    Err(AlignerError::GenomeFolder(_))
+                ),
+                "discover_genome_fasta_only({probe:?})"
+            );
+            assert!(
+                matches!(
+                    discover_genome(Aligner::Bowtie2, probe),
+                    Err(AlignerError::GenomeFolder(_))
+                ),
+                "discover_genome({probe:?})"
+            );
+        }
     }
 
     #[test]

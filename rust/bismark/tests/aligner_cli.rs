@@ -38,6 +38,12 @@ fn make_genome(dir: &Path) {
     fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
 }
 
+/// A genome dir with a FASTA and no bisulfite index at all — 5-Base aligns unconverted,
+/// so this must be enough for it (#1099).
+fn make_genome_fasta_only(dir: &Path) {
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
 #[cfg(unix)]
 fn make_fake_bowtie2(dir: &Path) {
     // `--version` → the version banner (Phase-1 detection). Otherwise (alignment)
@@ -6162,7 +6168,7 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
 #[test]
 fn five_base_pe_end_to_end_inverts_polarity() {
     let genome = TempDir::new().unwrap();
-    make_genome_mmi(genome.path()); // genome.fa = chr1 ACGTACGT + BS_*.mmi for discovery
+    make_genome_fasta_only(genome.path()); // #1099: no BS_*.mmi — 5-Base must not need one
     let bins = TempDir::new().unwrap();
     make_fake_minimap2_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
@@ -6264,7 +6270,7 @@ fn five_base_rejects_non_directional() {
 #[test]
 fn five_base_bowtie2_unconverted_index_end_to_end() {
     let genome = TempDir::new().unwrap();
-    make_genome(genome.path()); // CT/GA .bt2 (for discovery) + genome.fa chr1 ACGTACGT
+    make_genome_fasta_only(genome.path()); // #1099: no CT/GA .bt2 — 5-Base must not need one
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");

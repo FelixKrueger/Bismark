@@ -27,7 +27,8 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 )]
 pub struct Cli {
     // ---- genome + reads ----------------------------------------------------
-    /// Genome folder (prepared with bismark_genome_preparation). May also be
+    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base`
+    /// needs only the FASTA). May also be
     /// given as the first positional argument.
     #[arg(long = "genome", visible_alias = "genome_folder", value_name = "PATH")]
     pub genome: Option<PathBuf>,

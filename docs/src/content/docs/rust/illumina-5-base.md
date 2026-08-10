@@ -46,6 +46,10 @@ Directional, paired-end, against the unconverted genome. minimap2 (`-x sr`) agai
 genome FASTA is the default engine; bowtie2 or hisat2 work against a NORMAL (unconverted)
 index supplied with `--five_base_index`.
 
+`--genome` needs only to contain the genome FASTA — the reference the methylation calls are
+made against. There is no `bismark_genome_preparation` step for 5-Base, because no path here
+reads the bisulfite-converted indexes.
+
 ```sh
 # core: align + inverted-polarity methylation calls
 bismark --illumina_5base --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz

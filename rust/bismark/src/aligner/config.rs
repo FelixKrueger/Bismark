@@ -620,6 +620,20 @@ pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) 
     Ok(())
 }
 
+/// Resolve the genome for this run. 5-Base aligns against the unconverted
+/// `--five_base_index` or, under minimap2, the FASTA — never the CT/GA indexes (#1099).
+fn discover_genome_for_run(
+    five_base: bool,
+    aligner: Aligner,
+    genome_arg: &Path,
+) -> Result<GenomeIndexes> {
+    if five_base {
+        discovery::discover_genome_fasta_only(genome_arg)
+    } else {
+        discovery::discover_genome(aligner, genome_arg)
+    }
+}
+
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
@@ -844,9 +858,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // combined search omits). PLAN §3.1 + phase 5.
     reject_combined_index_unsupported(cli, aligner, library, &layout)?;
 
-    let genome = discovery::discover_genome(aligner, &genome_arg)?;
+    let genome = discover_genome_for_run(cli.illumina_5base, aligner, &genome_arg)?;
     // --combined_index requires the combined index to be present (built by
     // `bismark_genome_preparation --combined_genome`); fail loudly if absent.
+    // 5-Base cannot reach here with a combined flag: the --illumina_5base scope guards reject
+    // all four, so its unprobed None is safe.
     if cli.combined_index && genome.combined_index_basename.is_none() {
         return Err(AlignerError::Validation(format!(
             "--combined_index was requested but no combined index was found at \
@@ -1587,6 +1603,25 @@ impl RunConfig {
             ReadFormat::FastQ => "FASTQ",
             ReadFormat::FastA => "FASTA",
         };
+        // A 5-Base run probes no converted index; report the index it does use.
+        let index_lines = if self.five_base {
+            format!(
+                "5-Base index:   {}\n",
+                self.five_base_index
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(none: minimap2 reads the FASTA)".to_string()),
+            )
+        } else {
+            format!(
+                "CT index:       {}\n\
+                 GA index:       {}\n\
+                 large index:    {}\n",
+                self.genome.ct_index_basename.display(),
+                self.genome.ga_index_basename.display(),
+                self.genome.large_index,
+            )
+        };
         format!(
             "Bismark aligner (Rust) — resolved configuration\n\
                aligner:        {} {} ({})\n\
@@ -1594,9 +1629,7 @@ impl RunConfig {
                layout:         {layout} [{format}]\n\
                reads:          {files}\n\
                genome:         {}\n\
-               CT index:       {}\n\
-               GA index:       {}\n\
-               large index:    {}\n\
+               {index_lines}\
                FASTA(s):       {} file(s) ({:?})\n\
                aligner_options: {}\n\
                output:         BAM, dir={:?}, basename={:?}",
@@ -1604,9 +1637,6 @@ impl RunConfig {
             self.detected_aligner.version,
             self.detected_aligner.path.display(),
             self.genome.genome_dir.display(),
-            self.genome.ct_index_basename.display(),
-            self.genome.ga_index_basename.display(),
-            self.genome.large_index,
             self.genome.fastas.len(),
             self.genome.fasta_kind,
             self.aligner_options,
@@ -1723,6 +1753,75 @@ mod tests {
     #[test]
     fn resolve_aligner_defaults_to_bowtie2() {
         assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    /// A genome folder holding only a FASTA, plus empty read files — the #1099 shape.
+    /// `resolve` stats the reads (`check_exists`) before discovery, so they must exist.
+    fn fasta_only_genome_and_reads() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let genome = tmp.path().join("g");
+        std::fs::create_dir_all(&genome).unwrap();
+        std::fs::write(genome.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+        let r1 = tmp.path().join("r1.fastq");
+        let r2 = tmp.path().join("r2.fastq");
+        std::fs::write(&r1, b"").unwrap();
+        std::fs::write(&r2, b"").unwrap();
+        (tmp, genome, r1, r2)
+    }
+
+    /// #1099, at the branch itself — no aligner binary involved, so this is the gate that
+    /// runs identically everywhere.
+    #[test]
+    fn discover_genome_for_run_skips_the_index_check_for_five_base() {
+        let (_tmp, genome, _r1, _r2) = fasta_only_genome_and_reads();
+
+        assert!(discover_genome_for_run(true, Aligner::Bowtie2, &genome).is_ok());
+        assert!(discover_genome_for_run(true, Aligner::Minimap2, &genome).is_ok());
+        assert!(matches!(
+            discover_genome_for_run(false, Aligner::Bowtie2, &genome),
+            Err(AlignerError::FaultyIndex { .. })
+        ));
+    }
+
+    /// #1099 through `resolve`. Asserts the variant cannot be `FaultyIndex` rather than
+    /// `Ok`: `resolve` execs `<aligner> --version` and CI installs no bowtie2.
+    #[test]
+    fn five_base_resolve_does_not_require_the_converted_index() {
+        let (_tmp, genome, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            genome.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+
+        for extra in [
+            Vec::new(),
+            vec!["--bowtie2", "--five_base_index", "/nonexistent/idx"],
+        ] {
+            let mut args = vec!["--illumina_5base", "--genome", g, "-1", r1, "-2", r2];
+            args.extend_from_slice(&extra);
+            if let Err(e) = resolve(&cli_from(&args), "cmd".into()) {
+                assert!(
+                    !matches!(e, AlignerError::FaultyIndex { .. }),
+                    "5-Base must not require the converted index (extra: {extra:?}); got: {e}"
+                );
+            }
+        }
+    }
+
+    /// The over-reach guard: the same folder must still be rejected without `--illumina_5base`.
+    #[test]
+    fn faithful_resolve_still_requires_the_converted_index() {
+        let (_tmp, genome, r1, _r2) = fasta_only_genome_and_reads();
+        let err = resolve(
+            &cli_from(&["--genome", genome.to_str().unwrap(), r1.to_str().unwrap()]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AlignerError::FaultyIndex { .. }),
+            "faithful runs must still require the converted index; got: {err}"
+        );
     }
 
     /// A `--mm2_*` flag on a non-minimap aligner must still report "unless you also use
