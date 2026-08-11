@@ -7,6 +7,7 @@
 //! minimap2 and SAM/CRAM output fail loudly (deferred), while non-directional/
 //! pbat/PE/FastA resolve (no alignment runs in Phase 1).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::aligner::aligner::{self, DetectedAligner};
@@ -620,6 +621,43 @@ pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) 
     Ok(())
 }
 
+/// Two index basenames naming the same file, comparing canonicalised directories so `..` and
+/// symlinks cannot slip past. Falls back to a literal comparison when a directory cannot be
+/// canonicalised.
+fn same_index_basename(a: &Path, b: &Path) -> bool {
+    let split = |p: &Path| -> Option<(PathBuf, OsString)> {
+        let name = p.file_name()?.to_os_string();
+        let parent = p.parent().unwrap_or(Path::new(""));
+        let dir = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        Some((dir, name))
+    };
+    match (split(a), split(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// Reject a BISULFITE-converted basename for `--five_base_index`.
+///
+/// 5-Base reads are unconverted, so a `BS_CT`/`BS_GA` index aligns them against a C→T or G→A
+/// genome and yields systematically inverted calls with no error anywhere.
+fn reject_converted_five_base_index(index: &Path, genome: &GenomeIndexes) -> Result<()> {
+    for (converted, label) in [
+        (&genome.ct_index_basename, "C->T"),
+        (&genome.ga_index_basename, "G->A"),
+    ] {
+        if same_index_basename(index, converted) {
+            return Err(AlignerError::Validation(format!(
+                "--five_base_index {} is the {label}-converted bisulfite index. 5-Base reads are \
+                 unconverted, so aligning them against it would invert every methylation call. \
+                 Pass a NORMAL index of the genome instead.",
+                index.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the genome for this run. 5-Base aligns against the unconverted
 /// `--five_base_index` or, under minimap2, the FASTA — never the CT/GA indexes (#1099).
 fn discover_genome_for_run(
@@ -871,6 +909,17 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             genome.genome_dir.display()
         )));
     }
+    // After genome discovery so a missing genome still wins, and before `detect_aligner` so the
+    // run fails before anything is spawned or written (#1100).
+    if cli.illumina_5base
+        && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2)
+        && let Some(index) = cli.five_base_index.as_deref()
+    {
+        reject_converted_five_base_index(index, &genome)?;
+        let env = discovery::index_env_for(aligner);
+        discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
+    }
+
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
@@ -1557,8 +1606,17 @@ fn resolve_output(cli: &Cli) -> Result<OutputTarget> {
             "CRAM output is not yet supported in v1 (BAM only).".into(),
         ));
     }
+    // Perl creates a missing --output_dir and says so; unlike Perl's single-level mkdir, missing
+    // parents are created too.
+    let output_dir = cli.output_dir.clone().unwrap_or_default();
+    if !output_dir.as_os_str().is_empty() && !output_dir.is_dir() {
+        std::fs::create_dir_all(&output_dir).map_err(|e| {
+            AlignerError::Validation(format!("--output_dir {}: {e}", output_dir.display()))
+        })?;
+        eprintln!("Created output directory {}!\n", output_dir.display());
+    }
     Ok(OutputTarget {
-        output_dir: cli.output_dir.clone().unwrap_or_default(),
+        output_dir,
         temp_dir: cli.temp_dir.clone().unwrap_or_default(),
         basename: cli.basename.clone(),
         // Perl 8238: `$prefix =~ s/\.+$//` — strip trailing dots (the `.` joining
@@ -1788,16 +1846,20 @@ mod tests {
     #[test]
     fn five_base_resolve_does_not_require_the_converted_index() {
         let (_tmp, genome, r1, r2) = fasta_only_genome_and_reads();
-        let (g, r1, r2) = (
+        // A real stub index, so the bowtie2 arm clears #1100's check and keeps exercising
+        // genome discovery rather than stopping at it.
+        let idx = genome.join("normal_idx");
+        for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+            std::fs::write(genome.join(format!("normal_idx.{s}.bt2")), b"").unwrap();
+        }
+        let (g, r1, r2, idx) = (
             genome.to_str().unwrap(),
             r1.to_str().unwrap(),
             r2.to_str().unwrap(),
+            idx.to_str().unwrap(),
         );
 
-        for extra in [
-            Vec::new(),
-            vec!["--bowtie2", "--five_base_index", "/nonexistent/idx"],
-        ] {
+        for extra in [Vec::new(), vec!["--bowtie2", "--five_base_index", idx]] {
             let mut args = vec!["--illumina_5base", "--genome", g, "-1", r1, "-2", r2];
             args.extend_from_slice(&extra);
             if let Err(e) = resolve(&cli_from(&args), "cmd".into()) {
@@ -1805,8 +1867,39 @@ mod tests {
                     !matches!(e, AlignerError::FaultyIndex { .. }),
                     "5-Base must not require the converted index (extra: {extra:?}); got: {e}"
                 );
+                assert!(
+                    !e.to_string().contains("--five_base_index"),
+                    "the index check must not fire on a valid index (extra: {extra:?}); got: {e}"
+                );
             }
         }
+    }
+
+    /// A converted index would invert every call with no error at any stage, so it is rejected by
+    /// name — including via a `..` path, which is why the comparison canonicalises.
+    #[test]
+    fn converted_five_base_index_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let genome = tmp.path().join("g");
+        let ct = genome.join("Bisulfite_Genome").join("CT_conversion");
+        let ga = genome.join("Bisulfite_Genome").join("GA_conversion");
+        std::fs::create_dir_all(&ct).unwrap();
+        std::fs::create_dir_all(&ga).unwrap();
+        std::fs::write(genome.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+        let indexes = discovery::discover_genome_fasta_only(&genome).unwrap();
+
+        for probe in [ct.join("BS_CT"), ga.join("BS_GA")] {
+            let err = reject_converted_five_base_index(&probe, &indexes).unwrap_err();
+            assert!(
+                err.to_string().contains("converted bisulfite index"),
+                "{err}"
+            );
+        }
+        // Same file reached through `..`.
+        let via_dotdot = ct.join("..").join("CT_conversion").join("BS_CT");
+        assert!(reject_converted_five_base_index(&via_dotdot, &indexes).is_err());
+        // An ordinary basename is untouched.
+        assert!(reject_converted_five_base_index(&genome.join("normal_idx"), &indexes).is_ok());
     }
 
     /// The over-reach guard: the same folder must still be rejected without `--illumina_5base`.
