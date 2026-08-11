@@ -117,6 +117,8 @@ pub struct Cli {
     /// complexity, so they align to the plain genome index (build it once with
     /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
+    /// Checked before the run starts, and — as the aligner itself does — also resolved
+    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI

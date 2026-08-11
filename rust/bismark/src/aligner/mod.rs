@@ -576,7 +576,12 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
     };
 
     let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(&out_dir).ok();
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        AlignerError::Validation(format!(
+            "consensus: output directory {}: {e}",
+            out_dir.display()
+        ))
+    })?;
     let out_path = out_dir.join("five_base_consensus.bam");
 
     let paths: Vec<&Path> = bams.iter().map(PathBuf::as_path).collect();

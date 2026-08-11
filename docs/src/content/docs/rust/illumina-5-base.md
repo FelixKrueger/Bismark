@@ -50,6 +50,10 @@ index supplied with `--five_base_index`.
 made against. There is no `bismark_genome_preparation` step for 5-Base, because no path here
 reads the bisulfite-converted indexes.
 
+`--five_base_index` is checked before the run starts, so a missing or incomplete index fails
+immediately rather than part-way through alignment. As with bowtie2 and hisat2 themselves, a
+basename that is not found is also looked up under `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`.
+
 ```sh
 # core: align + inverted-polarity methylation calls
 bismark --illumina_5base --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz

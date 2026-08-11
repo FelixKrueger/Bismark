@@ -6,7 +6,7 @@
 //! they are hermetic and do not require a real Bowtie 2 install.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -42,6 +42,16 @@ fn make_genome(dir: &Path) {
 /// so this must be enough for it (#1099).
 fn make_genome_fasta_only(dir: &Path) {
     fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
+/// A complete-looking unconverted Bowtie 2 index at `basename`. `--five_base_index` is checked
+/// for presence only (#1100), so empty files satisfy it and a fake aligner needs no more.
+fn make_stub_bowtie2_index(basename: &Path) {
+    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+        let mut p = basename.as_os_str().to_owned();
+        p.push(format!(".{s}.bt2"));
+        fs::write(PathBuf::from(p), b"").unwrap();
+    }
 }
 
 #[cfg(unix)]
@@ -6261,6 +6271,266 @@ fn five_base_rejects_non_directional() {
         ));
 }
 
+/// #1100: a missing `--five_base_index` is rejected before anything is spawned or written —
+/// no aligner needed, because the check precedes aligner detection.
+#[cfg(unix)]
+#[test]
+fn five_base_index_missing_fails_early() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    // A path that does not exist yet, so "nothing written" also covers "never created".
+    let nested = outdir.path().join("a").join("b");
+
+    let out = bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg(genome.path().join("no_such_idx"))
+        .arg("--output_dir")
+        .arg(&nested)
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("--five_base_index"), "{stderr}");
+    assert!(!stderr.contains("desync"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+
+    // Nothing written, and no output tree created at all.
+    assert!(
+        !nested.exists(),
+        "output dir was created for a rejected run"
+    );
+    let leftovers: Vec<_> = fs::read_dir(outdir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(leftovers.is_empty(), "output dir not empty: {leftovers:?}");
+}
+
+/// #1100/C1: another index file at the basename must NOT suppress the environment lookup — the
+/// aligner falls back on `<basename>.1.<ext>` alone, and gating wider rejected a working setup.
+#[cfg(unix)]
+#[test]
+fn non_first_index_file_does_not_block_the_env_fallback() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    fs::write(here.path().join("puc.2.bt2"), b"").unwrap(); // present, but not `.1`
+    let there = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&there.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env("BOWTIE2_INDEXES", there.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: an index that resolves through `$BOWTIE2_INDEXES` must be accepted. Setting the
+/// variable on the child avoids the shared-process hazard of `set_var` in a test.
+#[cfg(unix)]
+#[test]
+fn five_base_index_resolved_via_env_is_accepted() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idxdir = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idxdir.path().join("puc"));
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    // A BARE basename: only the environment variable can resolve it.
+    let out = bin()
+        .env("BOWTIE2_INDEXES", idxdir.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: the aligner consults `$BOWTIE2_INDEXES` only when NOTHING matches the basename, so a
+/// partial index at the basename blocks the fallback. Only observable with a relative basename,
+/// hence a child cwd rather than a unit test.
+#[cfg(unix)]
+#[test]
+fn partial_index_at_the_basename_blocks_the_env_fallback() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    fs::write(here.path().join("puc.1.bt2"), b"").unwrap(); // 1 of 6 — partial
+    let there = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&there.path().join("puc")); // complete, but must not be reached
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env("BOWTIE2_INDEXES", there.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: a bare basename resolved from the working directory, with no environment variable —
+/// the remaining positive form, and not unit-testable without mutating the process cwd.
+#[cfg(unix)]
+#[test]
+fn five_base_index_resolved_from_cwd_is_accepted() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&here.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env_remove("BOWTIE2_INDEXES")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: a missing `--output_dir` is created, with a notice — including nested parents, where
+/// Perl instead died.
+#[cfg(unix)]
+#[test]
+fn output_dir_is_created_with_a_notice() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let parent = TempDir::new().unwrap();
+    let nested = parent.path().join("a").join("b");
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg(genome.path().join("normal_idx"))
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(&nested)
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("Created output directory"), "{stderr}");
+    assert!(nested.is_dir());
+}
+
 /// `--illumina_5base --bowtie2 --five_base_index` PE end-to-end: aligns the RAW
 /// read pairs to a NORMAL (unconverted) bowtie2 index and emits the same
 /// inverted-polarity BAM as the minimap2 path (read `T` at a genomic CpG C →
@@ -6271,6 +6541,7 @@ fn five_base_rejects_non_directional() {
 fn five_base_bowtie2_unconverted_index_end_to_end() {
     let genome = TempDir::new().unwrap();
     make_genome_fasta_only(genome.path()); // #1099: no CT/GA .bt2 — 5-Base must not need one
+    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
