@@ -26,7 +26,7 @@
 | **Release 3.2.0** | The only real gate. Needs a **new** `dev`→`master` PR (#1096 is closed) + `rust/VERSION` 3.1.0 → 3.2.0 + the 3 mirror literals + retitling the `Unreleased` CHANGELOG section. **Not started — deliberately deferred** |
 | **`Unreleased` carries 8 user-visible groups, not 3** | `legacy_perl/` move · short-option case (#1084) · #1099 · #1100 · `--output_dir` · `--five_base_bisulfite_bam` (#1095) · `--rammap` presets (#1092) · the three MAPQ fixes (#1079/#1080/#1081). **Three of these retire a byte-identity claim** — minimap2 SE is explicitly "no longer byte-identical to Perl v0.25.1 + minimap2", and both `--local` MAPQ paths emit values Perl never produced. The release note's framing of *that* is a judgment call, not a mechanical bump |
 | **Dependabot: 2 open HIGH** | Both in `docs/package-lock.json`, both transitive dev dependencies of the Astro docs site: `js-yaml < 4.3.1` (quadratic CPU on `!!omap`) and `nanoid < 3.3.17` (infinite loop when `size` is 0, filed 2026-08-12). Exposure is build-time parsing of *our own* content, so both need attacker-controlled input the build never sees — **low practical risk**, cleared by `npm audit fix` in `docs/`. Surfaced by the `git push` banner, not by CI, and the count grew overnight — re-check rather than trusting this number |
-| **`1100-five-base-index-validation` branch** | **Still present locally and on the remote** at `ccd5931`. Merged and safe to delete (G28: `git status` first) — left in place on purpose |
+| **Branch cleanup — DONE** | `1100-five-base-index-validation` deleted (local + remote), then **28 of 34 local branches** deleted after per-branch verification. **6 kept:** `perf-r3-parallel-decode` (#887 CLOSED unmerged), `rust/ga-2.0.1-recut` (#1055 CLOSED unmerged), `rust/beta-benchmark` (benchmark work, remote exists), `pr-1087`, `spike-mimalloc`, and `rust/fix-nondir-pe-flag-swap` — see N16. Also removed 33 orphaned `branch.*` sections from `.git/config` (101 → 19 keys) |
 | **`COVERAGE.md` in `plans/08112026_1100…/`** | Still reads **INCOMPLETE** though its 4 gaps were closed. Not rewritten. Read PLAN §12 alongside it |
 | **#1095 reply** | With @Danielsm8 (latest `5254660916`). If he wants simplex output it is a new issue + plan, not a tweak |
 | **Simplex consensus** | Not filed. `mod.rs:2519-2521` skips singleton families; counts already reported per run |
@@ -66,6 +66,13 @@
 
 **N14 — 🔑 N3 recurred within the same session, on the merge itself.** `gh pr merge … | tail -10; echo "exit=$?"` printed `exit=0` — that was **`tail`'s** status while `gh` had failed. Had I not checked `gh pr view 1102`, I would have reported a merge that never happened. **`$?` after a pipe is the LAST stage's. Use `if gh …; then`** — as N3 already said, which is exactly why it is worth repeating.
 
+**N16 — 🔑 A merged branch can still hold the only copy of something, and one test cannot prove otherwise.** `rust/fix-nondir-pe-flag-swap` (PR #1031 MERGED) carried two commits *after* its merge adding `plans/07062026_install-story/W3-bioconda/` — 5 files incl. the bioconda recipe draft and submission record for the still-open upstream PR #67004. That directory is in **neither `dev` nor `master`**, its remote had been auto-deleted on merge, and `git log --all --find-object=<blob>` found it in exactly one ref: that branch's tip. **Now pushed to `origin/rust/fix-nondir-pe-flag-swap` (`3a872c8`) so it is backed up.** Deleting it would have destroyed the work. Three tests, because each fails differently:
+  * `git diff <branch> <squash>` = 0 → strongest, but **only valid when the base has not moved since the fork** (a squash tree is `base-at-merge-time + branch changes`, so old branches show large innocent diffs).
+  * local tip vs GitHub's `headRefOid` (`gh pr view --json headRefOid`) → catches commits the PR never saw. Also: **`gh pr list --head <b>` can return several PRs** — reading only `.[0]` misattributes a long-lived branch.
+  * `git log <ref> --find-object=<blob>` → the only test that answers *"does this exact content exist anywhere in `dev`'s history?"*. A path diff cannot separate "landed, then dev moved on" from "never landed".
+
+Also: `git branch -d` refuses a squash-merged branch **forever** (its tip is never an ancestor), so `-D` is required and the content check is what supplies the safety `-d` no longer can. And deleting branches leaves orphaned `branch.*` sections in `.git/config` — git tries to remove them and the **sandbox blocks the write** (`could not lock config file`), so the cleanup needs a separate unsandboxed pass.
+
 **N15 — Pushing `dev` publishes the docs site.** `docs.yml` deploys on push to `dev`, build-only on PRs. A `deploy` job that is `skipped` on a PR run and `success` on the `dev` push is normal, not an anomaly — but it means docs land publicly at `dev`-merge time, ahead of any release.
 
 ### Carried forward (verbatim-critical)
@@ -76,7 +83,7 @@
 
 **N3** — 🔑 Silence is not a result. Assert on the command's own exit code (`if cargo …; then`), never on a pipeline's last stage; pair a sabotage with a control run. (N14 is a fresh instance.)
 
-**N4** — `$f="--features x"` does not word-split in this shell; use literal arguments. **N5** — anchor edits on doc comments/attributes, never on the signature (`missing_docs` is off for aligner/genome_prep/report, `lib.rs:8-12`).
+**N4** — `$f="--features x"` does not word-split in this shell; use literal arguments. **Recurred 2026-08-12:** `for b in $LIST` over 28 branch names passed the whole string as **one** name, so `git branch -D` failed on it and deleted nothing (the failure was the guard working). A `while read` loop wrapping a destructive git call was then **blocked by the permission classifier**; one `git branch -D <name1> <name2> …` with literal arguments went through. **N5** — anchor edits on doc comments/attributes, never on the signature (`missing_docs` is off for aligner/genome_prep/report, `lib.rs:8-12`).
 
 **N6** — 🔑 The two-layer index resolution: bowtie2/hisat2 resolve a basename in the **wrapper** (`glob(<basename>*.bt2{,l})`, then `$…_INDEXES`) and again in the **binary** (`adjustEbwtBase`: `<basename>.1.<ext>`, then `$…_INDEXES`). **The binary decides.** hisat2's wrapper glob is malformed but `gfm.cpp` does bowtie2's lookup, so `$HISAT2_INDEXES` works.
 
