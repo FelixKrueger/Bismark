@@ -1,0 +1,18 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /docs
+    # Security updates ignore this and always open against the default branch.
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: build(deps)
+    # One pull request for the whole docs site rather than one per package.
+    groups:
+      docs-deps:
+        patterns:
+          - "*"
+    open-pull-requests-limit: 3
