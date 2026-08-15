@@ -1,12 +1,12 @@
 # Session Handoff — 2026-08-15 (#1100 and #1104 both shipped to `dev`; nothing left in flight)
 
-**`dev` is at `f575873`, 40 ahead of `master`, and there is no open feature work.** #1100 landed (PR #1102 → `7596b0d`) and #1104 landed (PR #1105 → **`f575873`**, squash, CI was 16/16 green, dual code review APPROVE). Both feature branches are deleted local and remote. **The next action is a release decision, not code.**
+**`dev` is 44 ahead of `master` and there is no open feature work.** Last code commit: **`f575873`** (#1104); everything after it is this handoff plus the pre-push hook. #1100 landed (PR #1102 → `7596b0d`) and #1104 landed (PR #1105 → **`f575873`**, squash, CI was 16/16 green, dual code review APPROVE). Both feature branches are deleted local and remote. **The next action is a release decision, not code.**
 
-> 🚫 **STILL NO RELEASE, and it now gates FOUR user-visible items** — `--five_base_bisulfite_bam` (#1095), #1099, #1100, and #1104 once merged. `rust/VERSION` still reads **3.1.0**. **PR #1096 is CLOSED**, so a 3.2.0 cut needs a *fresh* `dev`→`master` PR. The `Unreleased` CHANGELOG section carries **nine** groups; three retire a byte-identity claim (minimap2 SE, both `--local` MAPQ paths) and #1104 adds a fourth behaviour change (consensus record ORDER).
+> 🚫 **STILL NO RELEASE, and it now gates FOUR user-visible items** — `--five_base_bisulfite_bam` (#1095), #1099, #1100 and #1104, all now on `dev`. `rust/VERSION` still reads **3.1.0**. **PR #1096 is CLOSED**, so a 3.2.0 cut needs a *fresh* `dev`→`master` PR. The `Unreleased` CHANGELOG section carries **nine** groups; three retire a byte-identity claim (minimap2 SE, both `--local` MAPQ paths) and #1104 adds a fourth behaviour change (consensus record ORDER).
 >
 > ⚠️ **Merging into `dev` closes nothing** (G25). #1095/#1099/#1100/#1104 all close at the release.
 
-> 🔵 **Dependabot opened [PR #1103](https://github.com/FelixKrueger/Bismark/pull/1103) itself — base `master`, not `dev`, and `BLOCKED`.** js-yaml 4.3.0→4.3.1 in `docs/`. It is the one remaining open alert (nanoid's cleared on its own). Note the base: merging it goes straight onto the release branch, against the house convention.
+> 🔵 **Dependabot opened [PR #1103](https://github.com/FelixKrueger/Bismark/pull/1103) itself — base `master`, not `dev`, and `BLOCKED`.** js-yaml 4.3.0→4.3.1 in `docs/`. **Felix wants this resolved first next session** — see §2 for the three routes and the alert-count discrepancy. Note the base: merging it goes straight onto the release branch, against the house convention.
 
 ## 1. What we accomplished
 
