@@ -168,6 +168,26 @@ pub struct Cli {
     /// (not byte-identical); see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
+    /// `[#1104]` Which consensus multiplicities to emit (DRAGEN
+    /// `--umi-emit-multiplicity` shape). `duplex` (default): families seen from BOTH
+    /// molecule strands, to `<out>.5base_consensus.bam` — today's behaviour. `simplex`:
+    /// only single-strand families, ONE consensus read each on the molecule's own
+    /// strand, to `<out>.5base_simplex.bam`; NO duplex BAM is written. `both`: the two
+    /// files above. In `simplex`/`both` modes every consensus record carries `mx:i`
+    /// (2 = duplex, 1 = simplex; unrelated to the `XM` call string), so the classes
+    /// stay distinguishable even after a `samtools merge`. A simplex consensus has NO
+    /// cross-strand variant check — a genuine C>T reads as methylation; pair with
+    /// `--five_base_deconvolution` for the population-level check. Simplex families
+    /// still hold every PCR copy of their strand, so the collapse deduplicates and
+    /// error-corrects; expect them to dominate at cfDNA depth. Requires
+    /// `--five_base_consensus` or `--five_base_consensus_from_bam`.
+    #[arg(
+        long = "five_base_emit_multiplicity",
+        value_enum,
+        value_name = "MODE",
+        default_value = "duplex"
+    )]
+    pub five_base_emit_multiplicity: EmitMultiplicity,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
     /// inline read bases. Real Illumina 5-Base data carries a DUAL UMI as the tail
     /// `:`-field of the qname written `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the
@@ -454,4 +474,26 @@ pub struct Cli {
         help = "Print version information and exit"
     )]
     pub version: bool,
+}
+
+/// `[#1104]` Consensus emit multiplicity (`--five_base_emit_multiplicity`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmitMultiplicity {
+    /// Duplex families only (the default; today's behaviour).
+    Duplex,
+    /// Simplex (single-strand) families only — no duplex BAM.
+    Simplex,
+    /// Duplex and simplex, each to its own BAM.
+    Both,
+}
+
+impl EmitMultiplicity {
+    /// The CLI spelling, for run notices.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Duplex => "duplex",
+            Self::Simplex => "simplex",
+            Self::Both => "both",
+        }
+    }
 }

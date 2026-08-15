@@ -173,6 +173,17 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                 .into(),
         ));
     }
+    // #1104: the bisulfite re-encode dispatches before resolve(), so a non-default
+    // emit-multiplicity would otherwise be silently ignored on that path.
+    if cli.five_base_emit_multiplicity != cli::EmitMultiplicity::Duplex
+        && !cli.five_base_bisulfite_bam.is_empty()
+    {
+        return Err(AlignerError::Validation(
+            "--five_base_emit_multiplicity has no effect on --five_base_bisulfite_bam: it \
+             selects consensus families; the re-encode processes every record."
+                .into(),
+        ));
+    }
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
@@ -583,18 +594,37 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
         ))
     })?;
     let out_path = out_dir.join("five_base_consensus.bam");
+    let simplex_path = out_dir.join("five_base_simplex.bam");
 
     let paths: Vec<&Path> = bams.iter().map(PathBuf::as_path).collect();
-    eprintln!(
-        "Note: 5-Base consensus-from-BAM over {} file(s) (PE); no re-alignment. Output: {}",
-        paths.len(),
-        out_path.display()
-    );
+    // #1104: the default-mode notice is byte-frozen; non-default modes get their own.
+    if cli.five_base_emit_multiplicity == cli::EmitMultiplicity::Duplex {
+        eprintln!(
+            "Note: 5-Base consensus-from-BAM over {} file(s) (PE); no re-alignment. Output: {}",
+            paths.len(),
+            out_path.display()
+        );
+    } else {
+        eprintln!(
+            "Note: 5-Base consensus-from-BAM over {} file(s) (PE, emit multiplicity: {}); no \
+             re-alignment.",
+            paths.len(),
+            cli.five_base_emit_multiplicity.as_str()
+        );
+    }
+    let outputs = match cli.five_base_emit_multiplicity {
+        cli::EmitMultiplicity::Duplex => EmitPaths::Duplex(&out_path),
+        cli::EmitMultiplicity::Simplex => EmitPaths::Simplex(&simplex_path),
+        cli::EmitMultiplicity::Both => EmitPaths::Both {
+            duplex: &out_path,
+            simplex: &simplex_path,
+        },
+    };
     run_five_base_consensus(
         &genome,
         &refid,
         &paths,
-        &out_path,
+        outputs,
         &header,
         umi_swap,
         cli.five_base_min_mapq,
@@ -1825,11 +1855,25 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                     &format!("_bismark_{tok}_pe.5base_consensus.bam"),
                     "_pe.5base_consensus.bam",
                 );
+                let simplex_path = derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}_pe.5base_simplex.bam"),
+                    "_pe.5base_simplex.bam",
+                );
+                let outputs = match config.five_base_emit_multiplicity {
+                    cli::EmitMultiplicity::Duplex => EmitPaths::Duplex(&consensus_path),
+                    cli::EmitMultiplicity::Simplex => EmitPaths::Simplex(&simplex_path),
+                    cli::EmitMultiplicity::Both => EmitPaths::Both {
+                        duplex: &consensus_path,
+                        simplex: &simplex_path,
+                    },
+                };
                 run_five_base_consensus(
                     &genome,
                     &refid,
                     &[bam_path.as_path()],
-                    &consensus_path,
+                    outputs,
                     &header,
                     umi_swap,
                     config.five_base_min_mapq,
@@ -2328,6 +2372,14 @@ fn w_duplex_report<W: std::io::Write>(
     fams.write_report(w, DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)
 }
 
+/// #1104: consensus output destinations, per `--five_base_emit_multiplicity`. The
+/// variant shape makes an impossible path/mode combination unrepresentable.
+enum EmitPaths<'a> {
+    Duplex(&'a Path),
+    Simplex(&'a Path),
+    Both { duplex: &'a Path, simplex: &'a Path },
+}
+
 /// #787 duplex CONSENSUS collapse: re-read the 5-Base BAM, group reads into duplex
 /// families (same as the duplex pass), and emit ONE consensus read per paired family
 /// into a separate `<out>.5base_consensus.bam`. The consensus uses the asymmetric 5mC>T
@@ -2336,8 +2388,13 @@ fn w_duplex_report<W: std::io::Write>(
 /// strands is masked to `N`, so the methylation call becomes `.`); other positions
 /// reconcile by agreement/quality. The consensus carries a standard single-strand
 /// Bismark `XM`/`XR`/`XG`. Each member is mapped to reference coordinates by a CIGAR
-/// walk, so soft-clips (e.g. an inline UMI prefix) and indels are handled; only singleton
-/// (unpaired) families are skipped.
+/// walk, so soft-clips (e.g. an inline UMI prefix) and indels are handled.
+///
+/// #1104: SIMPLEX (single-strand) families are emitted too when `outputs` says so, to
+/// their own BAM — one record per family, on the molecule's own strand, collapsed the
+/// moment the family's last record arrives in PASS 2 (emit-and-evict on PASS 1's exact
+/// counts, so peak memory is the in-flight families). In the default duplex-only mode
+/// they are skipped exactly as before.
 ///
 /// Families are keyed like the duplex pass on the FRAGMENT outer span (POS + mate-pos +
 /// TLEN; 5-Base is paired-end). The MOLECULE strand
@@ -2350,7 +2407,7 @@ fn run_five_base_consensus(
     genome: &Genome,
     refid: &HashMap<String, usize>,
     bam_paths: &[&Path],
-    consensus_bam_path: &Path,
+    outputs: EmitPaths<'_>,
     header: &noodles_sam::Header,
     umi_swap: Option<crate::aligner::five_base_duplex::UmiSwap>,
     min_mapq: u8,
@@ -2498,15 +2555,180 @@ fn run_five_base_consensus(
             }
         }
     }
-    let paired: HashSet<CKey> = counts
-        .iter()
-        .filter(|(_, (ot, ob))| *ot > 0 && *ob > 0)
-        .map(|(k, _)| *k)
-        .collect();
+    // One sweep derives the paired set and (#1104, simplex modes only) the expected
+    // counts + family-size histogram; `counts` is dropped either way.
+    let (dpx_path, spx_path): (Option<&Path>, Option<&Path>) = match outputs {
+        EmitPaths::Duplex(d) => (Some(d), None),
+        EmitPaths::Simplex(s) => (None, Some(s)),
+        EmitPaths::Both { duplex, simplex } => (Some(duplex), Some(simplex)),
+    };
+    let mut paired: HashSet<CKey> = HashSet::new();
+    let mut simplex_expected: HashMap<CKey, u32> = HashMap::new();
+    // #1104 read counts per simplex family: 1, 2, 3, 4, ≥5 — over ALL simplex families.
+    // Read counts, not fragments: --five_base_min_mapq filters per record, so one mate
+    // of a pair can survive alone and odd-sized (min 1-read) families are real.
+    let mut size_hist = [0u64; 5];
+    for (k, (ot, ob)) in &counts {
+        if *ot > 0 && *ob > 0 {
+            paired.insert(*k);
+        } else if spx_path.is_some() {
+            let n = ot + ob;
+            simplex_expected.insert(*k, n);
+            size_hist[(n as usize).min(5) - 1] += 1;
+        }
+    }
     drop(counts); // free the per-family counters before pass 2
 
-    // PASS 2 — store members for the (few) paired families only; build their covered maps.
+    // Writers up front: an empty run must still leave valid header-only BAMs.
+    let mut dpx_writer = match dpx_path {
+        Some(p) => Some(
+            crate::io::BamWriter::from_path(p, header.clone())
+                .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?,
+        ),
+        None => None,
+    };
+    let mut spx_writer = match spx_path {
+        Some(p) => Some(
+            crate::io::BamWriter::from_path(p, header.clone()).map_err(|e| {
+                AlignerError::Validation(format!("simplex consensus: create BAM: {e}"))
+            })?,
+        ),
+        None => None,
+    };
+
+    /// Collapse one family and write one record per entry in `flags`; Ok(true) when
+    /// at least one record was written (false = a skip guard fired). `mx` is the
+    /// consensus-multiplicity tag; `None` (the default duplex-only mode) writes no
+    /// tag. A simplex family passes its OWN molecule strand's flag only: the
+    /// suppressed opposite record would not be empty but WRONG — at the opposite
+    /// strand's non-CpG cytosines `reconcile_generic` passes the own-strand base
+    /// through, which a GA/CT call would read as calls for a strand never sequenced.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_family(
+        fam: &Fam,
+        genome: &Genome,
+        refid: &HashMap<String, usize>,
+        flags: &[u16],
+        qname_prefix: &str,
+        mx: Option<i32>,
+        writer: &mut crate::io::BamWriter<std::io::BufWriter<File>>,
+    ) -> Result<bool> {
+        let Some(chrom) = genome.sq_order.get(fam.ref_id) else {
+            return Ok(false);
+        };
+        let Some(g) = genome.get(chrom) else {
+            return Ok(false);
+        };
+        let members = fam.ot.iter().chain(fam.ob.iter());
+        let start = members.clone().map(|m| m.start).min().unwrap_or(0);
+        let end = members.clone().map(|m| m.end).max().unwrap_or(0);
+        let mapq = members.map(|m| m.mapq).min().unwrap_or(0);
+        if end <= start {
+            return Ok(false);
+        }
+        let mut cons_seq: Vec<u8> = Vec::with_capacity((end - start) as usize);
+        let mut cons_qual: Vec<u8> = Vec::with_capacity((end - start) as usize);
+        for p in start..end {
+            let pu = p as usize;
+            let kind = if g.get(pu) == Some(&b'C') && g.get(pu + 1) == Some(&b'G') {
+                SiteKind::PlusCpG
+            } else if g.get(pu) == Some(&b'G') && pu > 0 && g.get(pu - 1) == Some(&b'C') {
+                SiteKind::MinusCpG
+            } else {
+                SiteKind::Other
+            };
+            let (b, q) = consensus_base(kind, reduce(&fam.ot, p), reduce(&fam.ob, p));
+            cons_seq.push(b);
+            cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
+        }
+
+        // Synthesize the consensus and run it through the same inverted-call emit path
+        // as a normal 5-Base read. `cons_seq` is +ref-oriented; a duplex family holds
+        // BOTH strands' calls (PlusCpG → T/C at a genomic C; MinusCpG → A/G at a
+        // genomic G) and emits TWICE — a forward record (FLAG 0 → CT call → `+`-strand
+        // CpGs) AND a reverse record (FLAG 0x10 → GA call → `-`-strand CpGs), so each
+        // CpG dinucleotide is scored from both cytosines. The BAM SEQ stays
+        // +ref-oriented for both (SAM convention).
+        let umi_str = if fam.canon_umi.is_empty() {
+            "NA".to_string()
+        } else {
+            String::from_utf8_lossy(&fam.canon_umi).into_owned()
+        };
+        let qname = format!("{qname_prefix}:{chrom}:{start}-{end}:{umi_str}");
+        let mut wrote_any = false;
+        for &flag in flags {
+            // The emit path takes the read in READ (5'->3') orientation: for a reverse
+            // record single_end_sam_output revcomps it back to +ref for the BAM, and the
+            // GA call + genomic extraction are read-oriented. cons_seq/cons_qual are
+            // +ref, so the reverse record passes their reverse-complement / reverse
+            // (matching a real OB read, whose raw FastQ seq is read-oriented).
+            let (eseq, equal): (Vec<u8>, Vec<u8>) = if flag & 0x10 != 0 {
+                let mut q = cons_qual.clone();
+                q.reverse();
+                (crate::aligner::output::revcomp(&cons_seq), q)
+            } else {
+                (cons_seq.clone(), cons_qual.clone())
+            };
+            let sam = SamRecord {
+                qname: qname.clone(),
+                flag,
+                rname: chrom.clone(),
+                pos: start + 1,
+                mapq,
+                cigar: format!("{}M", eseq.len()),
+                seq: String::from_utf8_lossy(&eseq).into_owned(),
+                qual: String::from_utf8_lossy(&equal).into_owned(),
+                alignment_score: Some(0),
+                second_best: None,
+                md_tag: None,
+                raw_line: String::new(),
+            };
+            let mut counters = Counters::default();
+            if let Some(mut record) = five_base_emit_record(
+                &sam,
+                &qname,
+                &eseq,
+                &equal,
+                genome,
+                refid,
+                false, // consensus QUAL is phred33
+                0,     // no base-quality masking on the consensus
+                &mut counters,
+            )? {
+                if let Some(m) = mx {
+                    record.set_mx(m);
+                }
+                write_record(writer, &record)?;
+                wrote_any = true;
+            }
+        }
+        Ok(wrote_any)
+    }
+
+    /// Every ledger mismatch means the input changed between the two passes.
+    fn ledger_msg(e: crate::aligner::five_base_duplex::LedgerError) -> AlignerError {
+        use crate::aligner::five_base_duplex::LedgerError;
+        AlignerError::Validation(match e {
+            LedgerError::UnknownKey => "consensus: pass 2 saw a simplex family pass 1 never \
+                 counted — the input changed between passes"
+                .into(),
+            LedgerError::AfterEmission => "consensus: a record arrived for an already-collapsed \
+                 simplex family — the input changed between passes"
+                .into(),
+            LedgerError::Residual(n) => format!(
+                "consensus: {n} simplex family(ies) incomplete at end of input — pass 1 and \
+                 pass 2 disagree (input changed mid-run?)"
+            ),
+        })
+    }
+
+    // PASS 2 — paired families' members are stored (only when duplex is emitted);
+    // simplex families flow through the ledger and collapse the moment they complete.
+    let n_simplex_families = simplex_expected.len() as u64;
     let mut fams: HashMap<CKey, Fam> = HashMap::new();
+    let mut ledger: crate::aligner::five_base_duplex::SimplexLedger<CKey, Fam> =
+        crate::aligner::five_base_duplex::SimplexLedger::new(simplex_expected);
+    let (mut emitted_spx, mut skipped_spx) = (0u64, 0u64);
     for bam_path in bam_paths {
         let mut reader = crate::io::BamReader::from_path_without_sort_check(bam_path)
             .map_err(|e| AlignerError::Validation(format!("consensus: open BAM (pass 2): {e}")))?;
@@ -2516,7 +2738,11 @@ fn run_five_base_consensus(
             let Some(ki) = key_of(inner)? else {
                 continue;
             };
-            if !paired.contains(&ki.ckey) {
+            let is_paired_fam = paired.contains(&ki.ckey);
+            if is_paired_fam && dpx_path.is_none() {
+                continue; // simplex-only mode: counted for the report, never stored
+            }
+            if !is_paired_fam && spx_path.is_none() {
                 continue; // singleton family — never produces a consensus, so don't store it
             }
             let (molecule_is_ot, ref_id, ref_start) = (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
@@ -2549,129 +2775,87 @@ fn run_five_base_consensus(
                 covered,
                 mapq: inner.mapping_quality().map(u8::from).unwrap_or(255),
             };
-            let fam = fams.entry(ki.ckey).or_default();
-            fam.ref_id = ref_id;
-            if fam.canon_umi.is_empty() {
-                fam.canon_umi = ki.canon_umi;
+            let add = |fam: &mut Fam| {
+                fam.ref_id = ref_id;
+                if fam.canon_umi.is_empty() {
+                    fam.canon_umi = ki.canon_umi;
+                }
+                if molecule_is_ot {
+                    fam.ot.push(member);
+                } else {
+                    fam.ob.push(member);
+                }
+            };
+            if is_paired_fam {
+                add(fams.entry(ki.ckey).or_default());
+                continue;
             }
-            if molecule_is_ot {
-                fam.ot.push(member);
+            // #1104 emit-and-evict: collapse this simplex family as soon as its last
+            // expected record arrives, so peak memory is the in-flight families.
+            let Some(fam) = ledger.arrive_with(ki.ckey, add).map_err(ledger_msg)? else {
+                continue;
+            };
+            // OT-only → forward record; OB-only → reverse record. Its own strand only.
+            let flag: [u16; 1] = if fam.ob.is_empty() { [0] } else { [0x10] };
+            let writer = spx_writer
+                .as_mut()
+                .expect("simplex writer exists whenever the ledger yields a family");
+            if emit_family(&fam, genome, refid, &flag, "spx", Some(1), writer)? {
+                emitted_spx += 1;
             } else {
-                fam.ob.push(member);
+                skipped_spx += 1;
             }
         }
     }
+    ledger.finish().map_err(ledger_msg)?;
 
-    let mut writer = crate::io::BamWriter::from_path(consensus_bam_path, header.clone())
-        .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?;
     let (mut emitted, mut skipped) = (0u64, 0u64);
-
-    for fam in fams.values() {
-        // All families here are paired (filtered in pass 2).
-        let Some(chrom) = genome.sq_order.get(fam.ref_id) else {
-            skipped += 1;
-            continue;
-        };
-        let Some(g) = genome.get(chrom) else {
-            skipped += 1;
-            continue;
-        };
-        let members = fam.ot.iter().chain(fam.ob.iter());
-        let start = members.clone().map(|m| m.start).min().unwrap_or(0);
-        let end = members.clone().map(|m| m.end).max().unwrap_or(0);
-        let mapq = members.map(|m| m.mapq).min().unwrap_or(0);
-        if end <= start {
-            skipped += 1;
-            continue;
-        }
-        let mut cons_seq: Vec<u8> = Vec::with_capacity((end - start) as usize);
-        let mut cons_qual: Vec<u8> = Vec::with_capacity((end - start) as usize);
-        for p in start..end {
-            let pu = p as usize;
-            let kind = if g.get(pu) == Some(&b'C') && g.get(pu + 1) == Some(&b'G') {
-                SiteKind::PlusCpG
-            } else if g.get(pu) == Some(&b'G') && pu > 0 && g.get(pu - 1) == Some(&b'C') {
-                SiteKind::MinusCpG
+    if let Some(writer) = dpx_writer.as_mut() {
+        // Emit in sorted key order: HashMap iteration order is random per process.
+        let mut order: Vec<CKey> = fams.keys().copied().collect();
+        order.sort_unstable_by_key(|k| (k.ref_id, k.start, k.end, k.umi_hash));
+        for fam in order.iter().map(|k| &fams[k]) {
+            // All families here are paired (filtered in pass 2). Both strands' calls are
+            // present, so both records are emitted.
+            let mx = spx_path.is_some().then_some(2);
+            if emit_family(fam, genome, refid, &[0u16, 0x10], "dpx", mx, writer)? {
+                emitted += 1;
             } else {
-                SiteKind::Other
-            };
-            let (b, q) = consensus_base(kind, reduce(&fam.ot, p), reduce(&fam.ob, p));
-            cons_seq.push(b);
-            cons_qual.push(q.saturating_add(33)); // phred → ASCII for the SAM QUAL field
-        }
-
-        // Synthesize the consensus and run it through the same inverted-call emit path as a
-        // normal 5-Base read. `cons_seq` is +ref-oriented and already holds BOTH strands'
-        // calls (PlusCpG → T/C at a genomic C; MinusCpG → A/G at a genomic G), so we emit it
-        // TWICE: a forward record (FLAG 0 → CT call → `+`-strand CpGs) AND a reverse record
-        // (FLAG 0x10 → GA call → `-`-strand CpGs). This lifts the former "+ strand only"
-        // limitation and doubles per-CpG-site coverage (each CpG dinucleotide is now scored
-        // from both cytosines). The BAM SEQ stays +ref-oriented for both (SAM convention).
-        let umi_str = if fam.canon_umi.is_empty() {
-            "NA".to_string()
-        } else {
-            String::from_utf8_lossy(&fam.canon_umi).into_owned()
-        };
-        let qname = format!("dpx:{chrom}:{start}-{end}:{umi_str}");
-        let mut wrote_any = false;
-        for flag in [0u16, 0x10] {
-            // The emit path takes the read in READ (5'->3') orientation: for a reverse record
-            // single_end_sam_output revcomps it back to +ref for the BAM, and the GA call +
-            // genomic extraction are read-oriented. cons_seq/cons_qual are +ref, so the
-            // reverse record passes their reverse-complement / reverse (matching a real OB
-            // read, whose raw FastQ seq is read-oriented).
-            let (eseq, equal): (Vec<u8>, Vec<u8>) = if flag & 0x10 != 0 {
-                let mut q = cons_qual.clone();
-                q.reverse();
-                (crate::aligner::output::revcomp(&cons_seq), q)
-            } else {
-                (cons_seq.clone(), cons_qual.clone())
-            };
-            let sam = SamRecord {
-                qname: qname.clone(),
-                flag,
-                rname: chrom.clone(),
-                pos: start + 1,
-                mapq,
-                cigar: format!("{}M", eseq.len()),
-                seq: String::from_utf8_lossy(&eseq).into_owned(),
-                qual: String::from_utf8_lossy(&equal).into_owned(),
-                alignment_score: Some(0),
-                second_best: None,
-                md_tag: None,
-                raw_line: String::new(),
-            };
-            let mut counters = Counters::default();
-            if let Some(record) = five_base_emit_record(
-                &sam,
-                &qname,
-                &eseq,
-                &equal,
-                genome,
-                refid,
-                false, // consensus QUAL is phred33
-                0,     // no base-quality masking on the consensus
-                &mut counters,
-            )? {
-                write_record(&mut writer, &record)?;
-                wrote_any = true;
+                skipped += 1; // chromosome-edge guard, etc.
             }
-        }
-        if wrote_any {
-            emitted += 1;
-        } else {
-            skipped += 1; // chromosome-edge guard, etc.
         }
     }
 
-    writer
-        .finish()
-        .map_err(|e| AlignerError::Validation(format!("consensus: finalise BAM: {e}")))?;
-    eprintln!(
-        "5-Base duplex consensus (PE): {emitted} consensus read(s) emitted, {skipped} family(ies) \
-         skipped. BAM: {}",
-        consensus_bam_path.display()
-    );
+    if let Some(w) = dpx_writer {
+        w.finish()
+            .map_err(|e| AlignerError::Validation(format!("consensus: finalise BAM: {e}")))?;
+    }
+    if let Some(w) = spx_writer {
+        w.finish().map_err(|e| {
+            AlignerError::Validation(format!("simplex consensus: finalise BAM: {e}"))
+        })?;
+    }
+    if let Some(p) = dpx_path {
+        eprintln!(
+            "5-Base duplex consensus (PE): {emitted} consensus read(s) emitted, {skipped} \
+             family(ies) skipped. BAM: {}",
+            p.display()
+        );
+    }
+    if let Some(p) = spx_path {
+        // Read counts, not fragments: a per-record MAPQ filter can orphan one mate.
+        eprintln!(
+            "5-Base simplex consensus (PE): {emitted_spx} consensus read(s) emitted, \
+             {skipped_spx} family(ies) skipped, of {n_simplex_families} single-strand \
+             family(ies) [reads per family 1:{} 2:{} 3:{} 4:{} >=5:{}]. BAM: {}",
+            size_hist[0],
+            size_hist[1],
+            size_hist[2],
+            size_hist[3],
+            size_hist[4],
+            p.display()
+        );
+    }
     Ok(())
 }
 
