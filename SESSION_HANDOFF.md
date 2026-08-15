@@ -1,6 +1,6 @@
-# Session Handoff — 2026-08-15 (#1100 shipped to `dev`; #1104 built, reviewed, PR #1105 GREEN)
+# Session Handoff — 2026-08-15 (#1100 and #1104 both shipped to `dev`; nothing left in flight)
 
-**`dev` is at `53744d5`, 38 ahead of `master`.** #1100 landed (PR #1102 → `7596b0d`). #1104 is fully built and reviewed on branch `1104-simplex-consensus` @ `ab6bfea` with **[PR #1105](https://github.com/FelixKrueger/Bismark/pull/1105) OPEN, MERGEABLE/CLEAN, CI 16/16 green** — awaiting Felix's merge decision.
+**`dev` is at `f575873`, 40 ahead of `master`, and there is no open feature work.** #1100 landed (PR #1102 → `7596b0d`) and #1104 landed (PR #1105 → **`f575873`**, squash, CI was 16/16 green, dual code review APPROVE). Both feature branches are deleted local and remote. **The next action is a release decision, not code.**
 
 > 🚫 **STILL NO RELEASE, and it now gates FOUR user-visible items** — `--five_base_bisulfite_bam` (#1095), #1099, #1100, and #1104 once merged. `rust/VERSION` still reads **3.1.0**. **PR #1096 is CLOSED**, so a 3.2.0 cut needs a *fresh* `dev`→`master` PR. The `Unreleased` CHANGELOG section carries **nine** groups; three retire a byte-identity claim (minimap2 SE, both `--local` MAPQ paths) and #1104 adds a fourth behaviour change (consensus record ORDER).
 >
@@ -18,7 +18,7 @@
 | **Branch cleanup** | **28 of 34 local branches deleted** after per-branch verification; 6 kept (see §5 N16). Also 33 orphaned `branch.*` sections removed from `.git/config` (101 → 19 keys) |
 | **🔑 Rescued the bioconda W3 docs** | `rust/fix-nondir-pe-flag-swap` held the ONLY copy of `plans/07062026_install-story/W3-bioconda/` (5 files, incl. the recipe draft for the still-open upstream PR #67004) — in neither `dev` nor `master`, remote auto-deleted. Pushed the branch **and** cherry-picked the paths onto `dev` (`4cee57c`) |
 | **#1095 answered** (`5297345730`) | @Danielsm8 (Mike) is in the **coverage-recovery** case: simplex kept distinguishable, *not* pooled. Reply covered the EM-Seq/5-Base polarity inversion (a `C>T` reads *unmethylated* under EM-Seq, *methylated* under 5-Base — so his paired assays disagree at variants and agree at real methylation: a genotype-free variant screen), pointed at UMI-aware `bismark dedup --barcode`/`--bclconvert` (already in 3.1.0), confirmed `RX:Z:` for fgbio. An fgbio duplex-mode caveat was drafted and **cut** — sound from the chemistry, unmeasured |
-| **#1104 filed + fully delivered** | Issue → plan rev 0 → dual plan review (**REQUEST CHANGES ×2**) → rev 1 → implement (2 commits) → dual code review (**APPROVE ×2**) → coverage audit (**INCOMPLETE, 3 items**) → all findings + gaps closed → oxy scale run → PR #1105 green. 6 commits |
+| **#1104 filed, delivered and MERGED** | Issue → plan rev 0 → dual plan review (**REQUEST CHANGES ×2**) → rev 1 → implement → dual code review (**APPROVE ×2**) → coverage audit (**INCOMPLETE, 3 items**) → all findings + gaps closed → oxy scale run → PR #1105 → squash **`f575873`**. 6 commits folded into one; 17 files, +2828/−111. Branch deleted both sides |
 | **oxy scale validation** | **+83 MB peak RSS for 3.42M simplex families** over a 6.85M-record PE BAM; duplex BAM byte-identical modulo `mx`; count identity exact; extractor clean. §2 for what it does NOT show |
 | **FastQC-Rust located** | Phil's repo is **`ewels/FastQC-Rust`** (not "RustQC"/"fastqc-rs"). #6 (BAM Phred bug) OPEN, Felix asked Phil which fix he prefers — **do not PR unprompted**. Saved as a memory |
 
@@ -26,8 +26,7 @@
 
 | Item | State |
 |---|---|
-| **PR #1105 merge** | Ready — MERGEABLE/CLEAN, 16/16 CI green, dual APPROVE. Squash into `dev`; verify `git diff <tip> origin/dev` = 0 lines + PR state (G29) |
-| **Release 3.2.0** | **The only real gate.** Needs a fresh `dev`→`master` PR (#1096 closed), `rust/VERSION` 3.1.0→3.2.0 + the 3 mirror literals, and a `## Bismark 3.2.0` retitle. Closes #1095/#1099/#1100/#1104 |
+| **Release 3.2.0** | 🔴 **The only thing left, and the only real gate.** Needs a fresh `dev`→`master` PR (#1096 closed), `rust/VERSION` 3.1.0→3.2.0 + the 3 mirror literals, and a `## Bismark 3.2.0` retitle. Closes #1095/#1099/#1100/#1104 |
 | **Dependabot PR #1103** | Open, base **`master`**, BLOCKED. js-yaml in `docs/` (build-time only; low practical risk). Decide whether to re-target at `dev` or take it on `master` |
 | **Biological V9 for #1104** | ⛔ The Illumina 5-Base demo dataset is **not on oxy** (only plan dirs; the NA12878 data is gone). The oxy run validated memory/counts/tags/byte-identity **at scale but on bisulfite input through the inverted-polarity path — its methylation values are meaningless (98.6 % CHH)**. Biological correctness rests on the synthetic groundtruth gates + prior DRAGEN concordance. Recorded in PLAN §11c, not implied |
 | **`#1104` simplex-mode duplex count** | Both reviewers noted PLAN §3.5 promises a duplex figure in `simplex` mode that §3.7/V7 asserts is absent — plan self-inconsistency, code matches §3.7. One line in the simplex report line would settle it |
@@ -49,9 +48,9 @@
 
 ## 4. Files modified
 
-**On `dev`:** `4cee57c` (bioconda W3 docs cherry-picked), `3d51266` + `53744d5` (handoff). Plus the #1102 squash `7596b0d`.
+**On `dev`:** `7596b0d` (#1102 squash = #1100), `4cee57c` (bioconda W3 docs cherry-picked), `3d51266`/`53744d5`/`18fc7a4` (handoff), **`f575873` (#1105 squash = #1104)**.
 
-**On `1104-simplex-consensus`** (6 commits, `ab6bfea`): `rust/bismark/src/aligner/{cli,config,mod,five_base_duplex}.rs`, `rust/bismark/src/io/record.rs`, `rust/bismark/tests/aligner_five_base_{simplex,groundtruth}.rs`, `CHANGELOG.md`, `rust/README.md`, `docs/…/illumina-5-base.md`, `plans/08142026_5base-simplex-consensus/`.
+**What `f575873` carries:** `rust/bismark/src/aligner/{cli,config,mod,five_base_duplex}.rs`, `rust/bismark/src/io/record.rs`, `rust/bismark/tests/aligner_five_base_{simplex,groundtruth}.rs`, `CHANGELOG.md`, `rust/README.md`, `docs/…/illumina-5-base.md`, `plans/08142026_5base-simplex-consensus/`. Deleted tip was `ab6bfea` (reflog, ~90 days) — but every byte is on `dev`, verified by content.
 
 **Uncommitted:** this file only.
 
@@ -90,6 +89,8 @@
 **N22 — `env -u VAR` must precede assignments.** `env PATH=… -u CI cmd` treats `-u` as the command name and prints nothing — which nearly read as evidence for a vacuity claim.
 
 ### Carried forward (verbatim-critical)
+
+**N23 — 🔑 G29's `git diff <branch> origin/dev` = 0 breaks the moment the base moves — including a handoff commit you pushed yourself.** Verifying the #1105 squash it reported **174 differing lines**, all of them `SESSION_HANDOFF.md`: that commit was on `dev` and never on the branch. Nothing was wrong. **Use two checks so "content missing" and "base moved" cannot be confused:** `git diff <branch> origin/dev -- . ':(exclude)<base-only paths>'` = 0, **and** the squash's own `git diff --shortstat origin/dev^ origin/dev` matching the PR's pre-merge diffstat. A single check that cannot tell those apart is not enough before an irreversible step. (Same root as N16's first bullet.)
 
 **N16 — 🔑 A merged branch can hold the only copy of something.** `rust/fix-nondir-pe-flag-swap` (PR #1031 MERGED) had 2 commits *after* its merge; `git log --all --find-object=<blob>` found them in exactly one ref. **Three tests, because each fails differently:** `git diff <branch> <squash>` = 0 is strongest but only valid when the base has not moved (a squash tree is `base-at-merge + branch changes`); local tip vs GitHub's `headRefOid` catches commits the PR never saw (and **`gh pr list --head` can return several PRs** — reading `.[0]` misattributes long-lived branches); only `--find-object` answers *"does this content exist anywhere in `dev`'s history?"*. Also: `git branch -d` refuses a squash-merged branch **forever**, so `-D` plus a content check is the only route, and deleting branches leaves orphaned `branch.*` config the **sandbox blocks git from cleaning** (`could not lock config file`) — needs a separate unsandboxed pass.
 
