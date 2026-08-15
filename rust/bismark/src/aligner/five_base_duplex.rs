@@ -433,12 +433,14 @@ impl<K: Eq + std::hash::Hash + Copy, F: Default> SimplexLedger<K, F> {
         }
     }
 
-    /// End of input: a family still in flight means PASS 1 and PASS 2 disagreed.
+    /// End of input: any family not fully collapsed — in flight OR never seen at
+    /// all in PASS 2 — means PASS 1 and PASS 2 disagreed.
     pub fn finish(self) -> Result<(), LedgerError> {
-        if self.arrived.is_empty() {
+        let residual = self.expected.len() - self.done.len();
+        if residual == 0 {
             Ok(())
         } else {
-            Err(LedgerError::Residual(self.arrived.len()))
+            Err(LedgerError::Residual(residual))
         }
     }
 }
@@ -882,6 +884,16 @@ mod tests {
         assert_eq!(ledger.arrive_with(7, |_| {}), Ok(None));
         assert_eq!(ledger.arrive_with(8, |_| {}), Ok(None));
         assert_eq!(ledger.finish(), Err(LedgerError::Residual(2)));
+    }
+
+    /// A family PASS 1 counted but PASS 2 never saw is a residual too — it is in
+    /// neither `arrived` nor `done`, so counting only in-flight families misses it.
+    #[test]
+    fn ledger_reports_a_family_that_never_arrived() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> =
+            SimplexLedger::new([(7u32, 1u32), (8u32, 1u32)].into_iter().collect());
+        assert!(ledger.arrive_with(7, |_| {}).unwrap().is_some());
+        assert_eq!(ledger.finish(), Err(LedgerError::Residual(1)));
     }
 
     /// Cross-file pairing: the ledger has no notion of file boundaries, so a

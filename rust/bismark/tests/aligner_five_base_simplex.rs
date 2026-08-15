@@ -327,10 +327,16 @@ fn both_mode_emits_one_own_strand_record_per_simplex_family() {
         spx_recs.iter().all(|l| l.contains("mx:i:1")),
         "every simplex record is tagged mx:i:1; got:\n{spx}"
     );
+    // The count first: `.all()` holds vacuously on a header-only BAM, so without this
+    // a `both` run that dropped every duplex family would still pass the tag check.
+    let dpx_recs: Vec<&str> = dpx.lines().filter(|l| !l.starts_with('@')).collect();
+    assert_eq!(
+        dpx_recs.len(),
+        2,
+        "the window-0 duplex family emits both records in `both` mode; got:\n{dpx}"
+    );
     assert!(
-        dpx.lines()
-            .filter(|l| !l.starts_with('@'))
-            .all(|l| l.contains("mx:i:2")),
+        dpx_recs.iter().all(|l| l.contains("mx:i:2")),
         "every duplex record is tagged mx:i:2 in a non-default mode; got:\n{dpx}"
     );
 
@@ -458,6 +464,61 @@ fn single_fragment_simplex_family_is_emitted_and_bucketed_at_two() {
             .count(),
         0,
         "no duplex families here, so the duplex BAM is header-only"
+    );
+}
+
+/// The histogram's upper buckets and its `>=5` clamp: every other fixture here has
+/// 1- or 2-read families, so a mis-clamp would go unseen. Window 0 gets three OT pairs
+/// (6 reads, one family — same span, no UMI) and window 1 a pair plus a lone mate
+/// (3 reads).
+#[test]
+fn histogram_buckets_deeper_families_and_clamps_at_five() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let n = 2;
+    write_genome(tmp.path(), n);
+    let seq = seq_ot_methylated();
+    let mut recs = String::new();
+    // Window 0: 3 pairs = 6 reads on one family -> the >=5 bucket.
+    for r in 0..3 {
+        recs.push_str(&pair(&format!("deep{r}"), 0, true, &seq, 60, 60));
+    }
+    // Window 1: one pair + one lone mate = 3 reads -> the 3 bucket.
+    recs.push_str(&pair("three_a", 1, true, &seq, 60, 60));
+    recs.push_str(&format!(
+        "{}\n",
+        pair("three_b", 1, true, &seq, 60, 60)
+            .lines()
+            .next()
+            .unwrap()
+    ));
+    let bam = make_bam(tmp.path(), "deep", n, &recs);
+
+    let out = tempfile::tempdir().unwrap();
+    let stderr = run_consensus(
+        tmp.path(),
+        out.path(),
+        &bam,
+        &["--five_base_emit_multiplicity", "simplex"],
+    );
+    assert_eq!(
+        sam_text(&out.path().join("five_base_simplex.bam"))
+            .lines()
+            .filter(|l| !l.starts_with('@'))
+            .count(),
+        2,
+        "two families, one record each"
+    );
+    assert!(
+        stderr.contains("reads per family 1:0 2:0 3:1 4:0 >=5:1"),
+        "a 3-read family buckets at 3 and a 6-read family clamps into >=5; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("of 2 single-strand family(ies)"),
+        "both families must be counted; got:\n{stderr}"
     );
 }
 

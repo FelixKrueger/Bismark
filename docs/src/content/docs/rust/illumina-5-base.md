@@ -117,7 +117,7 @@ strand that was never sequenced.
 A simplex consensus has **no cross-strand variant check** — the check that separates 5mC from a
 genuine `C>T` needs the opposite strand, so on simplex reads a real `C>T` variant reads as
 methylation. Treat simplex output as lower confidence than duplex, and pair it with
-[`--five_base_deconvolution`](#flags) for the population-level check.
+[`--five_base_deconvolution`](#advanced-modes) for the population-level check.
 :::
 
 The run reports how many single-strand families were found and their read-count distribution
