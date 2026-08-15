@@ -189,7 +189,26 @@ Both restored from a `command cp -f` backup in the scratchpad, never `git checko
 
 **Verification run:** full `cargo test -p bismark` = **1502 unit + all integration suites, 0 failures**; the new suite is 10/10; `aligner_five_base_groundtruth` (7) and `aligner_five_base_bisulfite` (11) unchanged. `cargo clippy -p bismark --all-targets` clean on **default**, `binseq-input`, and `rammap-inprocess`; `cargo fmt -p bismark -- --check` clean.
 
-**Still outstanding:** V9, the oxy real-data run in `both` mode (needs the 5-Base PE dataset; not runnable locally). Everything else in §9 is committed and green.
+## 11c. Review response + V9 (2026-08-15)
+
+**Dual code review: APPROVE ×2. Coverage audit: INCOMPLETE — 3 validation-row items, 0 MISSING of 63 ledger items.** Reports: `CODE_REVIEW_A.md`, `CODE_REVIEW_B.md`, `COVERAGE.md`.
+
+**Commit `790e0ae` — review findings.** One real defect, found independently by *both* reviewers, same patch: `SimplexLedger::finish()` inspected only the in-flight map, so a family PASS 1 counted whose records all vanished before PASS 2 created no entry and passed silently. Residual is now `expected.len() - done.len()`. §3.8 had promised this direction; the unit test meant to cover it used families with ≥1 arrival, so the zero-arrival case was never exercised — **a sabotage only tests the gate it is aimed at**, which is why my two sabotages missed it. Also: B proved one gate genuinely vacuous — the `both`-mode `mx:i:2` check was `.all()` over a possibly-empty iterator, and with the PASS-2 storage rule sabotaged to drop every duplex family the *entire suite still passed*; a record-count assertion now precedes it. Plus the histogram's 3/≥5 buckets (no fixture had >2 reads) and a dead docs anchor (`#flags`).
+
+**Commit `2564fa9` — V5/V7 closure.** The in-run entry point had no test in any non-default mode; the new minimap2-gated gate runs `both` in-run and asserts the split plus the `_pe.5base_simplex.bam` suffix, cross-checked against the duplex pass's independent `singletons` count. Sabotage-verified — and worth recording that the *first* sabotage attempt passed because `derive_output_path` takes a primary pattern and a fallback and I had only changed the fallback. V5's XM spot-check and the non-default `Note:` assertion added.
+
+**V9 — reframed and run (oxy, 2026-08-15).** The real 5-Base PE dataset is **not on oxy** (only plan dirs; the NA12878 demo used for the original DRAGEN concordance is gone), so V9 as written is blocked on re-acquiring it. What V9 was actually *for* — the one design claim with no evidence — is the emit-and-evict memory bound at scale, and that is measurable on any Bismark-convention PE BAM. Run over `10M_PE/…deduplicated_all_meth.bam` (6,850,092 records, all properly paired, deduplicated ⇒ singleton-dominated, the exact class the design targets):
+
+| Mode | Peak RSS | Wall | Emitted |
+|---|---|---|---|
+| `duplex` (baseline) | 3,427,028 kB | 0:18 | 63 duplex |
+| `both` | 3,511,828 kB | 1:45 | 63 duplex + **3,424,919 simplex** |
+
+**+83 MB for 3.42M families (~25 B each)** — emit-and-evict holds; storing covered-maps would have been gigabytes. Also verified at scale: the duplex BAM is **byte-identical between the two runs modulo `mx`** (126 records); `mx` occurs **0** times in duplex mode (default-path byte identity at 6.85M records, not just a 2-family fixture); count identity **exact** (3,424,919 emitted + 0 skipped == 3,424,919 families); histogram `2:3424918 4:1`, consistent with deduplicated input. The extractor consumed the simplex BAM clean (exit 0, 7.3 s, 283 MB, all six context files, 3,424,919 call strings → 6.3M CpG calls).
+
+⚠️ **What this run does NOT show.** The input is bisulfite data driven through the 5-Base inverted-polarity path, so the *methylation values are meaningless* (98.6 % CHH). It validates memory, counts, tag placement, byte-identity and downstream consumption at scale — **not** biological correctness, which rests on the synthetic groundtruth gates and the pre-existing DRAGEN concordance. A true 5-Base real-data concordance run still needs the Illumina demo dataset and remains open.
+
+**Still outstanding:** biological V9 on real 5-Base data (dataset not available). Everything else in §9 is committed and green.
 
 ## 11. Self-Review (rev 1)
 
