@@ -20,6 +20,7 @@
 | **#1095 answered** (`5297345730`) | @Danielsm8 (Mike) is in the **coverage-recovery** case: simplex kept distinguishable, *not* pooled. Reply covered the EM-Seq/5-Base polarity inversion (a `C>T` reads *unmethylated* under EM-Seq, *methylated* under 5-Base — so his paired assays disagree at variants and agree at real methylation: a genotype-free variant screen), pointed at UMI-aware `bismark dedup --barcode`/`--bclconvert` (already in 3.1.0), confirmed `RX:Z:` for fgbio. An fgbio duplex-mode caveat was drafted and **cut** — sound from the chemistry, unmeasured |
 | **#1104 filed, delivered and MERGED** | Issue → plan rev 0 → dual plan review (**REQUEST CHANGES ×2**) → rev 1 → implement → dual code review (**APPROVE ×2**) → coverage audit (**INCOMPLETE, 3 items**) → all findings + gaps closed → oxy scale run → PR #1105 → squash **`f575873`**. 6 commits folded into one; 17 files, +2828/−111. Branch deleted both sides |
 | **oxy scale validation** | **+83 MB peak RSS for 3.42M simplex families** over a 6.85M-record PE BAM; duplex BAM byte-identical modulo `mx`; count identity exact; extractor clean. §2 for what it does NOT show |
+| **🔧 Pre-push hook added** (`689cffa`) | `.githooks/pre-push` mirrors CI's Rust gates — `cargo fmt --all -- --check` and `clippy --workspace --all-targets` under `-D warnings` — **only when the push carries `rust/` changes**, so docs/handoff pushes stay instant. Feature sets opt-in (`BISMARK_PREPUSH_FEATURES=1`, ~4 min). Refuses to pass when cargo is missing rather than skipping silently. **Active in this clone** (`core.hooksPath=.githooks`); a fresh clone needs that one command. Bypass: `--no-verify` or `BISMARK_SKIP_PREPUSH=1`. Verified both ways — reintroducing #1105's lint blocks the push, a clean tree passes |
 | **FastQC-Rust located** | Phil's repo is **`ewels/FastQC-Rust`** (not "RustQC"/"fastqc-rs"). #6 (BAM Phred bug) OPEN, Felix asked Phil which fix he prefers — **do not PR unprompted**. Saved as a memory |
 
 ## 2. What's still pending
@@ -27,7 +28,7 @@
 | Item | State |
 |---|---|
 | **Release 3.2.0** | 🔴 **The only thing left, and the only real gate.** Needs a fresh `dev`→`master` PR (#1096 closed), `rust/VERSION` 3.1.0→3.2.0 + the 3 mirror literals, and a `## Bismark 3.2.0` retitle. Closes #1095/#1099/#1100/#1104 |
-| **Dependabot PR #1103** | Open, base **`master`**, BLOCKED. js-yaml in `docs/` (build-time only; low practical risk). Decide whether to re-target at `dev` or take it on `master` |
+| **Dependabot PR #1103** | 🔵 **Felix's stated FIRST task next session.** Open, base **`master`**, `BLOCKED`. js-yaml 4.3.0→4.3.1 in `docs/package-lock.json` — build-time only, so low practical risk. Three routes: **merge on `master`** (a release-path change outside the `dev` convention), **re-target at `dev`** (convention-correct; `gh pr edit 1103 --base dev`, then confirm it still applies), or **close it and bump on `dev` by hand** (`npm audit fix` in `docs/`). ⚠️ **The alert count disagrees with itself** — the API reported 1 open (js-yaml) while the `git push` banner said 2; re-check both before believing either |
 | **Biological V9 for #1104** | ⛔ The Illumina 5-Base demo dataset is **not on oxy** (only plan dirs; the NA12878 data is gone). The oxy run validated memory/counts/tags/byte-identity **at scale but on bisulfite input through the inverted-polarity path — its methylation values are meaningless (98.6 % CHH)**. Biological correctness rests on the synthetic groundtruth gates + prior DRAGEN concordance. Recorded in PLAN §11c, not implied |
 | **`#1104` simplex-mode duplex count** | Both reviewers noted PLAN §3.5 promises a duplex figure in `simplex` mode that §3.7/V7 asserts is absent — plan self-inconsistency, code matches §3.7. One line in the simplex report line would settle it |
 | `rust/README.md` Milestones | Still undecided from #1099/#1100 (reviewers split Medium/Low); #1104's entries were added |
@@ -48,7 +49,7 @@
 
 ## 4. Files modified
 
-**On `dev`:** `7596b0d` (#1102 squash = #1100), `4cee57c` (bioconda W3 docs cherry-picked), `3d51266`/`53744d5`/`18fc7a4` (handoff), **`f575873` (#1105 squash = #1104)**.
+**On `dev`:** `7596b0d` (#1102 squash = #1100), `4cee57c` (bioconda W3 docs cherry-picked), **`f575873` (#1105 squash = #1104)**, `689cffa` (pre-push hook), plus handoff commits.
 
 **What `f575873` carries:** `rust/bismark/src/aligner/{cli,config,mod,five_base_duplex}.rs`, `rust/bismark/src/io/record.rs`, `rust/bismark/tests/aligner_five_base_{simplex,groundtruth}.rs`, `CHANGELOG.md`, `rust/README.md`, `docs/…/illumina-5-base.md`, `plans/08142026_5base-simplex-consensus/`. Deleted tip was `ab6bfea` (reflog, ~90 days) — but every byte is on `dev`, verified by content.
 
@@ -73,7 +74,9 @@
 4. `.all(|…|)` on an **empty iterator is `true`** — a committed test gate passed vacuously; sabotaging the code to produce an empty BAM left the *whole suite* green.
 5. **Local clippy warnings are invisible without CI's `RUSTFLAGS: -D warnings`** — and `| tail -1` hid the warning text too. This turned three CI jobs red on PR #1105.
 
-**How to actually prevent it:** never let a search's exit status be the verdict — capture the count and compare (`[ "$n" = "0" ]`), and run gates as `if RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets >/dev/null 2>&1; then`. **Before any push touching Rust: `RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets` for default, `binseq-input` AND `rammap-inprocess`, with literal `--features` args.** Worth a pre-push hook rather than another line here.
+**How to actually prevent it:** never let a search's exit status be the verdict — capture the count and compare (`[ "$n" = "0" ]`) — and never pipe a command whose success you are about to assert. Use `if cargo …; then`, not `if cargo … | tail; then`.
+
+✅ **The clippy half is now mechanised**: `.githooks/pre-push` (see §1) blocks a push whose `rust/` changes fail `fmt` or `clippy -D warnings`, which is exactly the variant that reached CI. **The other five variants are still yours to avoid** — the hook cannot see a `grep -c` in your shell or a piped `git push`. Six instances in one session says prose does not prevent this; if a seventh appears, mechanise that variant too rather than re-documenting it.
 
 ### New this session
 
