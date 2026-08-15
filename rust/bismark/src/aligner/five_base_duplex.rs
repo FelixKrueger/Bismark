@@ -370,6 +370,79 @@ pub fn consensus_base(kind: SiteKind, ot: Option<(u8, u8)>, ob: Option<(u8, u8)>
     }
 }
 
+/// #1104: a [`SimplexLedger::arrive_with`] / [`SimplexLedger::finish`] count mismatch.
+/// Every direction is an input mutated between the two consensus passes, so callers
+/// turn each into a hard error rather than emitting silently-partial consensus.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LedgerError {
+    /// PASS 2 saw a family PASS 1 never counted.
+    UnknownKey,
+    /// A record arrived for a family that already emitted (would double-emit).
+    AfterEmission,
+    /// Families still incomplete when the input ended (how many).
+    Residual(usize),
+}
+
+/// #1104 simplex emit-and-evict bookkeeping. PASS 1 knows each simplex family's
+/// exact read count; PASS 2 feeds arrivals here and collapses a family the moment
+/// its last record arrives, so peak memory is the in-flight incomplete families
+/// rather than the whole simplex set (duplication-rate-bound: a multi-fragment
+/// family stays resident from its first to its last member).
+pub struct SimplexLedger<K: Eq + std::hash::Hash + Copy, F: Default> {
+    expected: std::collections::HashMap<K, u32>,
+    arrived: std::collections::HashMap<K, (F, u32)>,
+    done: std::collections::HashSet<K>,
+}
+
+impl<K: Eq + std::hash::Hash + Copy, F: Default> SimplexLedger<K, F> {
+    pub fn new(expected: std::collections::HashMap<K, u32>) -> Self {
+        Self {
+            expected,
+            arrived: std::collections::HashMap::new(),
+            done: std::collections::HashSet::new(),
+        }
+    }
+
+    /// How many families PASS 1 counted (emitted + skipped must equal this).
+    pub fn expected_len(&self) -> usize {
+        self.expected.len()
+    }
+
+    /// Record one arrival, mutating the family via `add`; returns the completed
+    /// family when this arrival was its last expected record.
+    pub fn arrive_with(
+        &mut self,
+        key: K,
+        add: impl FnOnce(&mut F),
+    ) -> Result<Option<F>, LedgerError> {
+        if self.done.contains(&key) {
+            return Err(LedgerError::AfterEmission);
+        }
+        let Some(&expected) = self.expected.get(&key) else {
+            return Err(LedgerError::UnknownKey);
+        };
+        let entry = self.arrived.entry(key).or_default();
+        add(&mut entry.0);
+        entry.1 += 1;
+        if entry.1 == expected {
+            let (fam, _) = self.arrived.remove(&key).expect("entry just inserted");
+            self.done.insert(key);
+            Ok(Some(fam))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// End of input: a family still in flight means PASS 1 and PASS 2 disagreed.
+    pub fn finish(self) -> Result<(), LedgerError> {
+        if self.arrived.is_empty() {
+            Ok(())
+        } else {
+            Err(LedgerError::Residual(self.arrived.len()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,5 +784,117 @@ mod tests {
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("chr1\t100\t160\tAACCG\t1+1\t0\t1\t0"));
         assert!(text.contains("# families 2 duplex-paired 1 singletons 1"));
+    }
+
+    // ---- #1104 simplex: consensus_base with one strand absent -----------------------
+
+    /// OT-only family: the `+` CpG keeps the own-strand call (methylated T or
+    /// unmethylated C); the `-` CpG has no own strand and masks to `N`.
+    #[test]
+    fn simplex_ot_only_calls_plus_cpg_masks_minus_cpg() {
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'T', 30)), None),
+            (b'T', 30)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, Some((b'C', 30)), None),
+            (b'C', 30)
+        );
+        // MinusCpG: own = OB = None; the qual carries the opposite strand's.
+        assert_eq!(
+            consensus_base(SiteKind::MinusCpG, Some((b'G', 30)), None),
+            (b'N', 30)
+        );
+    }
+
+    /// OB-only family, symmetrically.
+    #[test]
+    fn simplex_ob_only_calls_minus_cpg_masks_plus_cpg() {
+        assert_eq!(
+            consensus_base(SiteKind::MinusCpG, None, Some((b'A', 25))),
+            (b'A', 25)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::MinusCpG, None, Some((b'G', 25))),
+            (b'G', 25)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::PlusCpG, None, Some((b'C', 25))),
+            (b'N', 25)
+        );
+    }
+
+    /// Non-CpG positions: the covered strand's base passes through unchanged.
+    /// This is why a simplex family emits only its OWN strand's record — the
+    /// suppressed record would call these pass-through bases for a strand that
+    /// was never sequenced.
+    #[test]
+    fn simplex_non_cpg_passes_covered_strand_through() {
+        assert_eq!(
+            consensus_base(SiteKind::Other, Some((b'A', 40)), None),
+            (b'A', 40)
+        );
+        assert_eq!(
+            consensus_base(SiteKind::Other, None, Some((b'G', 12))),
+            (b'G', 12)
+        );
+    }
+
+    // ---- #1104 SimplexLedger error paths ---------------------------------------------
+
+    #[test]
+    fn ledger_completes_family_exactly_once() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> =
+            SimplexLedger::new([(7u32, 2u32)].into_iter().collect());
+        assert_eq!(ledger.expected_len(), 1);
+        assert_eq!(ledger.arrive_with(7, |f| f.push(b'a')), Ok(None));
+        let fam = ledger.arrive_with(7, |f| f.push(b'b')).unwrap().unwrap();
+        assert_eq!(fam, b"ab");
+        assert_eq!(ledger.finish(), Ok(()));
+    }
+
+    #[test]
+    fn ledger_rejects_unknown_key() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> = SimplexLedger::new(Default::default());
+        assert_eq!(
+            ledger.arrive_with(1, |_| {}),
+            Err(LedgerError::UnknownKey),
+            "a key pass 1 never counted means the input changed between passes"
+        );
+    }
+
+    #[test]
+    fn ledger_rejects_arrival_after_emission() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> =
+            SimplexLedger::new([(7u32, 1u32)].into_iter().collect());
+        assert!(ledger.arrive_with(7, |_| {}).unwrap().is_some());
+        assert_eq!(
+            ledger.arrive_with(7, |_| {}),
+            Err(LedgerError::AfterEmission),
+            "a completed family re-filling would silently double-emit"
+        );
+    }
+
+    #[test]
+    fn ledger_reports_residual_families_at_finish() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> =
+            SimplexLedger::new([(7u32, 2u32), (8u32, 3u32)].into_iter().collect());
+        assert_eq!(ledger.arrive_with(7, |_| {}), Ok(None));
+        assert_eq!(ledger.arrive_with(8, |_| {}), Ok(None));
+        assert_eq!(ledger.finish(), Err(LedgerError::Residual(2)));
+    }
+
+    /// Cross-file pairing: the ledger has no notion of file boundaries, so a
+    /// family split across inputs completes on its last arrival wherever it is.
+    #[test]
+    fn ledger_family_split_across_inputs_completes_on_last_arrival() {
+        let mut ledger: SimplexLedger<u32, Vec<u8>> =
+            SimplexLedger::new([(7u32, 4u32)].into_iter().collect());
+        for _ in 0..3 {
+            assert_eq!(ledger.arrive_with(7, |f| f.push(b'x')), Ok(None));
+        }
+        let fam = ledger.arrive_with(7, |f| f.push(b'x')).unwrap().unwrap();
+        assert_eq!(fam.len(), 4);
+        assert_eq!(ledger.finish(), Ok(()));
     }
 }

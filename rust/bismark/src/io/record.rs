@@ -229,6 +229,17 @@ impl BismarkRecord {
             .insert(Tag::from(*b"RX"), Value::String(umi.to_vec().into()));
     }
 
+    /// Write the consensus-multiplicity `mx:i` aux tag (#1104: 2 = duplex,
+    /// 1 = simplex; lowercase = SAM local space, unrelated to `XM`).
+    /// Overwrites any existing `mx`.
+    pub fn set_mx(&mut self, multiplicity: i32) {
+        use noodles_sam::alignment::record::data::field::Tag;
+        use noodles_sam::alignment::record_buf::data::field::Value;
+        self.inner
+            .data_mut()
+            .insert(Tag::from(*b"mx"), Value::from(multiplicity));
+    }
+
     /// Iterate XM calls oriented by the **5' end of the sequenced read**.
     ///
     /// For each XM byte that aligns to a reference position (skipping

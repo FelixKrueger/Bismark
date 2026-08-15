@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::aligner::aligner::{self, DetectedAligner};
-use crate::aligner::cli::Cli;
+use crate::aligner::cli::{Cli, EmitMultiplicity};
 use crate::aligner::discovery::{self, GenomeIndexes};
 use crate::aligner::error::{AlignerError, Result};
 use crate::aligner::options;
@@ -444,6 +444,9 @@ pub struct RunConfig {
     /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
     /// (implies `five_base_duplex`). Paired-end only. Requires `five_base`.
     pub five_base_consensus: bool,
+    /// #1104: which consensus multiplicities to emit. Non-default requires
+    /// `five_base_consensus` (guarded at resolve()).
+    pub five_base_emit_multiplicity: EmitMultiplicity,
     /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
     /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
     /// exclusive with `five_base_umi_len`.
@@ -762,6 +765,15 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 .into(),
         ));
     }
+    // #1104: the emit-multiplicity selector only affects the consensus collapse.
+    if cli.five_base_emit_multiplicity != EmitMultiplicity::Duplex && !cli.five_base_consensus {
+        return Err(AlignerError::Validation(
+            "--five_base_emit_multiplicity requires --five_base_consensus (or a \
+             --five_base_consensus_from_bam run): it selects which consensus families are \
+             emitted."
+                .into(),
+        ));
+    }
     // The minimap2-only preset/length flags (Perl 8329-8356): outside minimap2
     // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
     // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
@@ -989,6 +1001,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // --five_base_consensus implies the duplex family pass.
         five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
         five_base_consensus: cli.five_base_consensus,
+        five_base_emit_multiplicity: cli.five_base_emit_multiplicity,
         five_base_umi_qname: cli.five_base_umi_qname,
         library,
         layout,
@@ -1740,6 +1753,7 @@ pub fn run_config_stub(
         five_base_min_mapq: 0,
         five_base_duplex: false,
         five_base_consensus: false,
+        five_base_emit_multiplicity: EmitMultiplicity::Duplex,
         five_base_umi_qname: false,
         library,
         layout,

@@ -84,12 +84,45 @@ strand-partner read pairs. These modes use that structure:
   re-alignment).
 - **`--five_base_umi_qname`** (preview) takes the duplex UMI from the read name (the real
   Illumina form, `A+B` with the partner swapped) instead of an inline read prefix.
+- **`--five_base_emit_multiplicity {duplex|simplex|both}`** selects which consensus
+  families are emitted (see below). `duplex` is the default.
 
 ```sh
 # duplex consensus from the real dual-UMI in the read name
 bismark --illumina_5base --five_base_umi_qname --five_base_consensus \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
+
+### Simplex molecules: `--five_base_emit_multiplicity`
+
+A duplex family needs the molecule to be seen from **both** strands. Molecules seen from one
+strand only are counted and, by default, discarded — on shallow input such as cfDNA that is
+most of the library. `--five_base_emit_multiplicity` mirrors DRAGEN's
+`--umi-emit-multiplicity`:
+
+| Mode | Emits |
+|---|---|
+| `duplex` (default) | `<out>.5base_consensus.bam` — duplex families, two records each |
+| `simplex` | `<out>.5base_simplex.bam` — single-strand families, one record each. **No duplex BAM** |
+| `both` | both files |
+
+A simplex family still contains every PCR copy of its strand, so the collapse deduplicates
+and error-corrects; only the cross-strand check is missing. In `simplex` and `both` modes every
+consensus record carries `mx:i` (`2` = duplex, `1` = simplex — unrelated to the `XM` call
+string), so the two classes stay distinguishable even after a `samtools merge`. Each record is
+emitted on its molecule's own strand: the opposite-strand record would report calls for a
+strand that was never sequenced.
+
+:::caution
+A simplex consensus has **no cross-strand variant check** — the check that separates 5mC from a
+genuine `C>T` needs the opposite strand, so on simplex reads a real `C>T` variant reads as
+methylation. Treat simplex output as lower confidence than duplex, and pair it with
+[`--five_base_deconvolution`](#flags) for the population-level check.
+:::
+
+The run reports how many single-strand families were found and their read-count distribution
+(a family can hold a single read: `--five_base_min_mapq` filters per record, so one mate of a
+pair can be dropped while the other survives).
 
 ### Interop: `--five_base_bisulfite_bam` (for `wgbs_tools` / UXM)
 
