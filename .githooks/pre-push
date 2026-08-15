@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Mirror the Rust CI gates locally, so a lint cannot turn CI red after a push.
+#
+# Enable in any clone:  git config core.hooksPath .githooks
+# Skip once:            git push --no-verify
+# Skip always:          BISMARK_SKIP_PREPUSH=1 git push
+# Also check the two feature sets (slow, ~4 min):
+#                       BISMARK_PREPUSH_FEATURES=1 git push
+#
+# Why this exists: CI sets RUSTFLAGS="-D warnings", so a clippy *warning*
+# locally is an *error* there. On #1105 one `clippy::suspicious_map` turned
+# three CI jobs red after a local run that looked clean.
+#
+# It runs only when the push actually carries changes under rust/, so
+# docs-only and handoff pushes are instant.
+
+set -uo pipefail
+
+[ "${BISMARK_SKIP_PREPUSH:-}" = "1" ] && exit 0
+
+ZERO=0000000000000000000000000000000000000000
+touched_rust=0
+
+# pre-push receives "<local ref> <local sha> <remote ref> <remote sha>" per ref.
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+	[ "$local_sha" = "$ZERO" ] && continue # branch deletion
+	if [ "$remote_sha" = "$ZERO" ]; then
+		# New remote branch: scope against the integration branch if we can.
+		base=$(git merge-base "$local_sha" origin/dev 2>/dev/null ||
+			git merge-base "$local_sha" origin/master 2>/dev/null || true)
+		if [ -z "$base" ]; then
+			touched_rust=1 # cannot scope it — check rather than assume clean
+			break
+		fi
+		range="$base..$local_sha"
+	else
+		range="$remote_sha..$local_sha"
+	fi
+	if git diff --name-only "$range" -- rust/ | grep -q .; then
+		touched_rust=1
+		break
+	fi
+done
+
+if [ "$touched_rust" = "0" ]; then
+	echo "pre-push: no rust/ changes in this push — skipping the Rust gates."
+	exit 0
+fi
+
+# Never pass silently because a tool is missing: that is the vacuous-green
+# failure these gates exist to prevent.
+if ! command -v cargo >/dev/null 2>&1; then
+	echo "pre-push: cargo is not on PATH, so the Rust gates cannot run."
+	echo "          Refusing to pass silently. Re-run with BISMARK_SKIP_PREPUSH=1 to override."
+	exit 1
+fi
+
+cd "$(git rev-parse --show-toplevel)/rust" || exit 1
+echo "pre-push: rust/ changed — running CI's Rust gates (fmt, clippy -D warnings)."
+fail=0
+
+if cargo fmt --all -- --check; then
+	echo "  fmt      OK"
+else
+	echo "  fmt      FAILED  → cd rust && cargo fmt --all"
+	fail=1
+fi
+
+# `-- -D warnings` matches the CI job; the env var covers rustc's own warnings.
+if RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets -- -D warnings; then
+	echo "  clippy   OK"
+else
+	echo "  clippy   FAILED under -D warnings — exactly what CI enforces"
+	echo "           reproduce: cd rust && RUSTFLAGS=\"-D warnings\" cargo clippy --workspace --all-targets -- -D warnings"
+	fail=1
+fi
+
+# The feature jobs are slow and rarely diverge from the default set; opt in.
+if [ "${BISMARK_PREPUSH_FEATURES:-}" = "1" ]; then
+	if RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets --features binseq-input -- -D warnings; then
+		echo "  clippy   OK (binseq-input)"
+	else
+		echo "  clippy   FAILED (binseq-input)"
+		fail=1
+	fi
+	if RUSTFLAGS="-D warnings" cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings; then
+		echo "  clippy   OK (rammap-inprocess)"
+	else
+		echo "  clippy   FAILED (rammap-inprocess)"
+		fail=1
+	fi
+else
+	echo "  (feature-set clippy skipped — BISMARK_PREPUSH_FEATURES=1 to include it)"
+fi
+
+if [ "$fail" != "0" ]; then
+	echo "pre-push: BLOCKED. Fix the above, or push with --no-verify if you mean to."
+	exit 1
+fi
+echo "pre-push: Rust gates passed."
+exit 0
