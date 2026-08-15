@@ -2566,7 +2566,10 @@ fn run_five_base_consensus(
         .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?;
     let (mut emitted, mut skipped) = (0u64, 0u64);
 
-    for fam in fams.values() {
+    // Emit in sorted key order: HashMap iteration order is random per process.
+    let mut order: Vec<CKey> = fams.keys().copied().collect();
+    order.sort_unstable_by_key(|k| (k.ref_id, k.start, k.end, k.umi_hash));
+    for fam in order.iter().map(|k| &fams[k]) {
         // All families here are paired (filtered in pass 2).
         let Some(chrom) = genome.sq_order.get(fam.ref_id) else {
             skipped += 1;
