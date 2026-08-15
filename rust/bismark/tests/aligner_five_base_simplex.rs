@@ -408,10 +408,22 @@ fn mapq_orphaned_mate_forms_a_one_read_family() {
         ],
     );
     let spx = sam_text(&out.path().join("five_base_simplex.bam"));
+    let recs: Vec<&str> = spx.lines().filter(|l| !l.starts_with('@')).collect();
     assert_eq!(
-        spx.lines().filter(|l| !l.starts_with('@')).count(),
+        recs.len(),
         1,
         "the surviving mate alone must still collapse and emit; got:\n{spx}"
+    );
+    // The surviving mate is R1 of an OT molecule, so the call is the `+` CpG at
+    // window offset 6 — a one-read family calls exactly as a two-read one does.
+    assert_eq!(
+        recs[0]
+            .split('\t')
+            .find(|f| f.starts_with("XM:Z:"))
+            .unwrap()
+            .trim_start_matches("XM:Z:"),
+        "......Z.............",
+        "orphan record must still carry the methylated `+` CpG call; got:\n{spx}"
     );
     assert!(
         stderr.contains("reads per family 1:1 2:0"),
@@ -572,6 +584,12 @@ fn simplex_mode_writes_only_the_simplex_bam() {
     assert!(
         !stderr.contains("5-Base duplex consensus (PE):"),
         "no duplex report line when no duplex BAM is written; got:\n{stderr}"
+    );
+    // A non-default mode names itself in the standalone Note: line (the default-mode
+    // wording is frozen, asserted in default_mode_output_is_unchanged_and_untagged).
+    assert!(
+        stderr.contains("emit multiplicity: simplex"),
+        "a non-default mode must name itself in the Note: line; got:\n{stderr}"
     );
 }
 

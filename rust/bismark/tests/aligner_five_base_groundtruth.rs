@@ -1065,3 +1065,132 @@ fn five_base_controls_deconvolution_no_false_variants() {
         lam_meth.len()
     );
 }
+
+/// `[#1104]` THE IN-RUN SIMPLEX GATE. Every other `--five_base_emit_multiplicity` test
+/// drives the standalone `--five_base_consensus_from_bam` entry, so the in-run call site
+/// — its `EmitPaths` wiring and the `_pe.5base_simplex.bam` suffix derivation — had no
+/// coverage. The fixture holds one duplex molecule (both strands, distinct UMI) and one
+/// SIMPLEX molecule (top strand only), so `both` mode must split them across the two
+/// BAMs. Also cross-checks the emitted simplex count against the duplex pass's own
+/// `singletons` figure, which is the independent count of the same families.
+#[test]
+fn five_base_in_run_both_mode_splits_duplex_and_simplex() {
+    if !have_minimap2() {
+        eprintln!("skipping: minimap2 not on PATH (in-run simplex gate)");
+        return;
+    }
+    let reference = gen_reference(900);
+    let genome = TempDir::new().unwrap();
+    write_genome(genome.path(), &reference);
+    let cpgs = cpg_positions(&reference);
+    let (frag, rl) = (140usize, 100usize);
+    let pick = |frag_start: usize| -> usize {
+        *cpgs
+            .iter()
+            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
+            .expect("a CpG in the mate overlap")
+    };
+    let (s_dup, s_spx) = (100usize, 500usize);
+    let (t_dup, t_spx) = (pick(s_dup), pick(s_spx));
+
+    let mut fq1 = Vec::new();
+    let mut fq2 = Vec::new();
+    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
+        fq.extend_from_slice(format!("@{name}\n").as_bytes());
+        fq.extend_from_slice(bytes);
+        fq.extend_from_slice(b"\n+\n");
+        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
+        fq.push(b'\n');
+    };
+    // `both_strands = false` emits the TOP strand alone: one molecule strand, so PASS 1
+    // sees ot>0 && ob==0 and the family is simplex.
+    let mut molecule = |s: usize, t: usize, ua: &str, ub: &str, both_strands: bool| {
+        let mut top = reference[s..s + frag].to_vec();
+        top[t - s] = b'T'; // 5mC -> T
+        let (ot_r1, ot_r2) = (top[0..rl].to_vec(), revcomp(&top[frag - rl..frag]));
+        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), &ot_r1);
+        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), &ot_r2);
+        if both_strands {
+            let bot = reference[s..s + frag].to_vec(); // unconverted C at t
+            let (ob_r1, ob_r2) = (revcomp(&bot[frag - rl..frag]), bot[0..rl].to_vec());
+            emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), &ob_r1);
+            emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), &ob_r2);
+        }
+    };
+    molecule(s_dup, t_dup, "AACCGGTT", "TTGGCCAA", true);
+    molecule(s_spx, t_spx, "GGGGAAAA", "CCCCTTTT", false);
+
+    let read1 = genome.path().join("r1.fq");
+    let read2 = genome.path().join("r2.fq");
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let out = bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_umi_qname")
+        .arg("--five_base_consensus")
+        .arg("--five_base_emit_multiplicity")
+        .arg("both")
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+
+    // The in-run suffix derivation is what this test exists to pin.
+    let dpx_bam = outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam");
+    let spx_bam = outdir.path().join("r1_bismark_mm2_pe.5base_simplex.bam");
+    assert!(dpx_bam.exists(), "in-run `both` must write the duplex BAM");
+    assert!(
+        spx_bam.exists(),
+        "in-run `both` must write _pe.5base_simplex.bam beside it; dir held: {:?}",
+        fs::read_dir(outdir.path())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect::<Vec<_>>()
+    );
+
+    let count = |p: &Path| -> usize {
+        let mut r = bismark::io::BamReader::from_path(p).unwrap();
+        r.records().map(|x| x.unwrap()).count()
+    };
+    assert_eq!(
+        count(&dpx_bam),
+        2,
+        "the duplex molecule emits a forward AND a reverse consensus record"
+    );
+    assert_eq!(
+        count(&spx_bam),
+        1,
+        "the simplex molecule emits exactly one record, on its own strand"
+    );
+
+    // The duplex pass counts the same single-strand families independently.
+    let txt = fs::read_to_string(outdir.path().join("r1_bismark_mm2_pe.5base_duplex.txt")).unwrap();
+    let singletons: u64 = txt
+        .lines()
+        .find(|l| l.starts_with("# families"))
+        .and_then(|l| l.rsplit_once(' ').map(|(_, n)| n.to_string()))
+        .expect("the duplex report's families line")
+        .parse()
+        .expect("singleton count");
+    assert_eq!(
+        singletons, 1,
+        "the duplex pass must see exactly one single-strand family; report:\n{txt}"
+    );
+    assert!(
+        stderr.contains(&format!("of {singletons} single-strand family(ies)")),
+        "the simplex report's family total must agree with the duplex pass's singletons \
+         ({singletons}); got:\n{stderr}"
+    );
+}
