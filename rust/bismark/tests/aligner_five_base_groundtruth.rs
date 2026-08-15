@@ -1162,7 +1162,12 @@ fn five_base_in_run_both_mode_splits_duplex_and_simplex() {
 
     let count = |p: &Path| -> usize {
         let mut r = bismark::io::BamReader::from_path(p).unwrap();
-        r.records().map(|x| x.unwrap()).count()
+        let mut n = 0usize;
+        for rec in r.records() {
+            rec.unwrap(); // a malformed record must fail the test, not be counted
+            n += 1;
+        }
+        n
     };
     assert_eq!(
         count(&dpx_bam),
