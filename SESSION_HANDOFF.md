@@ -62,10 +62,11 @@
 
 ## 5. Gotchas and constraints
 
-### 🔑 THE recurring failure of this session — five instances, one shape
+### 🔑 THE recurring failure of this session — SIX instances, one shape
 
 **An "empty" or "nothing found" value consumed as a verdict.** Every instance:
 
+0. **The worst one, and it happened while writing this section:** `if git push origin dev | tail -2; then echo "PUSH OK"` — the push was **REJECTED** (non-fast-forward, `origin/dev` had moved under me) and the script printed **`PUSH OK`**, because the `if` tested `tail`. Only a follow-up `rev-parse` comparison caught it. Left unnoticed, the session would have ended believing this handoff was pushed. **Never pipe a command whose success you are about to assert.**
 1. `cargo … | tail -1` / `| head` → **`$?` is the LAST STAGE's**, so a failing cargo reports 0. (Hit me twice, and both code-review subagents independently.)
 2. `grep -c FAILED` → **exits 1 when the count is 0**, so "no failures" propagated as a failed script.
 3. `gh run list --commit <short-sha>` → empty list, and empty reads as all-done. Needs the **full 40-char SHA**.
