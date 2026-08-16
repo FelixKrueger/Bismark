@@ -4,7 +4,8 @@
 **Plan(s):** `plans/08112026_1100-five-base-index-validation/PLAN.md` (rev 2)
 **Audited:** working tree on branch `1100-five-base-index-validation` (**uncommitted**; `git diff` vs `688d919`)
 **Date:** 2026-08-11
-**Verdict:** INCOMPLETE — 6 items unresolved in 4 gaps, **none behavioural** (1 doc sentence, 1 missing test half, 1 unasserted property, 3 unrecorded sabotage claims)
+**Verdict at audit time:** INCOMPLETE — 6 items unresolved in 4 gaps, **none behavioural** (1 doc sentence, 1 missing test half, 1 unasserted property, 3 unrecorded sabotage claims)
+**Verdict now: COMPLETE** — all four gaps closed in the merged implementation (`7596b0d`, PR #1102), verified 2026-08-16. See [Resolution](#resolution); the ledger below is left as the point-in-time record.
 
 ## Summary
 
@@ -225,6 +226,9 @@ deviation improved the test. It also closed a positive form §5 never covered
 
 ## Verdict
 
+> **Superseded — see [Resolution](#resolution).** All four gaps were closed in the merged
+> implementation; what follows is the 2026-08-11 assessment, kept intact.
+
 **INCOMPLETE — 6 items unresolved in 4 gaps, none behavioural.** Every task in §4 is implemented,
 every §0 decision is realised in code, 13 of the 14 planned tests exist and pass, the 14th is a
 documented deviation that improved on the plan, every §6 gate is green (80 suites / 0 failures, fmt
@@ -249,3 +253,36 @@ Not gaps, recorded so they are not re-litigated: §11's `25 → 36` count mixes 
 totals (delta correct); the docs sentence sits just before rather than after the example block; and
 §5a-3's "6 → Err" and §5a-10's `../` case are realised in forms that still catch the defects those
 items target.
+
+## Resolution
+
+Verified **2026-08-16** against the merged squash **`7596b0d`** (PR #1102, on `dev`) — not the
+uncommitted working tree this audit was taken from, which is why the verdict above went stale. PLAN §12
+records the closures as Phase-5 review fixes; each is confirmed in the shipped code, and the three
+tests were run rather than merely located.
+
+| Gap | Items | Closed by | Evidence in `7596b0d` |
+|---|---|---|---|
+| 1 | 8 | The `--large-index`-unreachable note | `discovery.rs:195-196` — "Only two index sizes are probed because this route never emits `--large-index` (`five_base_build_argv` passes `-x` and the mates, nothing else)" |
+| 2 | 32 | A rejected run now asserts nothing was created | `tests/aligner_cli.rs:6311` — `assert!(!nested.exists())` inside `five_base_index_missing_fails_early`, which also pins the error naming `--five_base_index` and the absence of "desync"/"panicked". **Runs green** |
+| 3 | 31 | The hisat2 environment arm gained coverage | `discovery.rs:605` `index_env_name_maps_each_aligner` and `discovery.rs:614` `hisat2_env_fallback_accepted`. **Both run green** |
+| 4 | 35, 38, 39 | Both unrun sabotages executed | PLAN §12, "Sabotage record — all **six** §5c claims now verified": the relocated check goes **1 red** with bowtie2 off `PATH` *with a same-PATH control passing*, and re-breaking #1099 goes **2 red** — so Task 2b's stub index did not weaken #1099's guard. Both guard tests run green today |
+
+Two fixes landed in the same phase that are **not** gap closures but do change what this audit
+concluded, so they belong here rather than being discovered later:
+
+- **C1 — a real false rejection.** Reviewer B measured a working configuration this change rejected: a
+  directory holding only `puc.2.bt2` with `BOWTIE2_INDEXES` pointing at a real index — real bowtie2
+  exit 0, this check exit 1. The gate now keys on `<basename>.1.{bt2,bt2l}` alone, which is what the
+  **binary** (`adjustEbwtBase`) decides on; the wrapper script's wider glob is not the deciding layer.
+  §2/§7's "no false-reject case found" was **false as written**, and D1's "not stricter than the
+  aligner" held only against the wrapper.
+- **Converted-index rejection** — `reject_converted_five_base_index`, canonicalising so `..` and
+  symlinks cannot slip past.
+
+§2's separate conclusion that `$HISAT2_INDEXES` is broken upstream was also wrong, settled by reading
+hisat2's `gfm.cpp`: `adjustEbwtBase` probes `<base>.1.<ext>` and on failure joins
+`getenv("HISAT2_INDEXES")`, so the variable works via the binary. That is what makes Gap 3's tests
+meaningful rather than pinning a dead path.
+
+**No item of the 45 remains open.**
