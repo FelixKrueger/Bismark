@@ -58,14 +58,6 @@ Here is a table summarising general recommendations for different library types 
             <td align="center">⬜️</td>
         </tr>
         <tr>
-            <td align="left">TruSeq (EpiGnome)</td>
-            <td align="center">8 bp</td>
-            <td align="center">(8 bp)</td>
-            <td align="center">⬜️</td>
-            <td align="center">✅</td>
-            <td align="center">⬜️</td>
-        </tr>
-        <tr>
             <td align="left">Accel-NGS (Swift)</td>
             <td align="center">R1: 10, R2:15bp</td>
             <td align="center">(10 bp)</td>
@@ -133,11 +125,6 @@ The amount of bases that need to be trimmed from the 5' end depends on the lengt
 ### Single-cell
 
 The [scBS-Seq method](http://www.nature.com/nmeth/journal/v11/n8/full/nmeth.3035.html) uses a PBAT-type protocol but employs five rounds of sequence capture and elongation to amplify the starting material so all four different bisulfite strands (OT, CTOT, OB, CTOB) are sequenced. Since 6N oligos are used to for the random priming step, 6 bp need to be removed from the 5' ends. Since scBS and PBAT libraries tend to result in [chimaeric fragments](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/) we tend to treat scBS-Seq as single-end reads always. Please also see the section _3' Trimming in general_ below.
-
-### TruSeq DNA-Methylation Kit (formerly EpiGnome)
-
-([Manufacturer's page](http://www.illumina.com/products/by-type/sequencing-kits/library-prep-kits/truseq-dna-methylation.html))
-This Illumina kit (previously known as EpiGnome kit from epicentre) also employs a post-bisulfite strategy using 6N oligos, but in contrast to the PBAT technique only the standard original top and bottom strands (OT and OB) are sequenced, meaning that Bismark can be run in default (= directional) mode. Even though the random priming is performed with 6N oligoes we often saw that the methylation bias extends to 7 or 8 bp, so trimming 8 bp off the 5' end(s) is recommended initially. Please do have a look at the M-bias plots nevertheless to see of more bases need removing/ignoring during the methylation extraction process. Please also see the section _3' Trimming in general_ below.
 
 ### Zymo Pico Methyl-Seq
 
