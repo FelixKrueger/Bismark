@@ -21,7 +21,7 @@ This is a question that pops up every so often, and might have been discussed in
 
 - As a last resort to relaxing the mapping stringency, try to use `--local` mode. This comes with a number of caveats, but it might assist in determining whether or not there is usable sequence present in the library.
 
-- Did you use a special library preparation technique, or an exotic commercial kit? Please see our [trimming and alignment recommendations here](https://github.com/FelixKrueger/Bismark/tree/master/Docs#ix-notes-about-different-library-types-and-commercial-kits)
+- Did you use a special library preparation technique, or an exotic commercial kit? Please see our [trimming and alignment recommendations here](/Bismark/usage/library-types/)
 
 - Look at sequence composition plots in FastQC. Is there anything unusual/unexpected that might prevent alignments?
 
