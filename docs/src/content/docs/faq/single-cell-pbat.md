@@ -27,7 +27,7 @@ Expanding on this idea, a recent [article in Bioinformatics](https://www.ncbi.nl
 
 To rescue as much data from a paired-end PBAT library with low mapping efficiency as possible we sometimes perform the following method (affectionately termed “Dirty Harry” because it is not the most straight forward or cleanest approach):
 
-- We would recommend running 5′ clipping and trimming first (e.g. `trim_galore --clip_r1 6 --clip_r2 6 --paired *fastq.gz`, and run Bismark in paired-end mode with `--unmapped` specified
+- We would recommend running 5′ clipping and trimming first (e.g. `trim_galore --clip_r1 8 --clip_r2 8 --paired *fastq.gz`, and run Bismark in paired-end mode with `--unmapped` specified
 
 - Properly aligned PE reads should be methylation extracted while counting overlapping reads only once (which is the default)
 - unmapped R1 is then mapped in single-end mode (`--pbat`)
