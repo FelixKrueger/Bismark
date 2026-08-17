@@ -2573,6 +2573,7 @@ fn run_five_base_consensus(
             paired.insert(*k);
         } else if spx_path.is_some() {
             let n = ot + ob;
+            debug_assert!(n >= 1, "a family in `counts` must hold at least one read");
             simplex_expected.insert(*k, n);
             size_hist[(n as usize).min(5) - 1] += 1;
         }
@@ -2740,7 +2741,7 @@ fn run_five_base_consensus(
             };
             let is_paired_fam = paired.contains(&ki.ckey);
             if is_paired_fam && dpx_path.is_none() {
-                continue; // simplex-only mode: counted for the report, never stored
+                continue; // simplex-only mode: these are the report's duplex figure, never stored
             }
             if !is_paired_fam && spx_path.is_none() {
                 continue; // singleton family — never produces a consensus, so don't store it
@@ -2843,11 +2844,19 @@ fn run_five_base_consensus(
         );
     }
     if let Some(p) = spx_path {
+        // Simplex-only mode prints no duplex line, so the excluded families are named here.
+        let duplex_note = match dpx_path {
+            None => format!(
+                "; {} duplex family(ies) not written in this mode",
+                paired.len()
+            ),
+            Some(_) => String::new(),
+        };
         // Read counts, not fragments: a per-record MAPQ filter can orphan one mate.
         eprintln!(
             "5-Base simplex consensus (PE): {emitted_spx} consensus read(s) emitted, \
              {skipped_spx} family(ies) skipped, of {n_simplex_families} single-strand \
-             family(ies) [reads per family 1:{} 2:{} 3:{} 4:{} >=5:{}]. BAM: {}",
+             family(ies){duplex_note} [reads per family 1:{} 2:{} 3:{} 4:{} >=5:{}]. BAM: {}",
             size_hist[0],
             size_hist[1],
             size_hist[2],
