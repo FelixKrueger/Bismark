@@ -1,6 +1,6 @@
-# Session Handoff — 2026-08-17 (seven merges; **release explicitly deferred by Felix**)
+# Session Handoff — 2026-08-17 (eight merges; **release explicitly deferred by Felix**)
 
-**`dev` is `d823311`, 56 ahead of `master`, clean tracked tree, no open PRs.** Eleven commits — #1106 `3a6aab8`, #1107 `04c3069`, #1108 `b502110`, #1109 `b2e0a12`, #1110 `e8ab722`, #1111 `2c69a5e`, **#1112 `d823311`** — plus four handoff commits. Six were docs/CI/plan housekeeping; **#1112 is the one Rust source change.**
+**`dev` is `8a6dc9b`, 58 ahead of `master`, clean tracked tree, no open PRs.** Thirteen commits — #1106 `3a6aab8`, #1107 `04c3069`, #1108 `b502110`, #1109 `b2e0a12`, #1110 `e8ab722`, #1111 `2c69a5e`, **#1112 `d823311`**, #1113 `182e221` — plus five handoff commits. Seven were docs/CI/plan housekeeping; **#1112 is the one Rust source change.**
 
 > 🛑 **DO NOT PROPOSE A 3.2.0 RELEASE.** Felix, verbatim: *"I don't want a 3.2.0 in the middle of work, please don't suggest that until everything looks calm and finished. I still see 4 open issues for the 5-base work."* The four (#1095, #1099, #1100, #1104) are **fully implemented on `dev`** and open only because merging into `dev` closes nothing (G25) — that does not matter. Open issues are his signal a feature area is still moving. Report readiness as fact if asked; never propose the cut. Release-path chores inherit this (version bumps, `dev`→`master` PRs, the `docs.yml` flip). Saved as the `feedback_no_release_mid_flight` memory.
 
@@ -20,6 +20,7 @@
 | **PBAT → flat 8 bp** (`e8ab722`, PR #1110) | Table `6N / 9N` → **`8 bp` / `(8 bp)`**, prose rewritten because it derived the number from the oligo. Carried the retired EpiGnome section's argument across so it was not lost. Knock-ons: the PBAT FAQ's `--clip_r1 6 --clip_r2 6` → `8 8`, and **the dead Perl-manual link fixed in TWO FAQs**. Verified on the live site |
 | **#1100 coverage verdict resolved** (`2c69a5e`, PR #1111) | It read `INCOMPLETE` because it audited an **uncommitted working tree** vs `688d919`, before the Phase-5 fixes; the merged squash is `7596b0d`. All four gaps verified closed, tests **run not just located**, recorded as a Resolution section with the ledger left intact |
 | **#1104 follow-ups closed** (`d823311`, PR #1112) | One real fix of three filed items. `simplex`-only mode now **reports the duplex families it excludes** — the skip site claimed they were *"counted for the report"* while nothing counted or printed them, so that mode gave a numerator with no denominator. Clause prints **only when no duplex line does**. Plus `debug_assert!(n >= 1)` beside the family-size bucket subtraction. **Three sabotages, each red for its own reason**, incl. the assert firing at `mod.rs:2576` ahead of the subtraction. The other two items were **already declined** and **already covered** — §3 |
+| **#1104's release note updated** (`182e221`, PR #1113) | The new report figure is noted as **a clause on #1104's existing `Unreleased` bullet**, not a thirteenth bullet — the reader deciding whether an upgrade affects them is already in that entry for the feature. I had left this as Felix's call and he took it; 1 insertion / 1 deletion, bullet count unchanged at 12 |
 | **The 4 open 5-Base issues audited** | All four implemented on `dev`, absent from `master`. #1099/#1100/#1104 have **zero comments** (self-filed trackers); #1095 has 9 with the **last one ours** (14 Aug) — ball is with @Danielsm8. **Nothing owed, nothing half-done** |
 | **`docs.yml` resolution reversed** | See §3. The earlier call (deploy from `master`) was wrong; keep **`dev`'s** copy |
 
@@ -34,7 +35,7 @@
 | **`dependabot.yml` is inert** | Read from the **default branch only**, so it does nothing until it reaches `master`. Activates itself at the next release merge |
 | **Security PRs still target `master`** | `target-branch` governs *version* updates only, so the next advisory opens on `master` and puts `dev` behind again. The resync manoeuvre is `3a6aab8`. `master` currently shows **2 high** (js-yaml + nanoid), clearing when it takes `dev`'s lockfile |
 | **Biological V9 for #1104** | ⛔ **Not actionable here** — the Illumina 5-Base demo dataset is gone from oxy. Correctness rests on synthetic groundtruth gates + prior DRAGEN concordance. PLAN §11c |
-| Open judgment calls, neither decided | Whether #1104's `Unreleased` CHANGELOG bullet should gain a clause about the new report figure (none added, per the one-sentence rule). Whether the June Milestones date-order blip (position 19: `2026-06-27` after `2026-06-25`) is worth straightening |
+| One cosmetic call, undecided | Whether the June Milestones date-order blip (position 19: `2026-06-27` after `2026-06-25`) is worth straightening. Pre-existing, harmless, and below my insertions |
 | Pre-existing, deliberately untouched | The header row's `</tr>` in `library-types.md` is under-indented vs the body rows. A `<td colspan="2">` row in `legacy_perl/plotly/bismark_bt2_PE_report.html` — **correct HTML**, pinned by the Rust `embedded_assets_match_repo_plotly_files` test, so do not "tidy" it |
 
 **Not this repo's item: TrimGalore#440.** Felix, 2026-08-16: *"The TrimGalore side is handled elsewhere."* The `--library pbat` preset work is tracked outside this repo — **do not re-add it as pending here.** What Bismark owed it is done: `usage/library-types.md` is now the clean upstream source those presets would be built from (PBAT 8 bp, no retired kit).
@@ -56,7 +57,7 @@
 | **Recorded the coverage resolution instead of rewriting the ledger** | The audit's findings were real when taken; "four gaps found and closed" is the fact worth keeping. Editing the rows away would have left no trace they existed |
 | **#1104: the family-size tag stays declined** | `PLAN.md:118` already declined it with a reason (*"additive later, no one asked"*, B-alt 3) and nobody has asked since. Doing it would reverse a documented decision unbidden and widen the aux-tag surface in non-default modes |
 | **#1104: §3.5-vs-§3.7 resolved in favour of §3.5** | The duplex figure was genuinely missing **and the code claimed otherwise** — the skip comment said "counted for the report". Printing it (only where no duplex line prints) makes the comment true and gives `simplex` users their denominator; correcting the plan instead would have left the mode reporting a numerator alone |
-| **No CHANGELOG entry for #1112** | #1104's `Unreleased` bullet already documents the feature; a second bullet for a report clause in a non-default mode is the entry-bloat the house rules push back on. Flagged to Felix rather than assumed |
+| **#1112's release note is a clause, not a new bullet** | I shipped #1112 with no CHANGELOG change and flagged it rather than deciding; Felix asked for the clause, so #1113 added it **inside #1104's existing bullet**. A second bullet would have split one behaviour across two entries in a section already carrying five output-changing ones |
 | **No dual code-review agents all session** | The session instruction forbids the Agent tool unless requested. For #1112 the substitute was three sabotages plus the full 14-run matrix; for the docs work, `npm ci`, the CI build, a rendered-page parse and a live fetch. Flagged rather than skipped silently |
 
 ## 4. Files modified
@@ -73,13 +74,14 @@
 | **`rust/bismark/src/aligner/mod.rs`** | Simplex report clause + corrected skip comment + `debug_assert!(n >= 1)` (`d823311`) |
 | **`rust/bismark/tests/aligner_five_base_simplex.rs`** | Two assertions — the figure in simplex-only mode, its absence in `both` (`d823311`) |
 | `plans/08142026_5base-simplex-consensus/PLAN.md` | §11d follow-up disposition (`d823311`) |
-| `SESSION_HANDOFF.md` | `6230532`, `e3d0666`, `1c6697d`, `3471ece`, and this refresh |
+| `CHANGELOG.md` | One clause on #1104's `Unreleased` bullet naming the simplex-mode duplex figure (`182e221`) |
+| `SESSION_HANDOFF.md` | `6230532`, `e3d0666`, `1c6697d`, `3471ece`, `fce4541`, and this refresh |
 
 **Untracked:** 93 entries. Note **535 files under `plans/` ARE tracked** — check before assuming. Also stray test artifacts in the source tree (`rust/bismark/reads.fq_C_to_T.fastq`, `test_R1.fastq.gz_C_to_T.fastq`, `.nf-test.log`): a test writes into the crate dir, so **never `git add -A`** — every commit this session used explicit paths.
 
 | Outside the repo | Change |
 |---|---|
-| GitHub | PRs #1106–#1112 opened and squash-merged; **#1103 closed** with an explanatory comment; all seven branches deleted both sides |
+| GitHub | PRs #1106–#1113 opened and squash-merged; **#1103 closed** with an explanatory comment; all eight branches deleted both sides |
 | `~/.claude/…/memory/` | **New:** `feedback_no_release_mid_flight.md`. **Corrected:** `feedback_git_workflow_dev_master.md` (docs-deploy claim marked violated), `MEMORY.md` index |
 | Live docs site | Redeployed from each `dev` push; verified by fetching the page that the retired kit is gone and PBAT reads 8 bp / (8 bp) |
 
@@ -133,7 +135,7 @@
 
 ### Carried forward (still verbatim-critical)
 
-**N1** — a run's `conclusion: success` ≠ its jobs finished; **enumerate check-runs and assert zero NULL conclusions** (done for all seven merges). **N3** — `gh run list --commit` needs the **full 40-char SHA**.
+**N1** — a run's `conclusion: success` ≠ its jobs finished; **enumerate check-runs and assert zero NULL conclusions** (done for all eight merges). **N3** — `gh run list --commit` needs the **full 40-char SHA**.
 
 **N11/N12** — an unpushed base rides along in a PR and the PR object lies about it; `files`/`changedFiles` are snapshots refreshed on a **head** push, so moving the **base** never refreshes them (#1103 still advertised 1 file / 3 lines against `dev`). Use `compare/<base>...<head>`, and pass `--subject/--body-file` to `gh pr merge` explicitly.
 
@@ -141,6 +143,6 @@
 
 **N17/N18/N21** — a sabotage aimed at dead code proves nothing; a sabotage only tests the gate it is aimed at; `samtools_available()` skips silently and still reports `ok`, so the `$CI` panic guard is what makes those gates mean anything.
 
-**G21/G22/G25** — credentialed tools need unsandboxing; `gh api` does not paginate by default; **`timeout` is not installed** (macOS); **`dev` merges close nothing**. **G23** BRANCH FIRST — all seven merges went through a branch + PR.
+**G21/G22/G25** — credentialed tools need unsandboxing; `gh api` does not paginate by default; **`timeout` is not installed** (macOS); **`dev` merges close nothing**. **G23** BRANCH FIRST — all eight merges went through a branch + PR.
 
 **Style** — one phrase is banned outright (see `feedback_never_say_load_bearing`). **Session `grep` is a ugrep wrapper** — use `command grep` for CI-shell logic. **`plans/` is off-limits unless Felix provides a file or asks** (he provided `08112026_1100…/COVERAGE.md`, and asking for the #1104 follow-ups authorised that plan dir). **Comments/CHANGELOG/PR replies: brevity is the default** (CLAUDE.md — three venues, one piece of feedback).
