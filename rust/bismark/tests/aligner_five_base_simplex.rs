@@ -377,6 +377,11 @@ fn both_mode_emits_one_own_strand_record_per_simplex_family() {
         stderr.contains("5-Base simplex consensus (PE): 2 consensus read(s) emitted"),
         "simplex report line missing; got:\n{stderr}"
     );
+    // `both` mode prints its own duplex line, so the simplex line must not repeat the figure.
+    assert!(
+        !stderr.contains("duplex family(ies) not written in this mode"),
+        "the excluded-duplex clause belongs to simplex-only mode; got:\n{stderr}"
+    );
 }
 
 /// V5: `--five_base_min_mapq` filters per record, so one mate of a pair can be dropped
@@ -584,6 +589,12 @@ fn simplex_mode_writes_only_the_simplex_bam() {
     assert!(
         !stderr.contains("5-Base duplex consensus (PE):"),
         "no duplex report line when no duplex BAM is written; got:\n{stderr}"
+    );
+    // The fixture's dup_ot/dup_ob pair is the one duplex family, and no duplex line
+    // reports it in this mode, so the simplex line must.
+    assert!(
+        stderr.contains("; 1 duplex family(ies) not written in this mode"),
+        "simplex-only mode must name the duplex families it excluded; got:\n{stderr}"
     );
     // A non-default mode names itself in the standalone Note: line (the default-mode
     // wording is frozen, asserted in default_mode_output_is_unchanged_and_untagged).

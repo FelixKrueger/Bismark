@@ -215,3 +215,20 @@ Both restored from a `command cp -f` backup in the scratchpad, never `git checko
 - **Every review action item traced:** A-crit 1-2 / B-crit 1-2 → step 0 + read-count histogram; A-imp 3-8 and B-imp 3-8 → steps 2, 4, 5, 6, 8, 9 + §4's ledger; optionals adopted (EmitPaths, single-sweep derivation, exact count identity, both-entry-point matrix, FR/UMI assumptions, contamination rationale, deconvolution doc note, mx-vs-XM note) or explicitly declined with reasons (§5).
 - **Step 0 ordering:** sorting by the full `CKey` (incl. `umi_hash`) is total and deterministic; simplex order needs no sort (completion order is input-determined).
 - **Remaining risks:** (a) the OB-orientation slip is now covered by a synthetic exact-XM assertion (V3), not just the oxy spot-check; (b) PASS 1 memory at ultra-deep WGS in simplex modes is documented, not eliminated; (c) step 0 changes shipped output order — content-identity is proven by V1a, but downstream byte-comparisons users built on two runs of 3.1.0 were already impossible, so nothing real breaks.
+
+## 11d. Follow-up disposition (2026-08-17)
+
+The three reviewer optionals carried in the session handoff were checked before acting; two needed nothing:
+
+| Item | Disposition |
+|---|---|
+| Per-record family-size tag | **Stays declined** — §5 already declined it ("additive later, no one asked", B-alt 3) and nobody has asked since. It would also widen the aux-tag surface in the non-default modes for a figure the report already gives per family-size bucket |
+| In-run `both`-mode test for `--five_base_umi_qname` | **Already existed** — `five_base_in_run_both_mode_splits_duplex_and_simplex` (`tests/aligner_five_base_groundtruth.rs:1077`) passes `--five_base_umi_qname` and `--five_base_emit_multiplicity both`, so UMI keying is live while it asserts the family split |
+| `debug_assert!(n >= 1)` beside the histogram subtraction | **Applied** (`mod.rs`). The invariant is that a `CKey` only enters `counts` because a record incremented it; without the assert a zero would die on the bucket subtraction naming nothing |
+
+**§3.5-vs-§3.7 resolved in favour of §3.5.** §3.5's promised duplex figure in `simplex` mode was genuinely
+absent, and the skip site's comment claimed the families were "counted for the report" when nothing
+counted or reported them. The simplex report line now names them (`paired.len()`) **only when no duplex
+line is printed**, so `simplex`-mode users get the denominator they lacked and `both` mode does not repeat
+what its own duplex line already says. Both directions are asserted, and both assertions were
+sabotage-verified.
