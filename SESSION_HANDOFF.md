@@ -1,6 +1,6 @@
-# Session Handoff — 2026-08-17 (eight merges; **release explicitly deferred by Felix**)
+# Session Handoff — 2026-08-17 (nine merges; **release explicitly deferred by Felix**)
 
-**`dev` is `8a6dc9b`, 58 ahead of `master`, clean tracked tree, no open PRs.** Thirteen commits — #1106 `3a6aab8`, #1107 `04c3069`, #1108 `b502110`, #1109 `b2e0a12`, #1110 `e8ab722`, #1111 `2c69a5e`, **#1112 `d823311`**, #1113 `182e221` — plus five handoff commits. Seven were docs/CI/plan housekeeping; **#1112 is the one Rust source change.**
+**`dev` is `78ddec6`, 60 ahead of `master`, clean tracked tree, no open PRs.** Fifteen commits — #1106 `3a6aab8`, #1107 `04c3069`, #1108 `b502110`, #1109 `b2e0a12`, #1110 `e8ab722`, #1111 `2c69a5e`, **#1112 `d823311`**, #1113 `182e221`, #1114 `514aee2` — plus six handoff commits. Eight were docs/CI/plan housekeeping; **#1112 is the one Rust source change.**
 
 > 🛑 **DO NOT PROPOSE A 3.2.0 RELEASE.** Felix, verbatim: *"I don't want a 3.2.0 in the middle of work, please don't suggest that until everything looks calm and finished. I still see 4 open issues for the 5-base work."* The four (#1095, #1099, #1100, #1104) are **fully implemented on `dev`** and open only because merging into `dev` closes nothing (G25) — that does not matter. Open issues are his signal a feature area is still moving. Report readiness as fact if asked; never propose the cut. Release-path chores inherit this (version bumps, `dev`→`master` PRs, the `docs.yml` flip). Saved as the `feedback_no_release_mid_flight` memory.
 
@@ -21,6 +21,7 @@
 | **#1100 coverage verdict resolved** (`2c69a5e`, PR #1111) | It read `INCOMPLETE` because it audited an **uncommitted working tree** vs `688d919`, before the Phase-5 fixes; the merged squash is `7596b0d`. All four gaps verified closed, tests **run not just located**, recorded as a Resolution section with the ledger left intact |
 | **#1104 follow-ups closed** (`d823311`, PR #1112) | One real fix of three filed items. `simplex`-only mode now **reports the duplex families it excludes** — the skip site claimed they were *"counted for the report"* while nothing counted or printed them, so that mode gave a numerator with no denominator. Clause prints **only when no duplex line does**. Plus `debug_assert!(n >= 1)` beside the family-size bucket subtraction. **Three sabotages, each red for its own reason**, incl. the assert firing at `mod.rs:2576` ahead of the subtraction. The other two items were **already declined** and **already covered** — §3 |
 | **#1104's release note updated** (`182e221`, PR #1113) | The new report figure is noted as **a clause on #1104's existing `Unreleased` bullet**, not a thirteenth bullet — the reader deciding whether an upgrade affects them is already in that entry for the feature. I had left this as Felix's call and he took it; 1 insertion / 1 deletion, bullet count unchanged at 12 |
+| **Milestones date order fixed** (`514aee2`, PR #1114) | The `beta.13` entry sat below two 06-26 entries and an 06-25 one — the only violation in the log's 65 entries, now **fully reverse-chronological**. The **date was not the error** (the `bismark-rust-v2.0.0-beta.13` tag is `2026-06-27`), so the entry moved. Checked first that releases are not deliberately grouped after the work they carry — beta.3 and beta.2 are correctly ordered, so no convention was broken. Verified a **pure move** by line multiset, not by reading the diff |
 | **The 4 open 5-Base issues audited** | All four implemented on `dev`, absent from `master`. #1099/#1100/#1104 have **zero comments** (self-filed trackers); #1095 has 9 with the **last one ours** (14 Aug) — ball is with @Danielsm8. **Nothing owed, nothing half-done** |
 | **`docs.yml` resolution reversed** | See §3. The earlier call (deploy from `master`) was wrong; keep **`dev`'s** copy |
 
@@ -35,7 +36,6 @@
 | **`dependabot.yml` is inert** | Read from the **default branch only**, so it does nothing until it reaches `master`. Activates itself at the next release merge |
 | **Security PRs still target `master`** | `target-branch` governs *version* updates only, so the next advisory opens on `master` and puts `dev` behind again. The resync manoeuvre is `3a6aab8`. `master` currently shows **2 high** (js-yaml + nanoid), clearing when it takes `dev`'s lockfile |
 | **Biological V9 for #1104** | ⛔ **Not actionable here** — the Illumina 5-Base demo dataset is gone from oxy. Correctness rests on synthetic groundtruth gates + prior DRAGEN concordance. PLAN §11c |
-| One cosmetic call, undecided | Whether the June Milestones date-order blip (position 19: `2026-06-27` after `2026-06-25`) is worth straightening. Pre-existing, harmless, and below my insertions |
 | Pre-existing, deliberately untouched | The header row's `</tr>` in `library-types.md` is under-indented vs the body rows. A `<td colspan="2">` row in `legacy_perl/plotly/bismark_bt2_PE_report.html` — **correct HTML**, pinned by the Rust `embedded_assets_match_repo_plotly_files` test, so do not "tidy" it |
 
 **Not this repo's item: TrimGalore#440.** Felix, 2026-08-16: *"The TrimGalore side is handled elsewhere."* The `--library pbat` preset work is tracked outside this repo — **do not re-add it as pending here.** What Bismark owed it is done: `usage/library-types.md` is now the clean upstream source those presets would be built from (PBAT 8 bp, no retired kit).
@@ -66,7 +66,7 @@
 |---|---|
 | `docs/package-lock.json`, `docs/package.json` | `master`'s copies + js-yaml 4.3.1 + nanoid 3.3.18 (`3a6aab8`) |
 | `.github/dependabot.yml` | **New** — npm `/docs`, `target-branch: dev`, weekly, grouped (`04c3069`) |
-| `rust/README.md` | Milestones: two 2026-08-11 entries + policy-line fix (`b502110`); one 2026-08-17 entry (`d823311`) |
+| `rust/README.md` | Milestones: two 2026-08-11 entries + policy-line fix (`b502110`); one 2026-08-17 entry (`d823311`); beta.13 entry moved into date order (`514aee2`) |
 | `docs/src/content/docs/usage/library-types.md` | EpiGnome row/section/link removed (`b2e0a12`); PBAT row + prose to a flat 8 bp (`e8ab722`) |
 | `docs/src/content/docs/faq/single-cell-pbat.md` | PBAT clip 6→8, dead link, unbalanced paren (`e8ab722`) |
 | `docs/src/content/docs/faq/low-mapping.md` | Dead link — the second instance (`e8ab722`) |
@@ -81,7 +81,7 @@
 
 | Outside the repo | Change |
 |---|---|
-| GitHub | PRs #1106–#1113 opened and squash-merged; **#1103 closed** with an explanatory comment; all eight branches deleted both sides |
+| GitHub | PRs #1106–#1114 opened and squash-merged; **#1103 closed** with an explanatory comment; all nine branches deleted both sides |
 | `~/.claude/…/memory/` | **New:** `feedback_no_release_mid_flight.md`. **Corrected:** `feedback_git_workflow_dev_master.md` (docs-deploy claim marked violated), `MEMORY.md` index |
 | Live docs site | Redeployed from each `dev` push; verified by fetching the page that the retired kit is gone and PBAT reads 8 bp / (8 bp) |
 
@@ -125,6 +125,8 @@
 
 **N41 — 🔑 A carried "pending" item may already be done or already declined.** Four of this session's went that way: the Milestones Medium/Low split (a dated hole made it moot), the `COVERAGE.md` verdict (gaps closed five days earlier), and two of #1104's three follow-ups — the family-size tag was **declined with a reason in `PLAN.md:118`** and the in-run `both`/UMI test **already existed**. **Before implementing a carried optional, grep for the test and read the plan's declined list.** A handoff records what was true when written; "reviewer optional not taken" does not distinguish *not yet* from *decided against*.
 
+**N42 — Verify a line *move* by the sorted line multiset, not by the diff.** A one-line reorder produces `1 insertion / 1 deletion` whether the line arrived intact or with a character mangled, so the diff cannot tell you. Sorting the file's lines before and after and asserting equality proves the operation was a **permutation**. (Also: a diff line for a moved list item starts `+- `, so a `^[+-][^+-]` filter reports **zero** changed lines — count with `--numstat` instead. Same shape as N28.)
+
 ### Environment
 
 - **`gh` needs `dangerouslyDisableSandbox`** — sandboxed it fails TLS: `x509: OSStatus -26276`. **`git fetch/push` over SSH** likewise: `nc: authentication method negotiation failed`.
@@ -135,7 +137,7 @@
 
 ### Carried forward (still verbatim-critical)
 
-**N1** — a run's `conclusion: success` ≠ its jobs finished; **enumerate check-runs and assert zero NULL conclusions** (done for all eight merges). **N3** — `gh run list --commit` needs the **full 40-char SHA**.
+**N1** — a run's `conclusion: success` ≠ its jobs finished; **enumerate check-runs and assert zero NULL conclusions** (done for all nine merges). **N3** — `gh run list --commit` needs the **full 40-char SHA**.
 
 **N11/N12** — an unpushed base rides along in a PR and the PR object lies about it; `files`/`changedFiles` are snapshots refreshed on a **head** push, so moving the **base** never refreshes them (#1103 still advertised 1 file / 3 lines against `dev`). Use `compare/<base>...<head>`, and pass `--subject/--body-file` to `gh pr merge` explicitly.
 
@@ -143,6 +145,6 @@
 
 **N17/N18/N21** — a sabotage aimed at dead code proves nothing; a sabotage only tests the gate it is aimed at; `samtools_available()` skips silently and still reports `ok`, so the `$CI` panic guard is what makes those gates mean anything.
 
-**G21/G22/G25** — credentialed tools need unsandboxing; `gh api` does not paginate by default; **`timeout` is not installed** (macOS); **`dev` merges close nothing**. **G23** BRANCH FIRST — all eight merges went through a branch + PR.
+**G21/G22/G25** — credentialed tools need unsandboxing; `gh api` does not paginate by default; **`timeout` is not installed** (macOS); **`dev` merges close nothing**. **G23** BRANCH FIRST — all nine merges went through a branch + PR.
 
 **Style** — one phrase is banned outright (see `feedback_never_say_load_bearing`). **Session `grep` is a ugrep wrapper** — use `command grep` for CI-shell logic. **`plans/` is off-limits unless Felix provides a file or asks** (he provided `08112026_1100…/COVERAGE.md`, and asking for the #1104 follow-ups authorised that plan dir). **Comments/CHANGELOG/PR replies: brevity is the default** (CLAUDE.md — three venues, one piece of feedback).
