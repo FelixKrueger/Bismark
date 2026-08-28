@@ -49,6 +49,34 @@ use noodles_sam::header::record::value::map::header::tag::SORT_ORDER;
 use crate::io::error::BismarkIoError;
 use crate::io::record::BismarkRecord;
 
+/// Per-record iterator filter: which record classes (beyond the always-on
+/// unmapped `0x4` drop) to silently skip + count.
+///
+/// [`RecordFilter::default()`] disables both flags, so the reader's iterator
+/// behaves bit-for-bit like the historical unmapped-only filter. Set via a
+/// reader's `set_filter`; used by `bismark-extractor`'s `--allow_discordant`
+/// mode to consume general-aligner output (which — unlike Bismark — emits
+/// secondary/supplementary alignments) without a `samtools view -F 0x900`
+/// pre-filter. The counts are surfaced afterwards via `skip_counts()`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RecordFilter {
+    /// Drop (and count) secondary alignments (SAM FLAG `0x100`).
+    pub drop_secondary: bool,
+    /// Drop (and count) supplementary alignments (SAM FLAG `0x800`).
+    pub drop_supplementary: bool,
+}
+
+/// Running counts of records dropped by a [`RecordFilter`]. Interior-mutable
+/// (`Cell`) inside each reader, single-threaded on the producer, read once at
+/// EOF via `skip_counts()`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SkipCounts {
+    /// Secondary alignments (FLAG `0x100`) dropped.
+    pub secondary: u64,
+    /// Supplementary alignments (FLAG `0x800`) dropped.
+    pub supplementary: u64,
+}
+
 /// Recognised input file kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentKind {
@@ -216,6 +244,8 @@ fn detect_cram_magic(
 pub struct BamReader<R: BufRead> {
     inner: noodles_bam::io::Reader<noodles_bgzf::io::Reader<R>>,
     header: Header,
+    filter: RecordFilter,
+    skip_counts: std::cell::Cell<SkipCounts>,
 }
 
 impl BamReader<BufReader<File>> {
@@ -247,7 +277,12 @@ impl<R: BufRead> BamReader<R> {
         let mut inner = noodles_bam::io::Reader::new(reader);
         let header = inner.read_header()?;
         check_not_coordinate_sorted(&header)?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Construct without rejecting coordinate-sorted input. For SE-only
@@ -256,7 +291,12 @@ impl<R: BufRead> BamReader<R> {
     pub fn without_sort_check(reader: R) -> Result<Self, BismarkIoError> {
         let mut inner = noodles_bam::io::Reader::new(reader);
         let header = inner.read_header()?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Header from the BAM file.
@@ -264,13 +304,29 @@ impl<R: BufRead> BamReader<R> {
         &self.header
     }
 
+    /// Set the per-record iterator [`RecordFilter`] (secondary/supplementary
+    /// skip). Default is a no-op filter; setting it is byte-neutral for all
+    /// records except the flagged classes.
+    pub fn set_filter(&mut self, filter: RecordFilter) {
+        self.filter = filter;
+    }
+
+    /// Records skipped by [`RecordFilter`] so far. Read once at EOF.
+    pub fn skip_counts(&self) -> SkipCounts {
+        self.skip_counts.get()
+    }
+
     /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
-    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered.
+    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered; secondary
+    /// (`0x100`) / supplementary (`0x800`) are additionally skipped + counted
+    /// iff the [`RecordFilter`] enables it (default: no).
     pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
         let header = &self.header;
+        let filter = self.filter;
+        let counts = &self.skip_counts;
         self.inner
             .record_bufs(header)
-            .filter_map(filter_unmapped_then_classify)
+            .filter_map(move |item| filter_then_classify(item, filter, counts))
     }
 
     /// Iterator yielding one [`BismarkRecord`] per mapped alignment, with
@@ -317,6 +373,8 @@ impl<R: BufRead> BamReader<R> {
 pub struct ThreadedBamReader {
     inner: noodles_bam::io::Reader<noodles_bgzf::io::MultithreadedReader<File>>,
     header: Header,
+    filter: RecordFilter,
+    skip_counts: std::cell::Cell<SkipCounts>,
 }
 
 impl ThreadedBamReader {
@@ -336,7 +394,12 @@ impl ThreadedBamReader {
         let mut inner = noodles_bam::io::Reader::from(bgzf);
         let header = inner.read_header()?;
         check_not_coordinate_sorted(&header)?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Open a BAM file with `parallel` workers, without rejecting
@@ -349,7 +412,12 @@ impl ThreadedBamReader {
         let bgzf = noodles_bgzf::io::MultithreadedReader::with_worker_count(parallel, file);
         let mut inner = noodles_bam::io::Reader::from(bgzf);
         let header = inner.read_header()?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Header from the BAM file.
@@ -357,13 +425,26 @@ impl ThreadedBamReader {
         &self.header
     }
 
+    /// Set the per-record iterator [`RecordFilter`] (see [`BamReader::set_filter`]).
+    pub fn set_filter(&mut self, filter: RecordFilter) {
+        self.filter = filter;
+    }
+
+    /// Records skipped by [`RecordFilter`] so far. Read once at EOF.
+    pub fn skip_counts(&self) -> SkipCounts {
+        self.skip_counts.get()
+    }
+
     /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
-    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered.
+    /// Unmapped reads (SAM FLAG & 0x4) are silently filtered; secondary /
+    /// supplementary skipped + counted iff the [`RecordFilter`] enables it.
     pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
         let header = &self.header;
+        let filter = self.filter;
+        let counts = &self.skip_counts;
         self.inner
             .record_bufs(header)
-            .filter_map(filter_unmapped_then_classify)
+            .filter_map(move |item| filter_then_classify(item, filter, counts))
     }
 
     /// As [`Self::records`] but pre-extracts a UMI from each record's
@@ -384,6 +465,8 @@ impl ThreadedBamReader {
 pub struct SamReader<R: BufRead> {
     inner: noodles_sam::io::Reader<R>,
     header: Header,
+    filter: RecordFilter,
+    skip_counts: std::cell::Cell<SkipCounts>,
 }
 
 impl SamReader<BufReader<File>> {
@@ -411,14 +494,24 @@ impl<R: BufRead> SamReader<R> {
         let mut inner = noodles_sam::io::Reader::new(reader);
         let header = inner.read_header()?;
         check_not_coordinate_sorted(&header)?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Construct without rejecting coordinate-sorted input.
     pub fn without_sort_check(reader: R) -> Result<Self, BismarkIoError> {
         let mut inner = noodles_sam::io::Reader::new(reader);
         let header = inner.read_header()?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Header from the SAM file.
@@ -426,12 +519,24 @@ impl<R: BufRead> SamReader<R> {
         &self.header
     }
 
+    /// Set the per-record iterator [`RecordFilter`] (see [`BamReader::set_filter`]).
+    pub fn set_filter(&mut self, filter: RecordFilter) {
+        self.filter = filter;
+    }
+
+    /// Records skipped by [`RecordFilter`] so far. Read once at EOF.
+    pub fn skip_counts(&self) -> SkipCounts {
+        self.skip_counts.get()
+    }
+
     /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
     pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
         let header = &self.header;
+        let filter = self.filter;
+        let counts = &self.skip_counts;
         self.inner
             .record_bufs(header)
-            .filter_map(filter_unmapped_then_classify)
+            .filter_map(move |item| filter_then_classify(item, filter, counts))
     }
 
     /// As [`Self::records`] but pre-extracts a UMI per record. See
@@ -457,6 +562,8 @@ impl<R: BufRead> SamReader<R> {
 pub struct CramReader<R: Read + Seek> {
     inner: noodles_cram::io::Reader<R>,
     header: Header,
+    filter: RecordFilter,
+    skip_counts: std::cell::Cell<SkipCounts>,
 }
 
 impl CramReader<File> {
@@ -469,7 +576,12 @@ impl CramReader<File> {
             .build_from_path(path)?;
         let header = inner.read_header()?;
         check_not_coordinate_sorted(&header)?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 
     /// Open without the coordinate-sort check. For SE-only callers.
@@ -482,7 +594,12 @@ impl CramReader<File> {
             .set_reference_sequence_repository(repo)
             .build_from_path(path)?;
         let header = inner.read_header()?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            filter: RecordFilter::default(),
+            skip_counts: std::cell::Cell::default(),
+        })
     }
 }
 
@@ -492,13 +609,26 @@ impl<R: Read + Seek> CramReader<R> {
         &self.header
     }
 
+    /// Set the per-record iterator [`RecordFilter`] (see [`BamReader::set_filter`]).
+    pub fn set_filter(&mut self, filter: RecordFilter) {
+        self.filter = filter;
+    }
+
+    /// Records skipped by [`RecordFilter`] so far. Read once at EOF.
+    pub fn skip_counts(&self) -> SkipCounts {
+        self.skip_counts.get()
+    }
+
     /// Iterator yielding one [`BismarkRecord`] per mapped alignment.
-    /// Unmapped reads are silently filtered.
+    /// Unmapped reads are silently filtered; secondary / supplementary
+    /// skipped + counted iff the [`RecordFilter`] enables it.
     pub fn records(&mut self) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
         let header = &self.header;
+        let filter = self.filter;
+        let counts = &self.skip_counts;
         self.inner
             .records(header)
-            .filter_map(filter_unmapped_then_classify)
+            .filter_map(move |item| filter_then_classify(item, filter, counts))
     }
 
     /// As [`Self::records`] but pre-extracts a UMI per record. See
@@ -539,6 +669,25 @@ impl<R: BufRead, RC: Read + Seek> AnyReader<R, RC> {
             Self::Bam(r) => r.header(),
             Self::Sam(r) => r.header(),
             Self::Cram(r) => r.header(),
+        }
+    }
+
+    /// Set the per-record iterator [`RecordFilter`] on the underlying reader
+    /// (see [`BamReader::set_filter`]).
+    pub fn set_filter(&mut self, filter: RecordFilter) {
+        match self {
+            Self::Bam(r) => r.set_filter(filter),
+            Self::Sam(r) => r.set_filter(filter),
+            Self::Cram(r) => r.set_filter(filter),
+        }
+    }
+
+    /// Records skipped by [`RecordFilter`] so far. Read once at EOF.
+    pub fn skip_counts(&self) -> SkipCounts {
+        match self {
+            Self::Bam(r) => r.skip_counts(),
+            Self::Sam(r) => r.skip_counts(),
+            Self::Cram(r) => r.skip_counts(),
         }
     }
 
@@ -626,25 +775,49 @@ pub fn open_reader_without_sort_check(
 }
 
 /// Filter out unmapped records (FLAG & 0x4) and classify the rest as
-/// [`BismarkRecord`]. Surfaces noodles I/O errors and `BismarkIoError`
-/// from classification.
-fn filter_unmapped_then_classify(
+/// [`BismarkRecord`], honouring a [`RecordFilter`]: after the always-on
+/// unmapped (`0x4`) drop, secondary (`0x100`) and supplementary (`0x800`)
+/// records are skipped + counted into `counts` iff the corresponding filter
+/// flag is set. Surfaces noodles I/O errors and `BismarkIoError` from
+/// classification.
+///
+/// With [`RecordFilter::default()`] (both flags `false`) the two extra branches
+/// test constant `false` and are byte-for-byte identical to the historical
+/// unmapped-only filter — no record dropped, no count taken. This is the
+/// mechanism behind `--allow_discordant`'s off-by-default guarantee.
+fn filter_then_classify(
     item: std::io::Result<RecordBuf>,
+    filter: RecordFilter,
+    counts: &std::cell::Cell<SkipCounts>,
 ) -> Option<Result<BismarkRecord, BismarkIoError>> {
     match item {
         Ok(rec) => {
             let flags = u16::from(rec.flags());
             if (flags & 0x4) != 0 {
-                None // unmapped — silently drop
-            } else {
-                Some(BismarkRecord::from_noodles_record(rec))
+                return None; // unmapped — silently drop (always)
             }
+            // Each dropped record is counted exactly once. A record with BOTH
+            // 0x100 and 0x800 set (rare) is attributed to `secondary` by this
+            // check-order precedence; the total dropped is still correct.
+            if filter.drop_secondary && (flags & 0x100) != 0 {
+                let mut c = counts.get();
+                c.secondary = c.secondary.saturating_add(1);
+                counts.set(c);
+                return None;
+            }
+            if filter.drop_supplementary && (flags & 0x800) != 0 {
+                let mut c = counts.get();
+                c.supplementary = c.supplementary.saturating_add(1);
+                counts.set(c);
+                return None;
+            }
+            Some(BismarkRecord::from_noodles_record(rec))
         }
         Err(e) => Some(Err(BismarkIoError::Io(e))),
     }
 }
 
-/// Companion to [`filter_unmapped_then_classify`] that also pre-extracts
+/// Companion to [`filter_then_classify`] that also pre-extracts
 /// the UMI via `extractor`. Used by `records_with_umi` on all reader
 /// variants. Added in v1.0.0-beta.5 for Phase B of the v1.2 UMI epic.
 fn filter_unmapped_then_classify_with_umi(

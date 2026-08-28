@@ -69,6 +69,7 @@ pub mod mbias_writer;
 pub mod output;
 pub mod output_mode;
 pub mod overlap;
+pub mod pair_class;
 pub mod parallel;
 pub mod params;
 pub mod pipeline;
@@ -83,7 +84,8 @@ pub use mbias_writer::{derive_mbias_basename, mbias_txt_path, write_mbias_txt};
 pub use output_mode::{
     CpGOrNonCpG, OutputKey, mode_keys, orient_byte, route_to_key, write_yacht_row,
 };
-pub use overlap::{drop_overlap, is_forward_pair_strand};
+pub use overlap::{drop_overlap, drop_overlap_generic, is_forward_pair_strand};
+pub use pair_class::{PairClass, classify_pair};
 pub use parallel::{extract_pe_parallel, extract_se_parallel};
 pub use params::ExtractParams;
 // PHASE F INVARIANT: the legacy single-threaded `extract_se` / `extract_pe`

@@ -72,8 +72,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::io::{
-    AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ThreadedBamReader,
-    open_reader, open_reader_without_sort_check,
+    AlignmentKind, BismarkIoError, BismarkPair, BismarkRecord, BismarkStrand, ReadIdentity,
+    RecordFilter, SkipCounts, ThreadedBamReader, open_reader, open_reader_without_sort_check,
 };
 use crossbeam_channel::{Receiver, RecvError, Sender, bounded};
 
@@ -83,7 +83,8 @@ use crate::extractor::error::BismarkExtractorError;
 use crate::extractor::header::build_chr_name_table;
 use crate::extractor::mbias::MbiasTable;
 use crate::extractor::output::SplittingReport;
-use crate::extractor::overlap::drop_overlap;
+use crate::extractor::overlap::{drop_overlap, drop_overlap_generic};
+use crate::extractor::pair_class::{PairClass, classify_pair};
 use crate::extractor::pipeline::derive_basename;
 use crate::extractor::route::compute_yacht_columns;
 use crate::extractor::state::ExtractState;
@@ -127,6 +128,25 @@ pub(crate) enum WorkerInputItem {
     /// enum size proportional to the smallest variant
     /// (clippy::large_enum_variant); BismarkPair is ~2× BismarkRecord.
     Pe { pair: Box<BismarkPair>, chr_id: u32 },
+    /// NEW (`--allow_discordant`): a pair whose mates are called
+    /// **independently** (cross-chromosome, or same-chr with an orientation the
+    /// half-plane `drop_overlap` cannot handle). Carries BOTH chr ids since a
+    /// cross-chr pair has two. Constructed only under `--allow_discordant`.
+    PeIndependent {
+        pair: Box<BismarkPair>,
+        r1_chr_id: u32,
+        r2_chr_id: u32,
+    },
+    /// NEW (`--allow_discordant`): a mapped primary read whose mate is absent
+    /// (unmapped, so filtered upstream). Read identity comes from FLAG
+    /// 0x40/0x80 (a general aligner sets these truthfully; Bismark never emits
+    /// orphans, so the #1030 flag-swap concern does not apply). Called
+    /// single-end style.
+    Orphan {
+        record: BismarkRecord,
+        chr_id: u32,
+        identity: ReadIdentity,
+    },
     /// Error encountered by the producer (read error, unpaired final record,
     /// pairing error, refid overflow / missing). Carried as a per-item result
     /// so it keeps its within-batch slot for deterministic Err selection.
@@ -166,10 +186,13 @@ pub(crate) enum WorkerOutput {
     },
     /// Sent exactly once by each worker at exit (after `recv()` returns
     /// `Err(Disconnected)`). Carries this worker's accumulated counters.
-    /// Semantics UNCHANGED from the per-record design.
+    /// Semantics UNCHANGED from the per-record design. `report` is boxed to keep
+    /// this (rare, once-per-worker) variant from bloating the whole enum
+    /// (clippy::large_enum_variant) after the `--allow_discordant` counters grew
+    /// `SplittingReport`.
     FinalDelta {
         mbias: [MbiasTable; 2],
-        report: SplittingReport,
+        report: Box<SplittingReport>,
     },
 }
 
@@ -252,7 +275,7 @@ fn run_pipeline(
     // coordinate-sorted input is valid — faithful to Perl
     // `bismark_methylation_extractor`, which only sort-checks paired-end input
     // (`test_positional_sorting` is gated `if ($paired)`).
-    let reader = if is_bam {
+    let mut reader = if is_bam {
         if is_paired {
             ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
         } else {
@@ -268,6 +291,16 @@ fn run_pipeline(
             input, /*cram_ref=*/ None,
         )?)
     };
+    // `--allow_discordant`: drop + count secondary (0x100) / supplementary
+    // (0x800) records at the io layer, BEFORE record validation (a SEQ-less
+    // secondary can't construct a BismarkRecord) and BEFORE pairing (they break
+    // R1/R2 adjacency). Default (flag off) is a no-op filter → byte-identical.
+    if config.allow_discordant {
+        reader.set_filter(RecordFilter {
+            drop_secondary: true,
+            drop_supplementary: true,
+        });
+    }
     let chr_table: Arc<[String]> = Arc::from(build_chr_name_table(reader.header())?);
 
     // Console diagnostics (#882) — emit once on the main thread while we still
@@ -319,10 +352,17 @@ fn run_pipeline(
 
     // Spawn the producer on a dedicated thread.
     let producer_tx_input = tx_input.clone();
+    let allow_discordant = config.allow_discordant;
     let producer_handle = std::thread::Builder::new()
         .name("bismark-extractor-producer".to_string())
         .spawn(move || {
-            producer_loop(reader, is_paired, producer_tx_input, logger);
+            producer_loop(
+                reader,
+                is_paired,
+                allow_discordant,
+                producer_tx_input,
+                logger,
+            )
         })
         .map_err(|e| BismarkExtractorError::InternalError {
             message: format!("failed to spawn producer thread: {e}"),
@@ -348,6 +388,14 @@ fn run_pipeline(
     // Join producer last (it was almost certainly already done by the time
     // collector exited — its tx_input drop is what signaled EOS).
     let producer_join_result = producer_handle.join();
+    // Secondary/supplementary skip counts from the io filter (Copy; zero unless
+    // `--allow_discordant`). Extracted by-ref so the panic-precedence logic
+    // below can still move `producer_join_result` on the Err path.
+    let producer_skip_counts: SkipCounts = producer_join_result
+        .as_ref()
+        .ok()
+        .copied()
+        .unwrap_or_default();
 
     // Apply error precedence (Reviewer B C2 fix):
     //   1. Collector caught an explicit Err → use it (most specific —
@@ -401,6 +449,17 @@ fn run_pipeline(
             Err(e)
         }
         Ok(()) => {
+            // Fold the producer-local io-filter skip counts into the merged
+            // report (single add on the main thread, after the collector merged
+            // the per-worker deltas, before finalize writes the report).
+            state.report.secondary_skipped = state
+                .report
+                .secondary_skipped
+                .saturating_add(producer_skip_counts.secondary);
+            state.report.supplementary_skipped = state
+                .report
+                .supplementary_skipped
+                .saturating_add(producer_skip_counts.supplementary);
             state.finalize(config)?;
             Ok(())
         }
@@ -433,6 +492,20 @@ impl ProducerReader {
             ProducerReader::Threaded(r) => Box::new(r.records()),
         }
     }
+
+    fn set_filter(&mut self, filter: RecordFilter) {
+        match self {
+            ProducerReader::Any(r) => r.set_filter(filter),
+            ProducerReader::Threaded(r) => r.set_filter(filter),
+        }
+    }
+
+    fn skip_counts(&self) -> SkipCounts {
+        match self {
+            ProducerReader::Any(r) => r.skip_counts(),
+            ProducerReader::Threaded(r) => r.skip_counts(),
+        }
+    }
 }
 
 /// Producer loop: drive the reader's `records()` iterator, accumulate
@@ -447,10 +520,38 @@ impl ProducerReader {
 /// already buffered in the partial batch still ship (today they are emitted
 /// before the producer short-circuits; dropping them would break byte-identity
 /// on error inputs). The producer still `return`s after the first error.
+///
+/// Returns the reader's [`SkipCounts`] (secondary/supplementary dropped by the
+/// io-layer filter under `--allow_discordant`; all zero otherwise). `run_pipeline`
+/// folds it into the splitting report. `allow_discordant` selects the
+/// discordant-tolerant PE loop (orphan pushback + geometric classification);
+/// with the flag off the PE loop is exactly as before.
 fn producer_loop(
     mut reader: ProducerReader,
     is_paired: bool,
+    allow_discordant: bool,
     tx_input: Sender<InputBatch>,
+    logger: crate::extractor::logging::Logger,
+) -> SkipCounts {
+    // Drive the reader in an inner fn so its mutable borrow of `reader` (via
+    // `records()`) ends before we read the io-layer `skip_counts()`.
+    drive_reader(&mut reader, is_paired, allow_discordant, &tx_input, logger);
+    // tx_input drops here → channel disconnects → workers exit.
+    drop(tx_input);
+    // Secondary/supplementary counts accumulated by the io filter (zero unless
+    // `--allow_discordant` set the filter). Folded into the report by the caller.
+    reader.skip_counts()
+}
+
+/// Inner producer driver. Kept separate from [`producer_loop`] so the reader's
+/// mutable borrow (via `records()`) is released before `skip_counts()` is read.
+/// Holds the historical SE/PE loop control flow verbatim (the `return;`
+/// early-exits) plus the `--allow_discordant` PE branch.
+fn drive_reader(
+    reader: &mut ProducerReader,
+    is_paired: bool,
+    allow_discordant: bool,
+    tx_input: &Sender<InputBatch>,
     logger: crate::extractor::logging::Logger,
 ) {
     // `lines_read` counts every SAM record consumed (one per `records_iter.next()`
@@ -551,7 +652,7 @@ fn producer_loop(
                 None => break, // clean EOF
             }
         }
-    } else {
+    } else if !allow_discordant {
         // PE: take adjacent records, pair them on the producer thread; one item
         // per pair.
         loop {
@@ -635,6 +736,116 @@ fn producer_loop(
                 batch_seq += 1; // mid-loop flush continues → next seq
             }
         }
+    } else {
+        // PE with `--allow_discordant`: orphan-tolerant pairing (qname
+        // pre-compare + one-slot pushback) + geometric classification. Only
+        // reached under the flag; the flag-off PE loop above is unchanged.
+        //
+        // `pending` holds a record read as an R2 whose qname did not match its
+        // R1 (its mate was unmapped/filtered) — it becomes the next R1.
+        let mut pending: Option<BismarkRecord> = None;
+        loop {
+            // R1: from a pushed-back record (already ticked) or the next read.
+            let r1 = match pending.take() {
+                Some(r) => r,
+                None => match records_iter.next() {
+                    Some(Ok(r)) => {
+                        tick(&logger, &mut lines_read); // +1 SAM line (R1)
+                        r
+                    }
+                    Some(Err(e)) => {
+                        items.push(WorkerInputItem::Err { error: e.into() });
+                        let _ = flush_batch!();
+                        return;
+                    }
+                    None => break, // clean EOF
+                },
+            };
+            // R2.
+            let r2 = match records_iter.next() {
+                Some(Ok(r)) => {
+                    tick(&logger, &mut lines_read); // +1 SAM line (R2)
+                    r
+                }
+                Some(Err(e)) => {
+                    // R1 is a valid mapped primary → emit it as an orphan first,
+                    // then surface the read error (keeps R1's calls; deterministic
+                    // lower-index slot for the orphan).
+                    push_orphan(&mut items, r1);
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
+                    return;
+                }
+                None => {
+                    // EOF after R1: the historical `UnpairedFinalRecord` case is
+                    // now an orphan (its mate is simply absent).
+                    push_orphan(&mut items, r1);
+                    break;
+                }
+            };
+
+            // qname pre-compare via the shared pairing predicate (the same one
+            // `from_mates` uses). A mismatch means R1's mate was filtered/
+            // unmapped → R1 is an orphan, and R2 belongs to the next template
+            // (pushed back as the next R1).
+            if !BismarkPair::qnames_match(&r1, &r2) {
+                push_orphan(&mut items, r1);
+                pending = Some(r2);
+                if items.len() >= BATCH_SIZE {
+                    if !flush_batch!() {
+                        return;
+                    }
+                    batch_seq += 1;
+                }
+                continue;
+            }
+
+            // Resolve both refids (independent pairs carry two chr ids).
+            let r1_refid = match resolve_refid(r1.inner().reference_sequence_id(), "R1") {
+                Ok(v) => v,
+                Err(error) => {
+                    items.push(WorkerInputItem::Err { error });
+                    let _ = flush_batch!();
+                    return;
+                }
+            };
+            let r2_refid = match resolve_refid(r2.inner().reference_sequence_id(), "R2") {
+                Ok(v) => v,
+                Err(error) => {
+                    items.push(WorkerInputItem::Err { error });
+                    let _ = flush_batch!();
+                    return;
+                }
+            };
+
+            // qnames match → form the pair (Ok by construction) and classify.
+            let pair = match BismarkPair::from_mates(r1, r2) {
+                Ok(p) => p,
+                Err(e) => {
+                    items.push(WorkerInputItem::Err { error: e.into() });
+                    let _ = flush_batch!();
+                    return;
+                }
+            };
+            let item = match classify_pair(&pair, r1_refid as usize, r2_refid as usize) {
+                PairClass::Concordant => WorkerInputItem::Pe {
+                    pair: Box::new(pair),
+                    chr_id: r1_refid,
+                },
+                PairClass::Independent => WorkerInputItem::PeIndependent {
+                    pair: Box::new(pair),
+                    r1_chr_id: r1_refid,
+                    r2_chr_id: r2_refid,
+                },
+            };
+            items.push(item);
+            if items.len() >= BATCH_SIZE {
+                if !flush_batch!() {
+                    return; // all workers gone
+                }
+                batch_seq += 1; // mid-loop flush continues → next seq
+            }
+        }
     }
 
     // Flush the partial final batch at clean EOF (skip an empty trailing batch —
@@ -642,8 +853,38 @@ fn producer_loop(
     if !items.is_empty() {
         let _ = flush_batch!();
     }
-    // tx_input drops as this function returns → channel disconnects → workers exit.
-    drop(tx_input);
+    // `tx_input` is a borrow here; the owning `producer_loop` drops the survivor
+    // after this returns, disconnecting the channel so workers exit.
+}
+
+/// Resolve a record's `reference_sequence_id` to `u32` with a defensive
+/// `try_from` (matches the precedent in the flag-off PE loop / `process_se`).
+fn resolve_refid(refid: Option<usize>, mate: &str) -> Result<u32, BismarkExtractorError> {
+    match refid {
+        Some(r) => u32::try_from(r).map_err(|_| BismarkExtractorError::InternalError {
+            message: format!("PE {mate} reference_sequence_id {r} overflows u32"),
+        }),
+        None => Err(BismarkExtractorError::InternalError {
+            message: format!("PE {mate} missing reference_sequence_id"),
+        }),
+    }
+}
+
+/// Push an `--allow_discordant` orphan (a mapped primary whose mate is absent)
+/// into the batch. Read identity comes from the record's own FLAG bits. On a
+/// refid-resolution failure, pushes an `Err` item instead (keeping its slot for
+/// deterministic error selection).
+fn push_orphan(items: &mut Vec<WorkerInputItem>, record: BismarkRecord) {
+    let identity = record.read_identity();
+    let refid = record.inner().reference_sequence_id();
+    match resolve_refid(refid, "orphan") {
+        Ok(chr_id) => items.push(WorkerInputItem::Orphan {
+            record,
+            chr_id,
+            identity,
+        }),
+        Err(error) => items.push(WorkerInputItem::Err { error }),
+    }
 }
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
@@ -716,6 +957,46 @@ fn worker_loop(
                                 Err(error) => WorkerOutputItem::Err { error },
                             }
                         }
+                        WorkerInputItem::PeIndependent {
+                            pair,
+                            r1_chr_id,
+                            r2_chr_id,
+                        } => {
+                            match process_pe_independent(
+                                &pair,
+                                r1_chr_id,
+                                r2_chr_id,
+                                &chr_table,
+                                &config,
+                                mbias_only,
+                                mbias_only,
+                                &mut mbias,
+                                &mut report,
+                            ) {
+                                Ok(routed_calls) => WorkerOutputItem::Ok { routed_calls },
+                                Err(error) => WorkerOutputItem::Err { error },
+                            }
+                        }
+                        WorkerInputItem::Orphan {
+                            record,
+                            chr_id,
+                            identity,
+                        } => {
+                            match process_orphan(
+                                &record,
+                                chr_id,
+                                identity,
+                                &chr_table,
+                                &config,
+                                mbias_only,
+                                mbias_only,
+                                &mut mbias,
+                                &mut report,
+                            ) {
+                                Ok(routed_calls) => WorkerOutputItem::Ok { routed_calls },
+                                Err(error) => WorkerOutputItem::Err { error },
+                            }
+                        }
                         // Forward a producer-side error; never short-circuit the
                         // batch (preserves within-batch index alignment).
                         WorkerInputItem::Err { error } => WorkerOutputItem::Err { error },
@@ -731,7 +1012,10 @@ fn worker_loop(
             }
             Err(RecvError) => {
                 // Channel disconnected (EOS). Emit FinalDelta and exit.
-                let _ = tx_output.send(WorkerOutput::FinalDelta { mbias, report });
+                let _ = tx_output.send(WorkerOutput::FinalDelta {
+                    mbias,
+                    report: Box::new(report),
+                });
                 return;
             }
         }
@@ -955,6 +1239,205 @@ fn process_pe(
     // `pipeline.rs:275-276` for the legacy single-threaded PE path.
     report.records_processed = report.records_processed.saturating_add(1);
     report.call_strings_processed = report.call_strings_processed.saturating_add(2);
+
+    Ok(routed_calls)
+}
+
+/// Process an `--allow_discordant` **Independent** pair on the worker thread:
+/// each mate is called independently (single-end style), routed by its OWN
+/// `record_strand()`, against its own chromosome. No `drop_overlap` (its
+/// half-plane predicate is only valid for FR pairs); instead, for a same-chr
+/// pair, R2 calls at reference positions R1 also calls are dropped via the
+/// orientation-agnostic [`drop_overlap_generic`] (gated on `--no_overlap`, like
+/// the concordant path). Cross-chr pairs share no reference locus, so no dedup.
+#[allow(clippy::too_many_arguments)]
+fn process_pe_independent(
+    pair: &BismarkPair,
+    r1_chr_id: u32,
+    r2_chr_id: u32,
+    chr_table: &Arc<[String]>,
+    config: &ResolvedConfig,
+    mbias_only_silence: bool,
+    mbias_only: bool,
+    mbias: &mut [MbiasTable; 2],
+    report: &mut SplittingReport,
+) -> Result<Vec<RoutedCall>, BismarkExtractorError> {
+    for chr_id in [r1_chr_id, r2_chr_id] {
+        if (chr_id as usize) >= chr_table.len() {
+            return Err(BismarkExtractorError::InternalError {
+                message: format!(
+                    "independent-pair chr_id {} out of range vs header (count {})",
+                    chr_id,
+                    chr_table.len()
+                ),
+            });
+        }
+    }
+
+    // Each mate routes by its OWN record strand (SE semantics) — the pair
+    // fragment model has broken down, so R1's strand is not R2's.
+    let r1_strand = pair.r1().record_strand();
+    let r2_strand = pair.r2().record_strand();
+
+    let r1_calls = extract_calls(
+        pair.r1(),
+        config.ignore_5p_r1,
+        config.ignore_3p_r1,
+        mbias_only_silence,
+    )?;
+    let r2_calls_raw = extract_calls(
+        pair.r2(),
+        config.ignore_5p_r2,
+        config.ignore_3p_r2,
+        mbias_only_silence,
+    )?;
+    // Same-chromosome overlapping pairs: dedup generically so shared cytosines
+    // are not double-counted (keep R1's, drop R2's at shared ref positions).
+    // Disjoint same-chr pairs share no positions → this is a no-op. Cross-chr:
+    // positions denote different loci → never dedup. Skipped under
+    // `--include_overlap` (config.no_overlap == false), matching the concordant
+    // path where `drop_overlap` is likewise skipped.
+    let r2_calls = if r1_chr_id == r2_chr_id && config.no_overlap {
+        drop_overlap_generic(&r1_calls, r2_calls_raw)
+    } else {
+        r2_calls_raw
+    };
+
+    let mode = config.output_mode;
+    let r1_qname_arc: Arc<[u8]> = qname_arc_for(pair.r1());
+    let r2_qname_arc: Arc<[u8]> = qname_arc_for(pair.r2());
+
+    let mut routed_calls: Vec<RoutedCall> = if mbias_only {
+        Vec::new()
+    } else {
+        Vec::with_capacity(r1_calls.len() + r2_calls.len())
+    };
+
+    // R1 — M-bias idx 0, own strand, own chromosome.
+    for call in r1_calls {
+        if !config.mbias_off {
+            let pos_1based = call.read_pos.saturating_add(1);
+            mbias[0].accumulate(call.context, pos_1based, call.methylated);
+        }
+        increment_counters(report, call);
+        if mbias_only {
+            continue;
+        }
+        let (yacht_col6, yacht_col7) = compute_yacht_columns(mode, pair.r1(), r1_strand)?;
+        routed_calls.push(RoutedCall {
+            call,
+            strand: r1_strand,
+            yacht_col6,
+            yacht_col7,
+            qname: Arc::clone(&r1_qname_arc),
+            chr_id: r1_chr_id,
+        });
+    }
+
+    // R2 — M-bias idx 1, own strand, own chromosome.
+    for call in r2_calls {
+        if !config.mbias_off {
+            let pos_1based = call.read_pos.saturating_add(1);
+            mbias[1].accumulate(call.context, pos_1based, call.methylated);
+        }
+        increment_counters(report, call);
+        if mbias_only {
+            continue;
+        }
+        let (yacht_col6, yacht_col7) = compute_yacht_columns(mode, pair.r2(), r2_strand)?;
+        routed_calls.push(RoutedCall {
+            call,
+            strand: r2_strand,
+            yacht_col6,
+            yacht_col7,
+            qname: Arc::clone(&r2_qname_arc),
+            chr_id: r2_chr_id,
+        });
+    }
+
+    // Same counter semantics as a concordant pair: one "line", two call strings.
+    report.records_processed = report.records_processed.saturating_add(1);
+    report.call_strings_processed = report.call_strings_processed.saturating_add(2);
+    // Class counter for the splitting-report section.
+    if r1_chr_id == r2_chr_id {
+        report.pairs_same_chr_independent = report.pairs_same_chr_independent.saturating_add(1);
+    } else {
+        report.pairs_cross_chr_independent = report.pairs_cross_chr_independent.saturating_add(1);
+    }
+
+    Ok(routed_calls)
+}
+
+/// Process an `--allow_discordant` **orphan** (a mapped primary whose mate was
+/// unmapped/filtered) on the worker thread. Called single-end style: trims
+/// selected by read identity (R1/Single → R1 trims, R2 → R2 trims), routed by
+/// the record's own `record_strand()`, M-bias slot by identity (R1/Single → 0,
+/// R2 → 1). No overlap dedup (there is no mate).
+#[allow(clippy::too_many_arguments)]
+fn process_orphan(
+    record: &BismarkRecord,
+    chr_id: u32,
+    identity: ReadIdentity,
+    chr_table: &Arc<[String]>,
+    config: &ResolvedConfig,
+    mbias_only_silence: bool,
+    mbias_only: bool,
+    mbias: &mut [MbiasTable; 2],
+    report: &mut SplittingReport,
+) -> Result<Vec<RoutedCall>, BismarkExtractorError> {
+    if (chr_id as usize) >= chr_table.len() {
+        return Err(BismarkExtractorError::InternalError {
+            message: format!(
+                "orphan chr_id {} out of range vs header (count {})",
+                chr_id,
+                chr_table.len()
+            ),
+        });
+    }
+
+    // R2 orphan uses R2 trims + M-bias slot 1; R1/Single use R1 trims + slot 0.
+    let (ignore_5p, ignore_3p, mbias_idx) = match identity {
+        ReadIdentity::R2 => (config.ignore_5p_r2, config.ignore_3p_r2, 1usize),
+        ReadIdentity::R1 | ReadIdentity::Single => {
+            (config.ignore_5p_r1, config.ignore_3p_r1, 0usize)
+        }
+    };
+
+    let strand = record.record_strand();
+    let calls = extract_calls(record, ignore_5p, ignore_3p, mbias_only_silence)?;
+
+    let mode = config.output_mode;
+    let qname_arc: Arc<[u8]> = qname_arc_for(record);
+    let mut routed_calls: Vec<RoutedCall> = if mbias_only {
+        Vec::new()
+    } else {
+        Vec::with_capacity(calls.len())
+    };
+
+    for call in calls {
+        if !config.mbias_off {
+            let pos_1based = call.read_pos.saturating_add(1);
+            mbias[mbias_idx].accumulate(call.context, pos_1based, call.methylated);
+        }
+        increment_counters(report, call);
+        if mbias_only {
+            continue;
+        }
+        let (yacht_col6, yacht_col7) = compute_yacht_columns(mode, record, strand)?;
+        routed_calls.push(RoutedCall {
+            call,
+            strand,
+            yacht_col6,
+            yacht_col7,
+            qname: Arc::clone(&qname_arc),
+            chr_id,
+        });
+    }
+
+    // An orphan is one read = one "line" = one call string.
+    report.records_processed = report.records_processed.saturating_add(1);
+    report.call_strings_processed = report.call_strings_processed.saturating_add(1);
+    report.orphan_reads_called = report.orphan_reads_called.saturating_add(1);
 
     Ok(routed_calls)
 }
