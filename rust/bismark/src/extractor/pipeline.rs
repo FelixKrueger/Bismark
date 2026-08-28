@@ -20,13 +20,17 @@
 
 use std::path::Path;
 
-use crate::io::{BismarkPair, ReadIdentity, open_reader, open_reader_without_sort_check};
+use crate::io::{
+    AnyReader, BismarkPair, BismarkRecord, ReadIdentity, open_reader,
+    open_reader_without_sort_check,
+};
 
 use crate::extractor::call::extract_calls;
 use crate::extractor::cli::ResolvedConfig;
 use crate::extractor::error::BismarkExtractorError;
 use crate::extractor::header::build_chr_name_table;
-use crate::extractor::overlap::drop_overlap;
+use crate::extractor::overlap::{drop_overlap, drop_overlap_generic};
+use crate::extractor::pair_class::{PairClass, classify_pair};
 use crate::extractor::route::route_call;
 use crate::extractor::state::ExtractState;
 
@@ -77,6 +81,14 @@ pub fn derive_basename(path: &Path) -> String {
 /// `parallel.rs::run_pipeline`.
 pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
     let mut reader = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
+    // `--allow_discordant` in SE mode enables only the io-layer 0x900 skip
+    // (a general aligner's SE output has supplementaries too). Default no-op.
+    if config.allow_discordant {
+        reader.set_filter(crate::io::RecordFilter {
+            drop_secondary: true,
+            drop_supplementary: true,
+        });
+    }
     // Rev 2: build chr_table from `&reader.header()` directly — no Header
     // clone (Reviewer B E2). The borrow is released before `reader.records()`
     // takes its own mutable borrow further down.
@@ -172,11 +184,24 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
         state.report.call_strings_processed = state.report.call_strings_processed.saturating_add(1);
     }
 
+    // Fold the io-layer skip counts (secondary/supplementary) into the report
+    // before finalize. Zero unless `--allow_discordant` set the filter.
+    fold_skip_counts(&mut state, reader.skip_counts());
+
     // Post-loop: no `cleanup_partial_outputs` on finalize failure — the data
     // is already on disk, and the contract (state.rs::finalize doc) is that
     // post-finalize errors don't trigger cleanup.
     state.finalize(config)?;
     Ok(())
+}
+
+/// Fold io-layer [`crate::io::SkipCounts`] into a state's splitting report.
+fn fold_skip_counts(state: &mut ExtractState, sc: crate::io::SkipCounts) {
+    state.report.secondary_skipped = state.report.secondary_skipped.saturating_add(sc.secondary);
+    state.report.supplementary_skipped = state
+        .report
+        .supplementary_skipped
+        .saturating_add(sc.supplementary);
 }
 
 /// PE extraction main loop (Phase C).
@@ -226,10 +251,26 @@ pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkEx
 /// to remove all 12 partial files before propagating.
 pub fn extract_pe(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
     let mut reader = open_reader(input, /*cram_ref=*/ None)?;
+    if config.allow_discordant {
+        reader.set_filter(crate::io::RecordFilter {
+            drop_secondary: true,
+            drop_supplementary: true,
+        });
+    }
     let chr_table = build_chr_name_table(reader.header())?;
 
     let input_basename = derive_basename(input);
     let mut state = ExtractState::new(config, input, &input_basename, /*is_paired=*/ true)?;
+
+    if config.allow_discordant {
+        if let Err(e) = extract_pe_discordant(&mut reader, &mut state, &chr_table, config) {
+            state.cleanup_partial_outputs();
+            return Err(e);
+        }
+        fold_skip_counts(&mut state, reader.skip_counts());
+        state.finalize(config)?;
+        return Ok(());
+    }
 
     let mut records = reader.records();
     loop {
@@ -370,5 +411,179 @@ fn handle_one_pair(
     for call in r2_calls {
         route_call(state, pair.r2(), chr, pair_strand, call, ReadIdentity::R2)?;
     }
+    Ok(())
+}
+
+/// `--allow_discordant` single-threaded PE driver (the byte-identity reference
+/// for `parallel.rs`'s discordant producer). Orphan-tolerant pairing (qname
+/// pre-compare + one-slot pushback) + geometric classification, dispatching to
+/// [`handle_one_pair`] (Concordant), [`handle_one_pair_independent`], or
+/// [`handle_one_orphan`]. Counter semantics mirror `parallel.rs`'s
+/// `process_pe` / `process_pe_independent` / `process_orphan` exactly.
+fn extract_pe_discordant(
+    reader: &mut AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>,
+    state: &mut ExtractState,
+    chr_table: &[String],
+    config: &ResolvedConfig,
+) -> Result<(), BismarkExtractorError> {
+    let mut records = reader.records();
+    let mut pending: Option<BismarkRecord> = None;
+    loop {
+        // R1: a pushed-back record or the next read.
+        let r1 = match pending.take() {
+            Some(r) => r,
+            None => match records.next() {
+                Some(Ok(r)) => r,
+                Some(Err(e)) => return Err(e.into()),
+                None => break, // clean EOF
+            },
+        };
+        // R2.
+        let r2 = match records.next() {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => {
+                // R1 is a valid mapped primary → call it as an orphan, then
+                // propagate the read error.
+                handle_one_orphan(&r1, state, chr_table, config)?;
+                return Err(e.into());
+            }
+            None => {
+                // EOF after R1: the historical `UnpairedFinalRecord` is now an
+                // orphan (its mate is simply absent).
+                handle_one_orphan(&r1, state, chr_table, config)?;
+                break;
+            }
+        };
+
+        // qname pre-compare via the shared pairing predicate (the same one
+        // `from_mates` uses). A mismatch → R1's mate was filtered/unmapped, so
+        // R1 is an orphan and R2 belongs to the next template.
+        if !BismarkPair::qnames_match(&r1, &r2) {
+            handle_one_orphan(&r1, state, chr_table, config)?;
+            pending = Some(r2);
+            continue;
+        }
+
+        let r1_refid = resolve_refid(r1.inner().reference_sequence_id(), "R1")?;
+        let r2_refid = resolve_refid(r2.inner().reference_sequence_id(), "R2")?;
+        let pair = BismarkPair::from_mates(r1, r2)?;
+        match classify_pair(&pair, r1_refid, r2_refid) {
+            PairClass::Concordant => {
+                handle_one_pair(&pair, state, chr_table, config)?;
+                state.report.records_processed = state.report.records_processed.saturating_add(1);
+                state.report.call_strings_processed =
+                    state.report.call_strings_processed.saturating_add(2);
+            }
+            PairClass::Independent => {
+                handle_one_pair_independent(&pair, state, chr_table, config, r1_refid, r2_refid)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a record's `reference_sequence_id` (`Option<usize>`) or fail with an
+/// `InternalError` (a mapped primary always has one).
+fn resolve_refid(refid: Option<usize>, mate: &str) -> Result<usize, BismarkExtractorError> {
+    refid.ok_or_else(|| BismarkExtractorError::InternalError {
+        message: format!("PE {mate} missing reference_sequence_id"),
+    })
+}
+
+/// Resolve a chromosome name from the table or fail with an `InternalError`.
+fn chr_name(chr_table: &[String], refid: usize) -> Result<&str, BismarkExtractorError> {
+    chr_table
+        .get(refid)
+        .map(String::as_str)
+        .ok_or_else(|| BismarkExtractorError::InternalError {
+            message: format!(
+                "refid {} out of range vs header (count {})",
+                refid,
+                chr_table.len()
+            ),
+        })
+}
+
+/// `--allow_discordant` Independent-pair handler (single-threaded reference for
+/// `parallel.rs::process_pe_independent`). Each mate called independently,
+/// routed by its own `record_strand`, against its own chromosome; same-chr
+/// overlaps deduped generically (keep R1) via [`drop_overlap_generic`].
+fn handle_one_pair_independent(
+    pair: &BismarkPair,
+    state: &mut ExtractState,
+    chr_table: &[String],
+    config: &ResolvedConfig,
+    r1_refid: usize,
+    r2_refid: usize,
+) -> Result<(), BismarkExtractorError> {
+    let r1_chr = chr_name(chr_table, r1_refid)?;
+    let r2_chr = chr_name(chr_table, r2_refid)?;
+    let r1_strand = pair.r1().record_strand();
+    let r2_strand = pair.r2().record_strand();
+    let mbias_only_silence = config.is_mbias_only();
+
+    let r1_calls = extract_calls(
+        pair.r1(),
+        config.ignore_5p_r1,
+        config.ignore_3p_r1,
+        mbias_only_silence,
+    )?;
+    let r2_calls_raw = extract_calls(
+        pair.r2(),
+        config.ignore_5p_r2,
+        config.ignore_3p_r2,
+        mbias_only_silence,
+    )?;
+    let r2_calls = if r1_refid == r2_refid && config.no_overlap {
+        drop_overlap_generic(&r1_calls, r2_calls_raw)
+    } else {
+        r2_calls_raw
+    };
+
+    for call in r1_calls {
+        route_call(state, pair.r1(), r1_chr, r1_strand, call, ReadIdentity::R1)?;
+    }
+    for call in r2_calls {
+        route_call(state, pair.r2(), r2_chr, r2_strand, call, ReadIdentity::R2)?;
+    }
+
+    state.report.records_processed = state.report.records_processed.saturating_add(1);
+    state.report.call_strings_processed = state.report.call_strings_processed.saturating_add(2);
+    if r1_refid == r2_refid {
+        state.report.pairs_same_chr_independent =
+            state.report.pairs_same_chr_independent.saturating_add(1);
+    } else {
+        state.report.pairs_cross_chr_independent =
+            state.report.pairs_cross_chr_independent.saturating_add(1);
+    }
+    Ok(())
+}
+
+/// `--allow_discordant` orphan handler (single-threaded reference for
+/// `parallel.rs::process_orphan`). Called single-end style: trims + M-bias slot
+/// by read identity, routed by the record's own `record_strand`.
+fn handle_one_orphan(
+    record: &BismarkRecord,
+    state: &mut ExtractState,
+    chr_table: &[String],
+    config: &ResolvedConfig,
+) -> Result<(), BismarkExtractorError> {
+    let identity = record.read_identity();
+    let refid = resolve_refid(record.inner().reference_sequence_id(), "orphan")?;
+    let chr = chr_name(chr_table, refid)?;
+    let strand = record.record_strand();
+    let (ignore_5p, ignore_3p) = match identity {
+        ReadIdentity::R2 => (config.ignore_5p_r2, config.ignore_3p_r2),
+        ReadIdentity::R1 | ReadIdentity::Single => (config.ignore_5p_r1, config.ignore_3p_r1),
+    };
+    let calls = extract_calls(record, ignore_5p, ignore_3p, config.is_mbias_only())?;
+    for call in calls {
+        // `route_call` selects the M-bias slot from `identity` (R2 → 1, else 0),
+        // matching `process_orphan`.
+        route_call(state, record, chr, strand, call, identity)?;
+    }
+    state.report.records_processed = state.report.records_processed.saturating_add(1);
+    state.report.call_strings_processed = state.report.call_strings_processed.saturating_add(1);
+    state.report.orphan_reads_called = state.report.orphan_reads_called.saturating_add(1);
     Ok(())
 }
