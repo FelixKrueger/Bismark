@@ -420,6 +420,7 @@ mod tests {
             parallel: 1,
             quiet: false,
             verbose: false,
+            allow_discordant: false,
         }
     }
 

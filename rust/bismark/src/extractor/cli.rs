@@ -212,6 +212,22 @@ pub struct Cli {
     #[arg(long = "mbias_off")]
     pub mbias_off: bool,
 
+    // ─── Aligner-agnostic discordant handling ───
+    /// Opt-in: call methylation on records a Bismark aligner never emits, so
+    /// output from a general-purpose bisulfite aligner (emitting Bismark-format
+    /// XM/XR/XG tags) can be consumed directly — no `samtools view -f 0x2 -F
+    /// 0x900` pre-filter. Skips (and counts) secondary (0x100) / supplementary
+    /// (0x800) alignments; calls cross-chromosome and same-chromosome
+    /// discordant pairs independently; calls orphan reads whose mate is
+    /// unmapped. OFF by default; the default path is byte-identical to Bismark's
+    /// (including its cross-chr / unpaired-record errors). Everything the mode
+    /// does is tallied in the splitting report. PE enables the full package; in
+    /// -s mode it enables just the 0x900 skip. A stderr warning is emitted (not
+    /// gated by --quiet) if >20% of records are orphans, which usually means the
+    /// input is not name-grouped (query-sorted / name-collated).
+    #[arg(long = "allow_discordant")]
+    pub allow_discordant: bool,
+
     // ─── Console diagnostics (#882) ───
     /// Suppress the informational stderr log (banner, mode, parameter summary,
     /// header provenance, progress counter, final summary, kept/deleted).
@@ -351,6 +367,10 @@ pub struct ResolvedConfig {
     pub quiet: bool,
     /// Include `@SQ` lines in header provenance (#882).
     pub verbose: bool,
+    /// Aligner-agnostic discordant handling: skip+count secondary/supplementary,
+    /// call cross-chr / same-chr discordant pairs independently, call orphans.
+    /// OFF by default; gates every new code path so the default is byte-identical.
+    pub allow_discordant: bool,
 }
 
 impl ResolvedConfig {
@@ -550,6 +570,7 @@ impl Cli {
             parallel: self.parallel as usize,
             quiet: self.quiet,
             verbose: self.verbose,
+            allow_discordant: self.allow_discordant,
         })
     }
 }
