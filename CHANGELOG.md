@@ -1,6 +1,13 @@
 # Bismark Changelog
 
 
+## Bismark (unreleased)
+
+### bismark extract (methylation extractor)
+
+- **New opt-in `--allow_discordant` for aligner-agnostic input.** The methylation extractor can now consume BAMs from general-purpose bisulfite aligners that emit Bismark-format `XM`/`XR`/`XG` tags — not just the Bismark aligner — without an external `samtools view -f 0x2 -F 0x900` pre-filter. With the flag it skips (and counts) secondary (`0x100`) / supplementary (`0x800`) alignments, calls cross-chromosome and same-chromosome discordant pairs independently, and calls orphan reads whose mate is unmapped; every new class is tallied in a dedicated splitting-report section. It is **OFF by default and byte-identical to the previous behaviour when off** (including the historical cross-chromosome / unpaired-record errors). A stderr warning (not gated by `--quiet`) fires when more than 20% of records are orphans, which usually means the input is not name-grouped (query-sorted / name-collated).
+
+
 ## Bismark 3.1.0 (released 2026-07-13)
 
 ### bismark (aligner)
