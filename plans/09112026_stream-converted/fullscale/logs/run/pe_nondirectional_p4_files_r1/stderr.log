@@ -10,8 +10,8 @@ GA index:       /fs/genome/GRCm39/Bisulfite_Genome/GA_conversion/BS_GA
 large index:    false
 FASTA(s):       1 file(s) (Fa)
 aligner_options: -q --score-min L,0,-0.2 -p 4 --reorder --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500
-converted reads: streamed to the aligner through FIFOs (no temp files)
-output:         BAM, dir="/fs/run/out/pe_nondirectional_p4_stream_r1", basename=None
+converted reads: written to the temp dir as files
+output:         BAM, dir="/fs/run/out/pe_nondirectional_p4_files_r1", basename=None
 chr 1 (195154279 bp)
 chr 10 (130530862 bp)
 chr 11 (121973369 bp)
@@ -73,16 +73,22 @@ chr GL456396.1 (21240 bp)
 chr GL456368.1 (20208 bp)
 chr MU069434.1 (8412 bp)
 chr JH584295.1 (1976 bp)
->>> Writing bisulfite mapping results to /fs/run/out/pe_nondirectional_p4_stream_r1/SRR24766921_10M_1_bismark_bt2_pe.bam <<<
-Streaming C->T converted version of /fs/data/SRR24766921_10M_1.fastq.gz to 2 aligner instance(s)
-Streaming G->A converted version of /fs/data/SRR24766921_10M_2.fastq.gz to 2 aligner instance(s)
-Streaming G->A converted version of /fs/data/SRR24766921_10M_1.fastq.gz to 2 aligner instance(s)
-Streaming C->T converted version of /fs/data/SRR24766921_10M_2.fastq.gz to 2 aligner instance(s)
+>>> Writing bisulfite mapping results to /fs/run/out/pe_nondirectional_p4_files_r1/SRR24766921_10M_1_bismark_bt2_pe.bam <<<
+Created C->T converted version of /fs/data/SRR24766921_10M_1.fastq.gz -> /fs/run/tmp/pe_nondirectional_p4_files_r1/SRR24766921_10M_1.fastq.gz_C_to_T.fastq (10000000 sequences)
+Created G->A converted version of /fs/data/SRR24766921_10M_2.fastq.gz -> /fs/run/tmp/pe_nondirectional_p4_files_r1/SRR24766921_10M_2.fastq.gz_G_to_A.fastq (10000000 sequences)
+Created G->A converted version of /fs/data/SRR24766921_10M_1.fastq.gz -> /fs/run/tmp/pe_nondirectional_p4_files_r1/SRR24766921_10M_1.fastq.gz_G_to_A.fastq (10000000 sequences)
+Created C->T converted version of /fs/data/SRR24766921_10M_2.fastq.gz -> /fs/run/tmp/pe_nondirectional_p4_files_r1/SRR24766921_10M_2.fastq.gz_C_to_T.fastq (10000000 sequences)
 10000000 reads; of these:
   10000000 (100.00%) were paired; of these:
     9999798 (100.00%) aligned concordantly 0 times
     27 (0.00%) aligned concordantly exactly 1 time
     175 (0.00%) aligned concordantly >1 times
+0.00% overall alignment rate
+10000000 reads; of these:
+  10000000 (100.00%) were paired; of these:
+    9999808 (100.00%) aligned concordantly 0 times
+    25 (0.00%) aligned concordantly exactly 1 time
+    167 (0.00%) aligned concordantly >1 times
 0.00% overall alignment rate
 10000000 reads; of these:
   10000000 (100.00%) were paired; of these:
@@ -92,20 +98,10 @@ Streaming C->T converted version of /fs/data/SRR24766921_10M_2.fastq.gz to 2 ali
 41.58% overall alignment rate
 10000000 reads; of these:
   10000000 (100.00%) were paired; of these:
-    9999808 (100.00%) aligned concordantly 0 times
-    25 (0.00%) aligned concordantly exactly 1 time
-    167 (0.00%) aligned concordantly >1 times
-0.00% overall alignment rate
-10000000 reads; of these:
-  10000000 (100.00%) were paired; of these:
     5842515 (58.43%) aligned concordantly 0 times
     2927370 (29.27%) aligned concordantly exactly 1 time
     1230115 (12.30%) aligned concordantly >1 times
 41.57% overall alignment rate
-Streamed C->T converted version of /fs/data/SRR24766921_10M_1.fastq.gz (10000000 sequences, no temp file written)
-Streamed G->A converted version of /fs/data/SRR24766921_10M_2.fastq.gz (10000000 sequences, no temp file written)
-Streamed G->A converted version of /fs/data/SRR24766921_10M_1.fastq.gz (10000000 sequences, no temp file written)
-Streamed C->T converted version of /fs/data/SRR24766921_10M_2.fastq.gz (10000000 sequences, no temp file written)
 Mapping summary for /fs/data/SRR24766921_10M_1.fastq.gz / /fs/data/SRR24766921_10M_2.fastq.gz:
 sequence pairs analysed:  10000000
 unique best alignments:   6065735

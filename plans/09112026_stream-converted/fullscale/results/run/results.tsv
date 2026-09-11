@@ -1,3 +1,5 @@
 shape	arm	rep	wall_s	peak_temp_kb	peak_conv_kb	mem_peak_bytes	anon_peak_bytes	cpu_usec	pids_peak	out_kb	rc
 pe_directional_p4	stream	1	2946.77	0	0	10282188800	NA	18946392331	29	855968	0
 pe_directional_p4	files	1	2955.66	3346733	3346733	17055068160	NA	18899105881	23	855968	0
+pe_nondirectional_p4	stream	1	3045.21	0	0	24644321280	2.44536e+10	25299810433	53	855968	0
+pe_nondirectional_p4	files	1	2973.18	6693466	6693466	32851959808	2.57275e+10	24884257865	41	855968	0
