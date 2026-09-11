@@ -294,6 +294,35 @@ fn build_pe_argv(
     }
 }
 
+/// A spawned-but-unread [`AlignerStream`] (#1120).
+///
+/// A newtype rather than a flag, so an unprimed stream cannot be mistaken for a
+/// live one: before priming its `current` is `None`, which is indistinguishable
+/// from EOF and would silently drop every alignment. [`prime`](Self::prime) is
+/// the only way out of it.
+pub struct UnprimedAlignerStream(AlignerStream);
+
+impl UnprimedAlignerStream {
+    /// Read past the `@` header to the first alignment record — the second half
+    /// of [`AlignerStream::spawn`]. Blocks until the aligner produces output, so
+    /// on the streaming path every child must already be spawned.
+    pub fn prime(mut self) -> Result<AlignerStream> {
+        let mut line = String::new();
+        self.0.current = loop {
+            line.clear();
+            let n = self.0.reader.read_line(&mut line)?;
+            if n == 0 {
+                break None; // header-only / empty stream
+            }
+            if line.starts_with('@') {
+                continue;
+            }
+            break Some(SamRecord::parse(&line)?);
+        };
+        Ok(self.0)
+    }
+}
+
 impl AlignerStream {
     /// Spawn one aligner instance (Bowtie 2 / HISAT2 / minimap2) and read up to the
     /// first alignment record. The argv shape is per-aligner ([`build_se_argv`]).
@@ -307,6 +336,28 @@ impl AlignerStream {
         index: &Path,
         input: &Path,
     ) -> Result<Self> {
+        Self::spawn_unprimed(aligner, bin, options, orient, index, input)?.prime()
+    }
+
+    /// Spawn the child **without reading anything from it** — the first half of
+    /// [`AlignerStream::spawn`].
+    ///
+    /// Split out for the streaming path (#1120). When the reads arrive over a
+    /// FIFO, reading the first record cannot complete until the converter's
+    /// writer thread has been let past its blocking open-for-write, and that only
+    /// happens once *this* child opens the pipe for read. Several children share
+    /// one conversion pass through a bounded channel, so every child must be
+    /// spawned before **any** of them is primed — otherwise the fan-out stalls on
+    /// a consumer that does not exist yet and the run deadlocks. On the file path
+    /// the two halves are adjacent and the split is a no-op.
+    pub fn spawn_unprimed(
+        aligner: Aligner,
+        bin: &Path,
+        options: &str,
+        orient: Orientation,
+        index: &Path,
+        input: &Path,
+    ) -> Result<UnprimedAlignerStream> {
         let mut cmd = Command::new(bin);
         cmd.args(build_se_argv(aligner, options, orient, index, input))
             .stdout(Stdio::piped())
@@ -322,30 +373,15 @@ impl AlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let mut reader = BufReader::new(stdout);
 
-        // Skip `@` header lines; the first non-`@` line is the first record.
-        let mut line = String::new();
-        let current = loop {
-            line.clear();
-            let n = reader.read_line(&mut line)?;
-            if n == 0 {
-                break None; // header-only / empty stream
-            }
-            if line.starts_with('@') {
-                continue;
-            }
-            break Some(SamRecord::parse(&line)?);
-        };
-
-        Ok(AlignerStream {
+        Ok(UnprimedAlignerStream(AlignerStream {
             child,
-            reader,
-            current,
+            reader: BufReader::new(stdout),
+            current: None,
             line_buf: String::new(),
             finished: false,
             aligner,
-        })
+        }))
     }
 
     /// Peek the current record without consuming it (`None` at EOF).
@@ -562,6 +598,35 @@ pub struct PairedAlignerStream {
     aligner: Aligner,
 }
 
+/// A spawned-but-unread [`PairedAlignerStream`] — the PE sibling of
+/// [`UnprimedAlignerStream`], and a newtype for the same reason.
+pub struct UnprimedPairedAlignerStream(PairedAlignerStream);
+
+impl UnprimedPairedAlignerStream {
+    /// Read past the `@` header to the first alignment *pair* (Perl 6477–6488).
+    pub fn prime(mut self) -> Result<PairedAlignerStream> {
+        let mut line1 = String::new();
+        loop {
+            line1.clear();
+            let n = self.0.reader.read_line(&mut line1)?;
+            if n == 0 {
+                return Ok(self.0); // header-only / empty stream → no pairs
+            }
+            if !line1.starts_with('@') {
+                break;
+            }
+        }
+        let mut line2 = String::new();
+        let n2 = self.0.reader.read_line(&mut line2)?;
+        self.0.current = if n2 == 0 {
+            None // a lone trailing line is not a complete pair (Perl 6491)
+        } else {
+            Some(SamPair::from_lines(&line1, &line2)?)
+        };
+        Ok(self.0)
+    }
+}
+
 impl PairedAlignerStream {
     /// Spawn one paired aligner instance (Bowtie 2 / HISAT2) and read the first pair.
     ///
@@ -577,6 +642,24 @@ impl PairedAlignerStream {
         input1: &Path,
         input2: &Path,
     ) -> Result<Self> {
+        Self::spawn_unprimed(aligner, bin, options, orient, index, input1, input2)?.prime()
+    }
+
+    /// Spawn the child **without reading anything from it** — the PE analog of
+    /// [`AlignerStream::spawn_unprimed`], and needed for the same reason (#1120):
+    /// on the streaming path a child must open its two FIFOs for read before the
+    /// writers behind them can make progress, so all children are spawned first
+    /// and primed afterwards.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_unprimed(
+        aligner: Aligner,
+        bin: &Path,
+        options: &str,
+        orient: Orientation,
+        index: &Path,
+        input1: &Path,
+        input2: &Path,
+    ) -> Result<UnprimedPairedAlignerStream> {
         // Orientation flag: the faithful directional/pbat/non-dir PE slots pass
         // `Norc`/`Nofw` (`flag()` → `Some`); the v2.x combined-index PE pass uses
         // `Orientation::Both` (`flag()` → `None`) so ONE pass searches both sub-genomes.
@@ -597,43 +680,14 @@ impl PairedAlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let mut reader = BufReader::new(stdout);
 
-        // Skip `@` header lines; the first non-`@` line is the first record of
-        // the first pair (Perl 6477–6488).
-        let mut line1 = String::new();
-        loop {
-            line1.clear();
-            let n = reader.read_line(&mut line1)?;
-            if n == 0 {
-                // header-only / empty stream → no pairs
-                return Ok(PairedAlignerStream {
-                    child,
-                    reader,
-                    current: None,
-                    finished: false,
-                    aligner,
-                });
-            }
-            if !line1.starts_with('@') {
-                break;
-            }
-        }
-        let mut line2 = String::new();
-        let n2 = reader.read_line(&mut line2)?;
-        let current = if n2 == 0 {
-            None // a lone trailing line is not a complete pair (Perl 6491)
-        } else {
-            Some(SamPair::from_lines(&line1, &line2)?)
-        };
-
-        Ok(PairedAlignerStream {
+        Ok(UnprimedPairedAlignerStream(PairedAlignerStream {
             child,
-            reader,
-            current,
+            reader: BufReader::new(stdout),
+            current: None,
             finished: false,
             aligner,
-        })
+        }))
     }
 
     /// Peek the current pair without consuming it (`None` at EOF).

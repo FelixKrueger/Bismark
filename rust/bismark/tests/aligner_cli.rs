@@ -416,14 +416,23 @@ fn happy_path_resolves_and_prints_config() {
                 ))
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
-                // Phase 2: the C->T temp file is produced for the v1 spine.
-                .and(predicate::str::contains("Created C->T converted"))
+                // #1120: the C->T conversion now STREAMS to the aligner by
+                // default, so the banner names the stream, not a created file.
+                .and(predicate::str::contains("Streaming C->T converted"))
+                .and(predicate::str::contains("no temp file written"))
                 // Phase 5: the pipeline ran end-to-end (fake bowtie2 emits unmapped).
                 .and(predicate::str::contains("Mapping summary"))
                 .and(predicate::str::contains("no alignment found:")),
         );
-    // Phase 6: the C->T temp file is DELETED after the run (Perl 1974–1981).
+    // Phase 6: the C->T temp file is DELETED after the run (Perl 1974–1981) —
+    // and under #1120's default it is never written in the first place, nor is
+    // the FIFO that replaced it left behind.
     assert!(!temp.path().join("reads.fq_C_to_T.fastq").is_file());
+    assert_eq!(
+        std::fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "the streaming path must leave the temp dir empty"
+    );
     // Phase 5: the Bismark BAM was written to --output_dir (header-only here,
     // since the fake aligner reports every read unmapped).
     assert!(outdir.path().join("reads_bismark_bt2.bam").is_file());

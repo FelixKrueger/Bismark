@@ -29,6 +29,16 @@ Pick your library row, then your priority:
 
 † `--combined_index_single_pass` is *not* decision-equivalent — see [Correctness](#correctness--concordance).
 
+:::note[The converted reads no longer touch the disk on the standard modes]
+Every Bismark run converts your reads in silico before aligning them. On the **standard**
+per-strand modes those converted reads are now streamed straight into the aligner and are never
+written to `--temp_dir` at all — so the scratch they used to need (roughly the uncompressed size of
+your input, per converted set) is gone. The **`--combined_index` modes still write them as files**,
+which is worth weighing against the spill figures below if scratch is your binding constraint. Pass
+`--no_stream_converted` to get files back everywhere; it is described under
+[Alignment options](/Bismark/options/alignment/).
+:::
+
 ## Directional and PBAT
 
 For directional and PBAT libraries the combined index is a clean win: one both-strands pass replaces the
