@@ -76,5 +76,44 @@ Scaled estimates used for scheduling: non-directional ~60 min, `--multicore 2` ~
 
 ## 4. Results
 
-_Populated as each phase completes._
+### 4.1 `pe_directional_p4` at 10,000,000 pairs — C1 and C2 (2026-09-11)
+
+Directional paired-end, `-p 4`, one rep per arm, run serially on an idle machine.
+
+| | wall | converted bytes on disk (peak, sampled live) | output | records |
+|---|---|---|---|---|
+| **streamed** (default) | **2946.77 s** (49.1 min) | **0 KB** | 856 MB | 12,131,476 |
+| **files** (`--no_stream_converted`) | 2955.66 s (49.3 min) | **3,346,733 KB (3.19 GiB)** | 856 MB | 12,131,476 |
+
+**C1 — PASS.** `samtools view` record bodies are identical (md5 over 12,131,476 records
+matches), and the filtered report is identical. See `results/run/C1.tsv`.
+
+**C2 — PASS.** The streamed arm never puts a converted byte on disk. The file arm holds
+3.19 GiB — one uncompressed copy of the input — for the *entire* 49-minute run, not
+briefly. Sampled live, because both arms clean up at the end.
+
+**C3 — no regression.** The streamed arm was **8.9 s faster**, 0.30 % of a ~49-minute run.
+That is well inside noise for n=1 and the honest reading is *wall-neutral*, which is what
+the 200,000-pair bench found. Total CPU was also within 0.25 % (18,946 s vs 18,899 s).
+Reps follow.
+
+**What the time series shows.** The file arm spends its first ~33 seconds at 100 % CPU —
+one core, converting — with zero output written. Only then does CPU rise to ~800 % as the
+aligners start. The streamed arm is at ~800 % and emitting output within 12 seconds.
+Conversion coming off the critical path is directly visible rather than inferred.
+
+**Threads.** 29 peak (streamed) against 23 (files): six extra, being the converter and
+writer threads behind the fan-out. Nowhere near any limit — see §4.2.
+
+> **A measurement trap worth recording.** The file arm's peak `memory.current` is 15.88 GiB
+> against the streamed arm's 9.58 GiB, which looks like the streamed path saving 6 GiB of
+> memory — or, read the other way, would have tripped `FULLSCALE.md` §2's "if peak RSS moves
+> by more than a few hundred MB, something is wrong". Neither reading is right. `memory.current`
+> counts page cache, and the difference is the file arm's own 3.19 GiB of converted files
+> sitting in cache plus the cache for reading them back. The sampler now records
+> `memory.stat anon` alongside, so later runs separate allocation from cache; these two
+> pre-date that column and carry `NA` for it.
+
+Plots: `plots/run/pe_directional_p4_r1.png` (six stacked panels — converted bytes, whole
+temp dir, output, cgroup memory, CPU, threads).
 

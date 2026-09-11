@@ -1,0 +1,11 @@
+
+########## S1 prepare 2M subset  [14:37:12] ##########
+total 661256
+drwxr-xr-x.  2 root root       140 Sep 11 14:37 .
+drwxr-xr-x. 10 root root      4096 Sep 11 14:37 ..
+-rw-r--r--.  1 root root 282591292 Sep 11 12:18 SRR24766921_10M_1.fastq.gz
+-rw-r--r--.  1 root root 281578687 Sep 11 12:18 SRR24766921_10M_2.fastq.gz
+-rw-r--r--.  1 root root  56583425 Sep 11 14:37 SRR24766921_2M_1.fastq.gz
+-rw-r--r--.  1 root root  56360888 Sep 11 14:37 SRR24766921_2M_2.fastq.gz
+
+########## S2 section 7 edge probes  [14:37:19] ##########
