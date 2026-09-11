@@ -9,3 +9,28 @@ drwxr-xr-x. 10 root root      4096 Sep 11 14:37 ..
 -rw-r--r--.  1 root root  56360888 Sep 11 14:37 SRR24766921_2M_2.fastq.gz
 
 ########## S2 section 7 edge probes  [14:37:19] ##########
+section 7 exit: 0
+
+=== 7.3 — thread and FD counts under the widest fan-out ===
+  peak open FDs (tree): 73     ulimit -n soft=65535 hard=65535
+  peak threads (tree):  35    peak processes: 9
+  exit: 0
+  headroom: 0.1% of the soft FD limit used
+
+=== 7.1 — 200-character sample names under --multicore 4 ===
+  basename length: 190_1.fastq.gz -> 203 chars
+  short: exit 0
+    records: 2398276
+  long: exit 0
+    records: 2398276
+  long-name run is alignment-identical to the short-name run
+
+=== 7.2 — a --temp_dir smaller than the uncompressed input ===
+  temp_dir capacity: 512 MiB
+  one converted copy of R1 alone: 318 MiB (the file arm needs this x2)
+  files   exit 1   records 0
+    file arm failed as expected:
+error: I/O error: No space left on device (os error 28)
+  stream  exit 0   records 2398276
+
+### SECTION 7: ALL PASS
