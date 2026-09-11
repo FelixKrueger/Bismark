@@ -37,14 +37,14 @@ use tempfile::TempDir;
 
 #[test]
 fn streaming_is_the_default() {
-    let s = resolve_stream_converted(false, Aligner::Bowtie2, false, false);
+    let s = resolve_stream_converted(false, Aligner::Bowtie2, false, false, false);
     assert!(s.enabled, "streaming must be the default for Bowtie 2");
     assert!(s.reason.is_none());
 }
 
 #[test]
 fn no_stream_converted_forces_files_without_a_complaint() {
-    let s = resolve_stream_converted(true, Aligner::Bowtie2, false, false);
+    let s = resolve_stream_converted(true, Aligner::Bowtie2, false, false, false);
     assert!(!s.enabled);
     assert!(
         s.reason.is_none(),
@@ -56,7 +56,7 @@ fn no_stream_converted_forces_files_without_a_complaint() {
 /// the format), so it must keep the file path, and must say so.
 #[test]
 fn hisat2_falls_back_to_files_and_says_why() {
-    let s = resolve_stream_converted(false, Aligner::Hisat2, false, false);
+    let s = resolve_stream_converted(false, Aligner::Hisat2, false, false, false);
     assert!(!s.enabled);
     let reason = s
         .reason
@@ -71,11 +71,11 @@ fn every_unsupported_mode_explains_itself() {
     for (label, s) in [
         (
             "combined index",
-            resolve_stream_converted(false, Aligner::Bowtie2, true, false),
+            resolve_stream_converted(false, Aligner::Bowtie2, true, false, false),
         ),
         (
-            "rammap",
-            resolve_stream_converted(false, Aligner::Rammap, false, false),
+            "the subprocess rammap backend",
+            resolve_stream_converted(false, Aligner::Rammap, false, false, false),
         ),
     ] {
         assert!(!s.enabled, "{label} cannot stream yet");
@@ -91,14 +91,45 @@ fn every_unsupported_mode_explains_itself() {
 /// explain.
 #[test]
 fn five_base_has_nothing_to_stream() {
-    let s = resolve_stream_converted(false, Aligner::Minimap2, false, true);
+    let s = resolve_stream_converted(false, Aligner::Minimap2, false, true, false);
+    assert!(!s.enabled);
+    assert!(s.reason.is_none());
+}
+
+/// `[#1120]` The in-process rammap backend aligns inside this process, so it takes
+/// the converted reads in memory: no temp file and no FIFO. The SUBPROCESS backend
+/// keeps files, because whether the external binary accepts a pipe is unverified.
+#[test]
+fn in_process_rammap_takes_its_reads_in_memory() {
+    let in_memory = resolve_stream_converted(false, Aligner::Rammap, false, false, true);
+    assert!(
+        in_memory.enabled,
+        "the in-process backend needs no temp file"
+    );
+    assert!(in_memory.reason.is_none());
+
+    let subprocess = resolve_stream_converted(false, Aligner::Rammap, false, false, false);
+    assert!(!subprocess.enabled);
+    assert!(
+        subprocess
+            .reason
+            .is_some_and(|r| r.contains("subprocess rammap")),
+        "the fallback must say which rammap backend it means"
+    );
+}
+
+/// `--no_stream_converted` still wins for the in-process backend, so the flag
+/// remains a complete escape hatch back to files on every path.
+#[test]
+fn no_stream_converted_also_turns_off_the_in_memory_path() {
+    let s = resolve_stream_converted(true, Aligner::Rammap, false, false, true);
     assert!(!s.enabled);
     assert!(s.reason.is_none());
 }
 
 #[test]
 fn minimap2_streams() {
-    assert!(resolve_stream_converted(false, Aligner::Minimap2, false, false).enabled);
+    assert!(resolve_stream_converted(false, Aligner::Minimap2, false, false, false).enabled);
 }
 
 #[test]

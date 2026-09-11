@@ -184,7 +184,9 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
   Output is byte-identical either way. Use this flag if you want to inspect the converted reads, or to bisect a suspected streaming problem. `--gzip` has no effect on the streamed reads — there is no file to compress.
 
-  Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
+  `--rammap`'s default in-process backend goes one better: it aligns inside the Bismark process, so it receives the converted reads in memory with neither a file nor a pipe in between. `--rammap_subprocess` runs the external binary and keeps files.
+
+  Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap_subprocess`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
 
 - `--sam`
 

@@ -45,11 +45,10 @@ fn mkfifo(path: &Path) -> Result<()> {
         AlignerError::Validation(format!("could not run mkfifo for {}: {e}", path.display()))
     })?;
     if !status.success() {
-        // Reachable after the start-up probe succeeded: the probe uses a short
-        // fixed name, so it cannot predict `ENAMETOOLONG` on a real converted name
-        // (which adds `.s<slot>.<pid>.fifo`, and `.temp.<i>` again under
-        // `--multicore`), nor a temp dir that fills or goes read-only mid-run.
-        // Name the escape hatch, since the error text is otherwise opaque.
+        // Length is no longer a plausible cause ([`NAME_STEM_CAP`]), so what is
+        // left is a temp dir that filled or went read-only after the start-up
+        // probe. Name the escape hatch either way, since the text is otherwise
+        // opaque.
         return Err(AlignerError::Validation(format!(
             "mkfifo {} failed ({status}); re-run with --no_stream_converted to write the \
              converted reads as files instead",
@@ -116,24 +115,64 @@ impl Drop for FifoSet {
     }
 }
 
+/// How much of the converted name a FIFO name keeps.
+///
+/// The name exists to make a stray pipe self-explaining; nothing functional reads
+/// it. So it is capped rather than allowed to grow with the input's name, which
+/// keeps the total comfortably inside the 255-byte limit that every common
+/// filesystem puts on one path component. Without a cap a long sample name could
+/// pass the start-up probe as a file and then fail `mkfifo` mid-run — a run that
+/// worked with files failing only because it now streams.
+const NAME_STEM_CAP: usize = 64;
+
+/// Hands out a distinct id to every [`FifoSet`] created in this process.
+///
+/// **Uniqueness must not depend on the converted name.** `--multicore N` runs its
+/// chunks concurrently in ONE process, so the pid and the slot numbers repeat
+/// across chunks, and the only thing left to tell chunk 0's pipe from chunk 1's
+/// would be the name — whose distinguishing part (`.temp.<i>`) sits at the END of
+/// the basename, exactly where [`NAME_STEM_CAP`] truncates. Two chunks would then
+/// agree on a path, and because `mkfifo` unlinks first, the second would delete
+/// the first's live pipe and both would write into one: interleaved reads and
+/// silently wrong output, with no error anywhere.
+///
+/// This counter makes the path unique by construction, which leaves the name free
+/// to be purely descriptive.
+static NEXT_FIFO_SET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The FIFO file name standing in for converted temp file `converted_name` as
 /// read by aligner instance `slot`.
 ///
-/// Keeps the converted name visible (so a stray pipe is self-explaining) and
-/// scopes it by slot and PID, because the same converted file feeds two or four
-/// instances and each needs its own pipe.
+/// Keeps (up to [`NAME_STEM_CAP`] bytes of) the converted name visible so a stray
+/// pipe is self-explaining. **Uniqueness comes from `slot`, the pid, and `set`
+/// (see [`NEXT_FIFO_SET`]), never from the name**, which is truncated and so
+/// cannot be relied on to differ.
 ///
 /// The format extension stays **last** (`…_C_to_T.s0.4242.fifo.fastq`, not
 /// `…_C_to_T.fastq.s0.4242.fifo`). Bowtie 2 and minimap2 sniff content rather
 /// than names, but plenty of surrounding tooling does not — Bismark's own
 /// converter picks its decompressor off the input's suffix — so a pipe that still
 /// looks like the file it replaces is the safer shape for no extra cost.
-pub fn fifo_name(converted_name: &str, slot: usize) -> String {
+pub fn fifo_name(converted_name: &str, slot: usize, set: u64) -> String {
     let pid = std::process::id();
-    match converted_name.rsplit_once('.') {
-        Some((stem, ext)) => format!("{stem}.s{slot}.{pid}.fifo.{ext}"),
-        None => format!("{converted_name}.s{slot}.{pid}.fifo"),
+    let (stem, ext) = match converted_name.rsplit_once('.') {
+        Some((stem, ext)) => (stem, Some(ext)),
+        None => (converted_name, None),
+    };
+    // Truncate on a char boundary, so a non-ASCII sample name cannot panic here.
+    let capped = match stem.char_indices().nth(NAME_STEM_CAP) {
+        Some((byte_idx, _)) => &stem[..byte_idx],
+        None => stem,
+    };
+    match ext {
+        Some(ext) => format!("{capped}.s{slot}.{pid}.{set}.fifo.{ext}"),
+        None => format!("{capped}.s{slot}.{pid}.{set}.fifo"),
     }
+}
+
+/// Claim the next [`FifoSet`] id for this process.
+pub(crate) fn next_fifo_set() -> u64 {
+    NEXT_FIFO_SET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Can `temp_dir` host a named pipe at all?
@@ -143,7 +182,11 @@ pub fn fifo_name(converted_name: &str, slot: usize) -> String {
 /// Answered by actually creating and unlinking one, because no portable
 /// filesystem-capability query exists; `false` on any failure.
 pub fn temp_dir_supports_fifo(temp_dir: &Path) -> bool {
-    let name = format!("bismark_fifo_probe.{}", std::process::id());
+    let name = format!(
+        "bismark_fifo_probe.{}.{}",
+        std::process::id(),
+        next_fifo_set()
+    );
     FifoSet::create(temp_dir, std::slice::from_ref(&name)).is_ok()
 }
 
@@ -315,6 +358,9 @@ impl StreamedConversion {
         let mut plain = opts.clone();
         plain.gzip = false;
 
+        // Claimed once per set, so concurrent `--multicore` chunks cannot agree on
+        // a path even when their (truncated) names match.
+        let set = next_fifo_set();
         let mut names = Vec::with_capacity(demands.len());
         for (consumer, &src) in demands.iter().enumerate() {
             let s = sources.get(src).ok_or_else(|| {
@@ -328,44 +374,24 @@ impl StreamedConversion {
             names.push(fifo_name(
                 &convert::converted_name(&s.input, &plain, file_base, fasta)?,
                 consumer,
+                set,
             ));
         }
 
         let fifos = FifoSet::create(temp_dir, &names)?;
         let paths = fifos.paths().to_vec();
 
+        let (receivers, converters) = spawn_converters(fasta, opts, sources, demands)?;
+
         // One writer thread per consumer, each parked in its blocking open-for-write
         // until the matching aligner child opens the pipe for read.
         let mut writers = Vec::with_capacity(demands.len());
         let mut opened = Vec::with_capacity(demands.len());
-        let mut senders_by_source: Vec<Vec<SyncSender<Arc<[u8]>>>> =
-            vec![Vec::new(); sources.len()];
-        for (consumer, &src) in demands.iter().enumerate() {
-            let (tx, rx) = sync_channel::<Arc<[u8]>>(CHANNEL_DEPTH);
-            senders_by_source[src].push(tx);
+        for (consumer, rx) in receivers.into_iter().enumerate() {
             let path = paths[consumer].clone();
             let state = Arc::new(AtomicU8::new(writer_state::PARKED));
             opened.push(Arc::clone(&state));
             writers.push(std::thread::spawn(move || writer_thread(path, rx, state)));
-        }
-
-        // One converter thread per source — every source, in order, so `finish`'s
-        // counts line up with `sources` for the caller's banner. A source nobody
-        // reads is a planning bug, not something to quietly skip: it would shift
-        // every later count onto the wrong source.
-        let mut converters = Vec::with_capacity(sources.len());
-        for (i, (s, senders)) in sources.iter().zip(senders_by_source).enumerate() {
-            if senders.is_empty() {
-                return Err(AlignerError::Validation(format!(
-                    "internal: converted source {i} ({}) has no aligner instance reading it",
-                    s.input.display()
-                )));
-            }
-            let (input, kind, id_suffix) = (s.input.clone(), s.kind, s.id_suffix);
-            let opts = opts.clone();
-            converters.push(std::thread::spawn(move || {
-                converter_thread(input, fasta, opts, kind, id_suffix, senders)
-            }));
         }
 
         Ok(StreamedConversion {
@@ -550,6 +576,149 @@ impl Drop for StreamedConversion {
     }
 }
 
+/// Start one converter thread per source, fanning each out to the consumers that
+/// demand it, and hand back one receiver per consumer.
+///
+/// The half of the machinery that has nothing to do with pipes: both the FIFO path
+/// ([`StreamedConversion`]) and the in-process path ([`InMemoryConversion`]) need
+/// exactly this, and neither should own a second copy of it.
+///
+/// Every source must have at least one consumer. A source nobody reads is a
+/// planning bug, not something to skip quietly: it would shift every later count
+/// onto the wrong source in the caller's banner.
+type Converters = (Vec<Receiver<Arc<[u8]>>>, Vec<JoinHandle<Result<u64>>>);
+
+fn spawn_converters(
+    fasta: bool,
+    opts: &ConvertOptions,
+    sources: &[ConvSource],
+    demands: &[usize],
+) -> Result<Converters> {
+    let mut receivers = Vec::with_capacity(demands.len());
+    let mut senders_by_source: Vec<Vec<SyncSender<Arc<[u8]>>>> = vec![Vec::new(); sources.len()];
+    for (consumer, &src) in demands.iter().enumerate() {
+        let s = sources.get(src).ok_or_else(|| {
+            AlignerError::Validation(format!(
+                "internal: consumer {consumer} demands converted source {src}, but only {} were \
+                 planned",
+                sources.len()
+            ))
+        })?;
+        let _ = s;
+        let (tx, rx) = sync_channel::<Arc<[u8]>>(CHANNEL_DEPTH);
+        senders_by_source[src].push(tx);
+        receivers.push(rx);
+    }
+
+    let mut converters = Vec::with_capacity(sources.len());
+    for (i, (s, senders)) in sources.iter().zip(senders_by_source).enumerate() {
+        if senders.is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "internal: converted source {i} ({}) has no aligner instance reading it",
+                s.input.display()
+            )));
+        }
+        let (input, kind, id_suffix) = (s.input.clone(), s.kind, s.id_suffix);
+        let opts = opts.clone();
+        converters.push(std::thread::spawn(move || {
+            converter_thread(input, fasta, opts, kind, id_suffix, senders)
+        }));
+    }
+    Ok((receivers, converters))
+}
+
+/// The reading end of one consumer's channel, as a [`Read`].
+///
+/// Compiled only with the in-process backend, which is the only consumer that can
+/// take its reads without a file or a pipe between it and the converter.
+///
+/// Lets an in-process aligner consume converted reads with no file and no pipe
+/// between it and the converter. The bytes are the same bytes the file path would
+/// have written, so the reader on the far side is unchanged.
+#[cfg(feature = "rammap-inprocess")]
+pub(crate) struct ChannelReader {
+    rx: Receiver<Arc<[u8]>>,
+    block: Arc<[u8]>,
+    pos: usize,
+}
+
+#[cfg(feature = "rammap-inprocess")]
+impl std::io::Read for ChannelReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.pos >= self.block.len() {
+            match self.rx.recv() {
+                Ok(next) => {
+                    self.block = next;
+                    self.pos = 0;
+                }
+                // Every sender dropped: the conversion finished. EOF.
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = (self.block.len() - self.pos).min(out.len());
+        out[..n].copy_from_slice(&self.block[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+/// An in-flight conversion delivered **in memory**, with no file and no FIFO.
+///
+/// The in-process rammap backend runs in this process and reads its converted
+/// reads through a [`BufRead`](std::io::BufRead). Pointing it at a temp file meant
+/// the converter serialised records to disk so that the very same process could
+/// parse them back — a round trip through the filesystem that never left the
+/// program. A FIFO would remove the disk but keep the syscalls; this removes both.
+///
+/// The conversion loop is the same one the file path runs, so the bytes the
+/// aligner sees are unchanged.
+#[cfg(feature = "rammap-inprocess")]
+pub(crate) struct InMemoryConversion {
+    converters: Vec<JoinHandle<Result<u64>>>,
+}
+
+#[cfg(feature = "rammap-inprocess")]
+impl InMemoryConversion {
+    /// Start converting `sources`, returning one reader per consumer (in `demands`
+    /// order) alongside the handle used to collect the counts.
+    pub(crate) fn start(
+        fasta: bool,
+        opts: &ConvertOptions,
+        sources: &[ConvSource],
+        demands: &[usize],
+    ) -> Result<(Vec<ChannelReader>, Self)> {
+        let (receivers, converters) = spawn_converters(fasta, opts, sources, demands)?;
+        let readers = receivers
+            .into_iter()
+            .map(|rx| ChannelReader {
+                rx,
+                block: Arc::from(Vec::new()),
+                pos: 0,
+            })
+            .collect();
+        Ok((readers, InMemoryConversion { converters }))
+    }
+
+    /// Join every converter, returning the per-source record count in `sources`
+    /// order. Call it only after every reader has been drained or dropped.
+    pub(crate) fn finish(self) -> Result<Vec<u64>> {
+        let mut first_err = None;
+        let mut counts = Vec::with_capacity(self.converters.len());
+        for h in self.converters {
+            match join(h) {
+                Ok(n) => counts.push(n),
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(counts),
+        }
+    }
+}
+
 /// Join one worker, mapping a panic to a loud error rather than a silent loss.
 fn join<T>(h: JoinHandle<Result<T>>) -> Result<T> {
     match h.join() {
@@ -634,8 +803,8 @@ mod tests {
     fn create_then_unlink_round_trip() {
         let tmp = TempDir::new().unwrap();
         let names = vec![
-            fifo_name("r1_C_to_T.fastq", 0),
-            fifo_name("r1_C_to_T.fastq", 1),
+            fifo_name("r1_C_to_T.fastq", 0, 0),
+            fifo_name("r1_C_to_T.fastq", 1, 0),
         ];
         let paths: Vec<PathBuf>;
         {
@@ -658,8 +827,8 @@ mod tests {
         // so its mkfifo fails; the first pipe must not survive the error.
         let tmp = TempDir::new().unwrap();
         let names = vec![
-            fifo_name("ok.fastq", 0),
-            format!("no_such_dir/{}", fifo_name("bad.fastq", 1)),
+            fifo_name("ok.fastq", 0, 0),
+            format!("no_such_dir/{}", fifo_name("bad.fastq", 1, 0)),
         ];
         assert!(FifoSet::create(tmp.path(), &names).is_err());
         assert!(!tmp.path().join(&names[0]).exists());
@@ -929,6 +1098,81 @@ mod tests {
         assert_eq!(got, expected);
     }
 
+    /// The in-memory path must deliver exactly the bytes the file path would have
+    /// written, for every consumer, from one conversion pass.
+    ///
+    /// This is the same gate as `streamed_bytes_match_the_converted_file`, for the
+    /// sink that has no pipe in it. The in-process backend parses these bytes with
+    /// the same reader it used on the file, so equal bytes means equal alignments.
+    #[test]
+    #[cfg(feature = "rammap-inprocess")]
+    fn in_memory_bytes_match_the_converted_file() {
+        use std::io::Read;
+
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let expected = std::fs::read(
+            crate::aligner::convert::bisulfite_convert_fastq_se(&input, tmp.path(), &o)
+                .unwrap()
+                .path,
+        )
+        .unwrap();
+        assert!(
+            expected.len() > BLOCK_BYTES * 2,
+            "fixture must span several blocks"
+        );
+
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        // Two consumers off one source, as directional single-end does.
+        let (readers, conversion) =
+            InMemoryConversion::start(false, &o, &sources, &[0, 0]).unwrap();
+
+        // Drain both concurrently: the fan-out is bounded, so reading one to the
+        // end before starting the other would stall the shared conversion pass.
+        let handles: Vec<_> = readers
+            .into_iter()
+            .map(|mut r| {
+                std::thread::spawn(move || {
+                    let mut got = Vec::new();
+                    r.read_to_end(&mut got).unwrap();
+                    got
+                })
+            })
+            .collect();
+        let got: Vec<Vec<u8>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let counts = conversion.finish().unwrap();
+
+        assert_eq!(counts, vec![20_000]);
+        for (c, bytes) in got.iter().enumerate() {
+            assert_eq!(bytes, &expected, "consumer {c} received different bytes");
+        }
+    }
+
+    /// A reader dropped without being drained must not wedge the converter, so an
+    /// aborted run can still be torn down.
+    #[test]
+    #[cfg(feature = "rammap-inprocess")]
+    fn in_memory_readers_can_be_dropped_undrained() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let (readers, conversion) = InMemoryConversion::start(false, &o, &sources, &[0]).unwrap();
+        drop(readers); // never read a byte
+        // The converter sees its consumer go away and stops; `finish` reports that
+        // rather than blocking for ever.
+        let _ = conversion.finish();
+    }
+
     /// Paired-end shape: two sources (one per mate), two consumers each, one
     /// conversion pass per mate — four pipes, two passes.
     #[test]
@@ -992,8 +1236,8 @@ mod tests {
 
     #[test]
     fn fifo_names_are_slot_scoped_and_pid_scoped() {
-        let a = fifo_name("x_C_to_T.fastq", 0);
-        let b = fifo_name("x_C_to_T.fastq", 3);
+        let a = fifo_name("x_C_to_T.fastq", 0, 0);
+        let b = fifo_name("x_C_to_T.fastq", 3, 0);
         assert_ne!(a, b);
         assert!(a.starts_with("x_C_to_T."));
         assert!(a.contains(".fifo."));
@@ -1002,6 +1246,76 @@ mod tests {
             a.ends_with(".fastq"),
             "the format extension must stay last, for tools that sniff by name: {a}"
         );
-        assert!(fifo_name("noext", 0).ends_with(".fifo"));
+        assert!(fifo_name("noext", 0, 0).ends_with(".fifo"));
+    }
+
+    /// A long sample name must not push the pipe name past what the filesystem
+    /// will take. Without the cap, a name that worked as a FILE could fail
+    /// `mkfifo` mid-run, which is the whole reason the cap exists.
+    #[test]
+    fn fifo_names_stay_short_for_any_input_name() {
+        let long = format!("{}_C_to_T.fastq", "s".repeat(400));
+        let name = fifo_name(&long, 3, 0);
+        assert!(
+            name.len() < 120,
+            "capped name should stay well inside NAME_MAX, got {} bytes",
+            name.len()
+        );
+        assert!(name.ends_with(".fastq"), "{name}");
+        assert!(name.contains(".fifo."), "{name}");
+        // Still recognisable: the leading run of the original name survives.
+        assert!(name.starts_with("ssss"), "{name}");
+    }
+
+    /// Two concurrent chunks of the SAME long-named input must not agree on a path.
+    ///
+    /// `--multicore N` runs its chunks concurrently in one process, so the pid and
+    /// the slot numbers repeat. The names differ only by `.temp.<i>` at the END of
+    /// the basename, which is exactly what `NAME_STEM_CAP` truncates. Before the
+    /// set id, both chunks produced the same path, and since `mkfifo` unlinks
+    /// first, the second chunk would delete the first's live pipe and both would
+    /// write into one: interleaved reads, wrong output, no error.
+    #[test]
+    fn concurrent_chunks_of_a_long_named_input_get_distinct_paths() {
+        let long = "S".repeat(200);
+        let chunk0 = format!("{long}.temp.0_C_to_T.fastq");
+        let chunk1 = format!("{long}.temp.1_C_to_T.fastq");
+        // Same slot, same process: only the set id can tell them apart.
+        assert_eq!(
+            fifo_name(&chunk0, 0, 7),
+            fifo_name(&chunk1, 0, 7),
+            "the truncated names DO collide; that is the premise of this test"
+        );
+        assert_ne!(
+            fifo_name(&chunk0, 0, 7),
+            fifo_name(&chunk1, 0, 8),
+            "distinct sets must produce distinct paths regardless of the name"
+        );
+    }
+
+    /// Every set id this process hands out is distinct, including across threads.
+    #[test]
+    fn fifo_set_ids_are_unique_per_process() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..64).map(|_| next_fifo_set()).collect::<Vec<_>>()))
+            .collect();
+        let mut all: Vec<u64> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
+        let total = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), total, "set ids must never repeat");
+    }
+
+    /// The cap must fall on a character boundary, or a non-ASCII sample name
+    /// would panic the run rather than align it.
+    #[test]
+    fn fifo_names_cap_on_a_char_boundary() {
+        let long = format!("{}.fastq", "é".repeat(200));
+        let name = fifo_name(&long, 0, 0);
+        assert!(name.ends_with(".fastq"), "{name}");
+        assert!(name.len() < 200, "got {} bytes", name.len());
     }
 }

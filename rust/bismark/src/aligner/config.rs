@@ -419,15 +419,21 @@ pub struct StreamConverted {
 /// filesystem. The `--temp_dir` FIFO probe is applied later, in `run` (I/O, and
 /// this runs in every `resolve` unit test).
 ///
-/// Only Bowtie 2 and minimap2 are streamed: both are verified to accept a FIFO
-/// for `-U` / `-1` / `-2` and to produce byte-identical records from one
-/// (`plans/09112026_stream-converted/SPIKE.md`). HISAT2 **rejects** a FIFO
-/// outright (exit 255), and rammap is unverified either way, so both keep files.
+/// Bowtie 2 and minimap2 are streamed through FIFOs: both are verified to accept
+/// one for `-U` / `-1` / `-2` and to produce byte-identical records from it
+/// (`plans/09112026_stream-converted/SPIKE.md`). HISAT2 **rejects** a FIFO outright
+/// (exit 255), so it keeps files.
+///
+/// `rammap_in_memory` is the in-process rammap backend, which is a third case: it
+/// aligns inside this process, so it needs no file AND no pipe — the converter
+/// hands it the reads directly. The SUBPROCESS rammap backend keeps files, because
+/// whether the external binary accepts a FIFO is unverified.
 pub fn resolve_stream_converted(
     no_stream_converted: bool,
     aligner: Aligner,
     combined_index: bool,
     five_base: bool,
+    rammap_in_memory: bool,
 ) -> StreamConverted {
     let no = |reason: &str| StreamConverted {
         enabled: false,
@@ -456,8 +462,15 @@ pub fn resolve_stream_converted(
                  sniffing the format)",
             );
         }
+        Aligner::Rammap if rammap_in_memory => {
+            // The in-process backend aligns inside this process, so it takes the
+            // converted reads in memory — no temp file, and no pipe either.
+        }
         Aligner::Rammap => {
-            return no("the rammap backend reads its converted reads directly, not as a stream");
+            return no(
+                "the subprocess rammap backend reads its converted reads from a file (only the \
+                 in-process backend takes them in memory)",
+            );
         }
     }
     if combined_index {
@@ -1062,6 +1075,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 || cli.combined_index_single_pass
                 || cli.combined_index_parallel,
             cli.illumina_5base,
+            // The in-process rammap backend takes its reads in memory; the
+            // subprocess one does not. ONE predicate, shared with the routing in
+            // `process_se_chunk`, so the two can never disagree.
+            crate::aligner::inprocess_rammap_selected(aligner, cli.rammap_subprocess, format),
         ),
         // rev2: opt-OUT to the subprocess rammap backend (guarded above: requires --rammap).
         rammap_subprocess: cli.rammap_subprocess,

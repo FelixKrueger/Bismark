@@ -1255,6 +1255,13 @@ fn process_se_chunk(
 ) -> Result<Vec<convert::ConvertedReads>> {
     let bt2 = &config.detected_aligner.path;
     let read_file = input.to_string_lossy();
+    // #1120: the in-process rammap backend aligns inside THIS process, so it needs
+    // neither a temp file nor a pipe — the converter hands it the reads in memory.
+    // Checked before the FIFO path, which would put a needless pipe in the middle.
+    #[cfg(feature = "rammap-inprocess")]
+    if use_se_inprocess_rammap(config) && config.stream_converted.enabled {
+        return process_se_chunk_inprocess(config, genome, refid, input, opts, sinks, counters);
+    }
     // #1120: stream the converted reads straight into the aligner instead of
     // writing them, when the run supports it (resolved once, in `run`).
     if config.stream_converted.enabled {
@@ -1281,10 +1288,26 @@ fn process_se_chunk(
     // short-circuit routes the in-process rammap path here for ANY `--multicore N`). Only
     // FastA falls through to the subprocess path (the stream is FastQ-only; see
     // `use_se_inprocess_rammap` + the never-silent notice in `run`).
+
+    // The in-process rammap backend over converted FILES — reached only when
+    // `--no_stream_converted` turned the in-memory path off.
     #[cfg(feature = "rammap-inprocess")]
     if use_se_inprocess_rammap(config) {
         let pbat = matches!(config.library, LibraryType::Pbat);
-        let mut streams = build_se_inprocess_streams(config, &converted)?;
+        let mut readers: Vec<Option<Box<dyn BufRead>>> = se_instance_plan(config.library)
+            .into_iter()
+            .map(|(_o, _i, file_idx)| {
+                let path = &converted[file_idx].path;
+                let f = File::open(path)?;
+                let r: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
+                    Box::new(BufReader::new(MultiGzDecoder::new(f)))
+                } else {
+                    Box::new(BufReader::new(f))
+                };
+                Ok(Some(r))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut streams = build_se_inprocess_streams(config, &mut readers)?;
         drive_merge(
             input,
             &mut streams,
@@ -1453,6 +1476,84 @@ fn process_se_chunk_streamed(
     Ok(Vec::new())
 }
 
+/// [`process_se_chunk`] for the in-process rammap backend, with the converted
+/// reads handed over **in memory** (#1120).
+///
+/// This backend aligns inside the Bismark process. Pointing it at a temp file made
+/// the converter serialise records to disk so that the same process could parse
+/// them straight back — a round trip through the filesystem that never left the
+/// program. A FIFO would remove the disk but keep the syscalls and a writer thread
+/// per instance; an in-memory channel removes both.
+///
+/// One reader per instance, fed by one conversion pass per source, exactly as the
+/// FIFO path fans out. The conversion loop is the shared one, so the bytes this
+/// backend parses are the bytes the file path would have written.
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[cfg(feature = "rammap-inprocess")]
+#[allow(clippy::too_many_arguments)]
+fn process_se_chunk_inprocess(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = se_instance_plan(config.library);
+    let kinds = se_conv_kinds(config.library);
+    let sources: Vec<stream::ConvSource> = kinds
+        .iter()
+        .map(|&kind| stream::ConvSource {
+            input: input.to_path_buf(),
+            kind,
+            id_suffix: b"", // single-end: no /1/1 or /2/2 tag
+        })
+        .collect();
+    let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
+
+    let (readers, conversion) = stream::InMemoryConversion::start(fasta, opts, &sources, &demands)?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Converting {} in memory for {} in-process instance(s) (no temp file written)",
+            conv_label_for(source.kind),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    let mut boxed: Vec<Option<Box<dyn BufRead>>> = readers
+        .into_iter()
+        .map(|r| Some(Box::new(BufReader::new(r)) as Box<dyn BufRead>))
+        .collect();
+    let mut streams = build_se_inprocess_streams(config, &mut boxed)?;
+
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    )?;
+    // Drop the streams (and their readers) before joining: a converter still
+    // holding a block for a reader nobody drained would never finish.
+    drop(streams);
+
+    for (source, count) in sources.iter().zip(conversion.finish()?) {
+        eprintln!(
+            "Converted {} version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            input.display(),
+        );
+    }
+    Ok(Vec::new())
+}
+
 /// Whether the SE in-process rammap path drives this run (epic 06152026; #995; rev2 Alt-1).
 ///
 /// Unconditional + `cfg!`-gated (NOT `#[cfg]`-gated) on purpose, so it (a) returns
@@ -1487,7 +1588,7 @@ fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
 /// is `!subprocess_opt_out` — in-process is the DEFAULT, subprocess is the `--rammap_subprocess`
 /// opt-out. No `multicore` term (#995: the in-process path is N-threaded; fork-worker safety
 /// is via the `pipeline()` short-circuit + the `aligner == Rammap` conjunct).
-fn inprocess_rammap_selected(
+pub(crate) fn inprocess_rammap_selected(
     aligner: Aligner,
     subprocess_opt_out: bool,
     format: ReadFormat,
@@ -1526,7 +1627,7 @@ fn rammap_preset(p: Mm2Preset) -> ::rammap::Preset {
 #[cfg(feature = "rammap-inprocess")]
 fn build_se_inprocess_streams(
     config: &RunConfig,
-    converted: &[convert::ConvertedReads],
+    readers: &mut [Option<Box<dyn BufRead>>],
 ) -> Result<Vec<crate::aligner::inprocess::InProcessAlignerStream<Box<dyn BufRead>>>> {
     use std::sync::Arc;
 
@@ -1585,7 +1686,9 @@ fn build_se_inprocess_streams(
     );
 
     let mut streams = Vec::with_capacity(plan.len());
-    for (_orientation, index_choice, file_idx) in plan {
+    // One reader per INSTANCE, not per converted source: directional SE has both
+    // instances reading the same source, and a reader can be consumed only once.
+    for (consumer, (_orientation, index_choice, _file_idx)) in plan.into_iter().enumerate() {
         let aligner = match index_choice {
             IndexChoice::Ct => Arc::clone(
                 ct.as_ref()
@@ -1596,14 +1699,17 @@ fn build_se_inprocess_streams(
                     .expect("GA index loaded because the plan references it"),
             ),
         };
-        // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
-        let path = &converted[file_idx].path;
-        let f = File::open(path)?;
-        let reader: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(f)))
-        } else {
-            Box::new(BufReader::new(f))
-        };
+        // The converted reads for this instance. #1120: these now arrive in memory
+        // from the converter thread, so nothing is written to (or read back from)
+        // the temp dir on this path.
+        let reader = readers
+            .get_mut(consumer)
+            .and_then(Option::take)
+            .ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "internal: no converted reader for in-process instance {consumer}"
+                ))
+            })?;
         streams.push(crate::aligner::inprocess::InProcessAlignerStream::new(
             aligner,
             reader,
@@ -7437,7 +7543,15 @@ mod tests {
                     reads: vec!["conv.fastq".into()],
                 },
             );
-            let streams = build_se_inprocess_streams(&config, &converted).unwrap();
+            // One reader per INSTANCE (directional SE = 2), both over the same
+            // converted file — the shape `build_se_inprocess_streams` now takes.
+            let mut readers: Vec<Option<Box<dyn BufRead>>> = (0..2)
+                .map(|_| {
+                    let f = File::open(&converted[0].path).unwrap();
+                    Some(Box::new(BufReader::new(f)) as Box<dyn BufRead>)
+                })
+                .collect();
+            let streams = build_se_inprocess_streams(&config, &mut readers).unwrap();
             // EVERY stream, not just the first: directional SE loads BOTH indexes (CT for
             // the OT instance, GA for CTOB), so a preset reaching only one of them would
             // bias the merge's best-instance choice while a `streams[0]`-only assertion
