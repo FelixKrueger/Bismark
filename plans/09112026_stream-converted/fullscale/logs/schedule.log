@@ -34,3 +34,8 @@ error: I/O error: No space left on device (os error 28)
   stream  exit 0   records 2398276
 
 ### SECTION 7: ALL PASS
+snapshot committed: section 7 edge probes -> fd5f4c3 validation: section 7 edge probes (#1120 full-scale)
+snapshot pushed: fd5f4c3
+
+########## S3 C1/C2 pe_nondirectional_p4 @10M  [15:10:16] ##########
+### pe_nondirectional_p4 — 1 rep(s), serial, arm order alternating per rep

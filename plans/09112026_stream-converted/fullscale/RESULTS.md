@@ -146,3 +146,54 @@ costing nothing. It does not need the knob turned.
 Thread counts corroborate: the file arm steps 20 → 15 at t=1761 s as an instance exits, while
 the streamed arm holds 26 until both finish at t=2944 s.
 
+
+### 4.2 Section 7 — the cases only a big run can reach (2026-09-11)
+
+All three pass. Log: `logs/edge.log`.
+
+#### 7.2 A genuinely constrained `--temp_dir` — **the premise, demonstrated**
+
+`FULLSCALE.md` calls this "the whole point of the feature, and nothing has demonstrated it
+yet". It has now. A 512 MiB tmpfs as `--temp_dir`, against 2M read pairs whose converted set
+needs roughly twice that:
+
+| arm | exit | records |
+|---|---|---|
+| files (`--no_stream_converted`) | **1** — `I/O error: No space left on device (os error 28)` | 0 |
+| streamed (default) | **0** | 2,398,276 |
+
+One converted copy of R1 alone is 318 MiB and the file arm needs two, so 512 MiB cannot hold
+them. The file arm dies; the streamed arm completes normally and produces a full result set.
+This is the feature working as designed on a disk-constrained scratch, which is the case it
+exists for.
+
+#### 7.1 Long sample names under `--multicore`
+
+FIFO names cap the stem at `NAME_STEM_CAP` (64 bytes) and path uniqueness comes from a
+process-wide counter rather than the name. A collision would surface as interleaved or
+truncated output rather than an error, so exit code alone proves nothing — this compares
+alignment columns against a short-named control.
+
+| run | basename | exit | records |
+|---|---|---|---|
+| control | 26 chars | 0 | 2,398,276 |
+| long name | **203 chars**, `--multicore 4` | 0 | 2,398,276 |
+
+Alignment-identical. **PASS** — the fix that had unit tests but had never run at scale holds.
+
+#### 7.3 Thread and FD counts
+
+Measured across the whole process tree under the widest fan-out available
+(`--non_directional --multicore 2` — 4 converted streams and 8 pipes, concurrently):
+
+| | peak | limit |
+|---|---|---|
+| open FDs | **73** | 65,535 soft — **0.1 % used** |
+| threads | 35 | — |
+| processes | 9 | — |
+
+**PASS**, with three orders of magnitude of headroom. Nothing approaches a ulimit.
+
+Worth noting from the same run: all four conversion streams logged
+`no temp file written`, so non-directional paired-end under `--multicore` streams every one
+of its eight pipes.
