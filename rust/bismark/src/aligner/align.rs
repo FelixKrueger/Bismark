@@ -303,6 +303,16 @@ fn build_pe_argv(
 pub struct UnprimedAlignerStream(AlignerStream);
 
 impl UnprimedAlignerStream {
+    /// Has this child already exited, and with what status?
+    ///
+    /// Non-blocking. Used between the spawn and prime steps of the streaming path
+    /// (#1120) to tell "still starting up" from "died without ever opening its
+    /// FIFO" — the latter would otherwise park a writer forever and silently
+    /// starve every sibling instance sharing the conversion pass.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.0.child.try_wait()?)
+    }
+
     /// Read past the `@` header to the first alignment record — the second half
     /// of [`AlignerStream::spawn`]. Blocks until the aligner produces output, so
     /// on the streaming path every child must already be spawned.
@@ -603,6 +613,16 @@ pub struct PairedAlignerStream {
 pub struct UnprimedPairedAlignerStream(PairedAlignerStream);
 
 impl UnprimedPairedAlignerStream {
+    /// Has this child already exited, and with what status?
+    ///
+    /// Non-blocking. Used between the spawn and prime steps of the streaming path
+    /// (#1120) to tell "still starting up" from "died without ever opening its
+    /// FIFO" — the latter would otherwise park a writer forever and silently
+    /// starve every sibling instance sharing the conversion pass.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.0.child.try_wait()?)
+    }
+
     /// Read past the `@` header to the first alignment *pair* (Perl 6477–6488).
     pub fn prime(mut self) -> Result<PairedAlignerStream> {
         let mut line1 = String::new();

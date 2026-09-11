@@ -1414,6 +1414,13 @@ fn process_se_chunk_streamed(
             streamed.path(consumer),
         )?);
     }
+    // Every pipe must find its reader before we read from any child: a child that
+    // died during start-up would otherwise park its writer, stall the shared
+    // conversion pass on its unconsumed channel, and starve its siblings — a
+    // silent hang where the file path fails loudly. One FIFO per instance here,
+    // so consumer index == child index.
+    streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
+
     let mut streams = Vec::with_capacity(unprimed.len());
     for u in unprimed {
         streams.push(u.prime()?);
@@ -5154,6 +5161,10 @@ fn process_pe_chunk_streamed(
             )?,
         ));
     }
+    // Same reader handshake as the SE sibling; here each child owns TWO pipes
+    // (`-1` = consumer 2i, `-2` = consumer 2i+1), so both map back to child i.
+    streamed.await_readers(|consumer| unprimed[consumer / 2].1.try_wait())?;
+
     let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
     for (slot, u) in unprimed {
         streams[slot] = Some(u.prime()?);

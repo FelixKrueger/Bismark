@@ -1786,7 +1786,13 @@ impl RunConfig {
         // #1120: which side of the streaming decision this run landed on. The
         // *reason* for a fallback is printed separately by `run` (never-silent);
         // this line just states the resolved fact.
-        let converted = if self.stream_converted.enabled {
+        //
+        // Three states, not two: 5-Base aligns to the UNCONVERTED genome, so it
+        // has no converted reads to stream OR to write, and reporting it as
+        // "written to the temp dir as files" would name files that never exist.
+        let converted = if self.five_base {
+            "none (5-Base aligns the raw reads to the unconverted genome)"
+        } else if self.stream_converted.enabled {
             "streamed to the aligner through FIFOs (no temp files)"
         } else {
             "written to the temp dir as files"

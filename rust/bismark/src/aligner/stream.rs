@@ -25,6 +25,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread::JoinHandle;
 
@@ -43,8 +45,14 @@ fn mkfifo(path: &Path) -> Result<()> {
         AlignerError::Validation(format!("could not run mkfifo for {}: {e}", path.display()))
     })?;
     if !status.success() {
+        // Reachable after the start-up probe succeeded: the probe uses a short
+        // fixed name, so it cannot predict `ENAMETOOLONG` on a real converted name
+        // (which adds `.s<slot>.<pid>.fifo`, and `.temp.<i>` again under
+        // `--multicore`), nor a temp dir that fills or goes read-only mid-run.
+        // Name the escape hatch, since the error text is otherwise opaque.
         return Err(AlignerError::Validation(format!(
-            "mkfifo {} failed ({status})",
+            "mkfifo {} failed ({status}); re-run with --no_stream_converted to write the \
+             converted reads as files instead",
             path.display()
         )));
     }
@@ -168,6 +176,20 @@ const BLOCK_BYTES: usize = 256 * 1024;
 /// if that measurement ever says so (PLAN D-6).
 const CHANNEL_DEPTH: usize = 4;
 
+/// Writer lifecycle states, as seen from outside the writer thread.
+///
+/// A plain shared cell rather than a channel, because **two** readers need this
+/// answer — the pre-prime reader handshake and the teardown — and a channel is
+/// one-shot: whichever asked first would consume it and leave the other guessing.
+mod writer_state {
+    /// Still blocked in open-for-write; nothing has opened the pipe for read.
+    pub const PARKED: u8 = 0;
+    /// Past the open — a reader arrived.
+    pub const OPENED: u8 = 1;
+    /// The open itself failed; nobody will ever be its reader.
+    pub const OPEN_FAILED: u8 = 2;
+}
+
 /// One converted read stream to produce: an input file, a substitution, and the
 /// paired-end read-number tag (`b""` for single-end).
 ///
@@ -189,12 +211,12 @@ pub(crate) struct ConvSource {
 /// Every consumer gets the same bytes, so the aligner sees byte-for-byte what the
 /// file path would have written for it.
 struct FanOut {
-    senders: Vec<SyncSender<Vec<u8>>>,
+    senders: Vec<SyncSender<Arc<[u8]>>>,
     buf: Vec<u8>,
 }
 
 impl FanOut {
-    fn new(senders: Vec<SyncSender<Vec<u8>>>) -> Self {
+    fn new(senders: Vec<SyncSender<Arc<[u8]>>>) -> Self {
         FanOut {
             senders,
             buf: Vec::with_capacity(BLOCK_BYTES + 4096),
@@ -202,13 +224,19 @@ impl FanOut {
     }
 
     fn send_block(&mut self) -> std::io::Result<()> {
-        let block = std::mem::replace(&mut self.buf, Vec::with_capacity(BLOCK_BYTES + 4096));
+        // One allocation per block, shared by every consumer: `Arc<[u8]>` makes the
+        // fan-out a refcount bump rather than a deep copy per instance (four copies
+        // per block for non-directional paired-end).
+        let block: Arc<[u8]> = Arc::from(std::mem::replace(
+            &mut self.buf,
+            Vec::with_capacity(BLOCK_BYTES + 4096),
+        ));
         for tx in &self.senders {
             // A closed receiver means that instance's writer thread gave up —
             // which only happens when its aligner died. Surface it; the child's
             // exit status is the useful half of the diagnostic and is reported
             // by `AlignerStream::finish`.
-            tx.send(block.clone()).map_err(|_| {
+            tx.send(Arc::clone(&block)).map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "an aligner instance stopped reading its converted reads",
@@ -255,11 +283,10 @@ pub(crate) struct StreamedConversion {
     converters: Vec<JoinHandle<Result<u64>>>,
     /// One writer thread per consumer.
     writers: Vec<JoinHandle<Result<()>>>,
-    /// Per consumer: receives one message once that writer's blocking
-    /// open-for-write has returned — i.e. once something opened the pipe for
-    /// read. Nothing received means the writer is still parked in `open`, which
-    /// is what [`drain_unopened`](Self::drain_unopened) exists to resolve.
-    opened: Vec<Receiver<()>>,
+    /// Per consumer: one of [`writer_state`], published by that writer once its
+    /// blocking open-for-write has returned. Read — never consumed — by both the
+    /// reader handshake and the teardown.
+    opened: Vec<Arc<AtomicU8>>,
     /// Declared last so the pipes are unlinked *after* the thread handles are
     /// dropped (Rust drops fields in declaration order).
     _fifos: FifoSet,
@@ -311,16 +338,15 @@ impl StreamedConversion {
         // until the matching aligner child opens the pipe for read.
         let mut writers = Vec::with_capacity(demands.len());
         let mut opened = Vec::with_capacity(demands.len());
-        let mut senders_by_source: Vec<Vec<SyncSender<Vec<u8>>>> = vec![Vec::new(); sources.len()];
+        let mut senders_by_source: Vec<Vec<SyncSender<Arc<[u8]>>>> =
+            vec![Vec::new(); sources.len()];
         for (consumer, &src) in demands.iter().enumerate() {
-            let (tx, rx) = sync_channel::<Vec<u8>>(CHANNEL_DEPTH);
+            let (tx, rx) = sync_channel::<Arc<[u8]>>(CHANNEL_DEPTH);
             senders_by_source[src].push(tx);
             let path = paths[consumer].clone();
-            let (opened_tx, opened_rx) = sync_channel::<()>(1);
-            opened.push(opened_rx);
-            writers.push(std::thread::spawn(move || {
-                writer_thread(path, rx, opened_tx)
-            }));
+            let state = Arc::new(AtomicU8::new(writer_state::PARKED));
+            opened.push(Arc::clone(&state));
+            writers.push(std::thread::spawn(move || writer_thread(path, rx, state)));
         }
 
         // One converter thread per source — every source, in order, so `finish`'s
@@ -354,6 +380,72 @@ impl StreamedConversion {
     /// The FIFO to hand aligner instance `consumer` — its `-U` / `-1` / `-2` path.
     pub(crate) fn path(&self, consumer: usize) -> &Path {
         &self.paths[consumer]
+    }
+
+    /// Block until every consumer has opened its pipe, or until one of them has
+    /// died without doing so.
+    ///
+    /// **This is what keeps a failed instance from hanging the run.** The fan-out
+    /// is bounded, so a consumer that never reads fills its channel after about
+    /// [`CHANNEL_DEPTH`] blocks and then stalls the shared conversion pass — which
+    /// starves every *sibling* instance too. The siblings then block mid-merge on
+    /// a child that is alive but will never receive another read, and nothing ever
+    /// times out. The file path has no such coupling: each instance reads its own
+    /// file, so a dead instance surfaces as a non-zero exit. Without this check the
+    /// streaming path would turn that loud failure into a silent hang.
+    ///
+    /// `child_status` reports whether the child behind a given consumer has
+    /// already exited (`UnprimedAlignerStream::try_wait`). Polled rather than
+    /// timed out on purpose: an aligner loading a mammalian index can legitimately
+    /// take minutes before it opens its reads, so any fixed deadline would be
+    /// either flaky or useless.
+    ///
+    /// Only a **non-zero** exit before opening is fatal. A child that exits
+    /// cleanly without reading its input has produced whatever it was going to
+    /// produce, so the run carries on and the teardown releases its writer — which
+    /// is also what the repo's fake `bowtie2` stubs do.
+    pub(crate) fn await_readers<F>(&self, mut child_status: F) -> Result<()>
+    where
+        F: FnMut(usize) -> Result<Option<std::process::ExitStatus>>,
+    {
+        let mut pending: Vec<usize> = (0..self.opened.len()).collect();
+        while !pending.is_empty() {
+            let mut still_waiting = Vec::with_capacity(pending.len());
+            for &c in &pending {
+                if self.opened[c].load(Ordering::Acquire) != writer_state::PARKED {
+                    continue; // reader arrived (or the open failed outright)
+                }
+                match child_status(c)? {
+                    None => still_waiting.push(c), // still starting up
+                    Some(status) => {
+                        // It may have opened the pipe and exited between the two
+                        // checks, so re-check before drawing any conclusion.
+                        if self.opened[c].load(Ordering::Acquire) != writer_state::PARKED {
+                            continue;
+                        }
+                        if !status.success() {
+                            return Err(AlignerError::Validation(format!(
+                                "an aligner instance exited ({status}) without reading its \
+                                 converted reads from {}; it would have stalled the conversion \
+                                 shared with the other instances",
+                                self.paths[c].display()
+                            )));
+                        }
+                        // Exited CLEANLY without reading its input. Not a failure,
+                        // so the run continues — but it will never open, so stop
+                        // waiting for it; the teardown releases its writer. Real
+                        // aligners always open their inputs; this is the shape of
+                        // the repo's own test stubs, which print SAM records
+                        // without consuming a byte.
+                    }
+                }
+            }
+            pending = still_waiting;
+            if !pending.is_empty() {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        Ok(())
     }
 
     /// Join every writer and converter, returning the per-source record count in
@@ -413,9 +505,15 @@ impl StreamedConversion {
     /// the pipe for read, which means the writer is (or is about to be) parked in
     /// open-for-write, and two opposing opens release each other.
     fn drain_unopened(&mut self) {
-        for (rx, path) in self.opened.iter().zip(&self.paths) {
-            if rx.try_recv().is_ok() {
-                continue; // that writer is past its open; it will end on its own
+        for ((state, path), writer) in self.opened.iter().zip(&self.paths).zip(&self.writers) {
+            // Release ONLY a writer still parked in open. One past it will end on
+            // its own, and opening its pipe here would steal bytes. And a writer
+            // that has already returned — normally, or by panicking before it
+            // published any state — is never coming to the other end, so opening
+            // would block for a writer that does not exist: the very hang this
+            // exists to prevent.
+            if state.load(Ordering::Acquire) != writer_state::PARKED || writer.is_finished() {
+                continue;
             }
             if let Ok(mut f) = std::fs::File::open(path) {
                 std::thread::spawn(move || {
@@ -466,11 +564,19 @@ fn join<T>(h: JoinHandle<Result<T>>) -> Result<T> {
 ///
 /// The `open` blocks until the aligner child opens the pipe for read — that is the
 /// handshake the whole ordering discipline exists to satisfy.
-fn writer_thread(path: PathBuf, rx: Receiver<Vec<u8>>, opened: SyncSender<()>) -> Result<()> {
+fn writer_thread(path: PathBuf, rx: Receiver<Arc<[u8]>>, state: Arc<AtomicU8>) -> Result<()> {
     let fifo = std::fs::OpenOptions::new().write(true).open(&path);
-    // Report that the blocking open is behind us — success or failure — so
-    // `drain_unopened` knows this writer no longer needs releasing.
-    let _ = opened.send(());
+    // Publish that the blocking open is behind us — success or failure — before
+    // doing anything else, so neither the reader handshake nor the teardown can
+    // observe this writer as still parked once it is not.
+    state.store(
+        if fifo.is_ok() {
+            writer_state::OPENED
+        } else {
+            writer_state::OPEN_FAILED
+        },
+        Ordering::Release,
+    );
     let mut fifo = fifo?;
     while let Ok(block) = rx.recv() {
         match fifo.write_all(&block) {
@@ -496,7 +602,7 @@ fn converter_thread(
     opts: ConvertOptions,
     kind: ConvKind,
     id_suffix: &'static [u8],
-    senders: Vec<SyncSender<Vec<u8>>>,
+    senders: Vec<SyncSender<Arc<[u8]>>>,
 ) -> Result<u64> {
     let mut reader = convert::open_reader(&input)?;
     let mut out = FanOut::new(senders);
@@ -680,6 +786,98 @@ mod tests {
         let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
         let counts = streamed.finish().unwrap();
         assert_eq!(counts, vec![20_000]);
+    }
+
+    /// An instance that dies before opening its pipe must be reported, not waited
+    /// on for ever.
+    ///
+    /// This is the silent-hang case: the fan-out is bounded, so a consumer that
+    /// never reads stalls the shared conversion pass and starves its siblings,
+    /// which then block mid-merge on children that are alive but will never get
+    /// another read. Nothing times out. `await_readers` turns it into an error
+    /// naming the instance.
+    ///
+    /// NB no reader is attached here, deliberately. An earlier version of this
+    /// test opened consumer 0 and joined it at the end — which could never
+    /// return, precisely *because* the stalled consumer 1 starves consumer 0.
+    /// That is the bug under test; a test that reproduces it on itself just hangs.
+    #[test]
+    fn await_readers_reports_an_instance_that_died_before_opening() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+
+        let dead = std::process::Command::new("false").status().unwrap();
+        assert!(!dead.success());
+        let err = streamed
+            .await_readers(|consumer| Ok(if consumer == 1 { Some(dead) } else { None }))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("without reading its converted reads"),
+            "must name the failure mode: {msg}"
+        );
+        assert!(
+            msg.contains(".fifo"),
+            "must name which instance's pipe: {msg}"
+        );
+    }
+
+    /// A stub that exits CLEANLY without reading is not a failure: the run
+    /// continues rather than being killed. This is the `aligner_cli` fake shape,
+    /// and getting it wrong took out eight paired-end tests.
+    #[test]
+    fn await_readers_tolerates_an_instance_that_exits_cleanly_without_reading() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+
+        let ok = std::process::Command::new("true").status().unwrap();
+        assert!(ok.success());
+        // Neither pipe is ever opened and both "children" exited 0 — as two stubs
+        // would. This must RETURN, not error and not spin.
+        streamed.await_readers(|_| Ok(Some(ok))).unwrap();
+        streamed.finish().unwrap();
+    }
+
+    /// The happy path of the same handshake: every pipe opened, no child exited,
+    /// `await_readers` returns and the run proceeds.
+    #[test]
+    fn await_readers_returns_once_every_pipe_is_open() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+        let readers: Vec<_> = (0..2)
+            .map(|c| {
+                let p = streamed.path(c).to_path_buf();
+                std::thread::spawn(move || std::fs::read(p).unwrap())
+            })
+            .collect();
+
+        streamed.await_readers(|_| Ok(None)).unwrap();
+
+        for h in readers {
+            assert!(!h.join().unwrap().is_empty());
+        }
+        streamed.finish().unwrap();
     }
 
     /// The same hang, on the error path: dropping without `finish` must not leave
