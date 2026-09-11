@@ -1377,6 +1377,11 @@ fn process_se_chunk_streamed(
         .collect();
     let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
 
+    // DECLARATION ORDER IS LOAD-BEARING: `streamed` must be bound BEFORE the
+    // aligner streams below, so that on an error return it drops LAST — after
+    // `AlignerStream`'s `Drop` has killed and waited every child. Its teardown
+    // reads any FIFO nobody opened, which would steal bytes from a live aligner
+    // if a child were still running. See `StreamedConversion::drain_unopened`.
     let streamed = stream::StreamedConversion::start(
         &config.output.temp_dir,
         fasta,
@@ -5110,6 +5115,8 @@ fn process_pe_chunk_streamed(
         .flat_map(|&(_slot, _orient, _idx, k1, k2)| [index_of(1, k1), index_of(2, k2)])
         .collect();
 
+    // Declaration order is load-bearing here too — see the note in
+    // `process_se_chunk_streamed`.
     let streamed = stream::StreamedConversion::start(
         &config.output.temp_dir,
         fasta,

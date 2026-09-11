@@ -395,9 +395,19 @@ impl StreamedConversion {
     /// real one that dies during start-up — leaves its writer blocked in
     /// open-for-write forever, and joining that writer would hang the whole run.
     /// It is safe to read the pipe ourselves at both call sites, because by then
-    /// every aligner child has been reaped: there is no longer anyone the bytes
+    /// every aligner child has been reaped — there is no longer anyone the bytes
     /// could be stolen from, and the child's own exit status is what reports the
-    /// failure.
+    /// failure. That holds for a different reason on each path, and **both reasons
+    /// are load-bearing**:
+    ///
+    /// - From [`finish`](Self::finish), the caller has already awaited every
+    ///   instance's `AlignerStream::finish`, which `wait()`s the child.
+    /// - From [`drop`](Self::drop), the caller is returning an error, and the
+    ///   `Vec` of streams is declared *after* the `StreamedConversion` in both
+    ///   streaming drivers — so it drops *first*, and `AlignerStream`'s own `Drop`
+    ///   kills and waits each child before this runs. Moving the
+    ///   `StreamedConversion` binding below the streams would silently invert that
+    ///   and let this steal bytes from a live aligner.
     ///
     /// The `open` below cannot block: it is only reached when nothing has opened
     /// the pipe for read, which means the writer is (or is about to be) parked in
@@ -419,10 +429,23 @@ impl StreamedConversion {
 impl Drop for StreamedConversion {
     fn drop(&mut self) {
         // The error path: release any parked writer as above, then detach rather
-        // than join. Detaching is sound because every caller propagates its error
-        // up to `main`, which exits, and a finished `finish()` leaves nothing to
-        // release (`writers` is empty). `_fifos` drops after this, unlinking the
-        // pipes — which is why the release happens here and not afterwards.
+        // than join.
+        //
+        // Detaching (rather than joining) is what keeps a failing chunk from
+        // hanging. A released writer ends on its own — it drains its channel into
+        // the discard reader, or sees the channel disconnect — but waiting for it
+        // here would put an unbounded wait on the error path, which is the one
+        // path that must always make progress. The threads are per-chunk and
+        // finite, and each one is already unblocked by the time we let it go.
+        //
+        // NB `--multicore N` does NOT exit the process on a chunk error: it
+        // collects a `Vec<Result<_>>` and reports the lowest-index failure
+        // (`parallel.rs`), so sibling chunks keep running. Detached threads must
+        // therefore terminate on their own rather than rely on process exit.
+        //
+        // A completed `finish()` leaves nothing to release (`writers` is empty).
+        // `_fifos` drops after this, unlinking the pipes — which is why the
+        // release happens here and not afterwards.
         if !self.writers.is_empty() {
             self.drain_unopened();
         }
