@@ -65,3 +65,12 @@ Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against t
 error: Please select a value for -p of 2 or more!
 
 ### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C1/C2 -p 1 at 2M -> f77601e validation: C1/C2 -p 1 at 2M (#1120 full-scale)
+snapshot pushed: f77601e
+
+########## S6 C3 timing, 5 reps @2M, three shapes  [17:46:32] ##########
+### pe_directional_p4 — 5 rep(s), serial, arm order alternating per rep
+
+########## S5 C1/C2 pe_directional_p2 @2M (FULLSCALE asks -p 1; bismark requires >=2)  [17:52:56] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.

@@ -15,3 +15,7 @@
   pe_directional_p1        rep1              0 records  BAM NO BAM           report IDENTICAL
 
 ### C1: 1 PAIR(S) DIFFER
+  pe_directional_mc2       rep1       12131476 records  BAM IDENTICAL        report IDENTICAL
+  pe_nondirectional_p4     rep1       12131470 records  BAM IDENTICAL        report IDENTICAL
+
+### C1: all pairs identical
