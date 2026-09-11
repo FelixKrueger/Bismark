@@ -1,0 +1,8 @@
+# A/B harness for #1120: the pinned Rust toolchain plus an aligner, so the
+# streaming and file paths can be run against each other end to end.
+# Bowtie 2's exact version does not matter here — both arms use the SAME one, and
+# the comparison is Bismark-vs-Bismark, not Bismark-vs-Perl.
+FROM rust:1.89-bookworm
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bowtie2 samtools \
+ && rm -rf /var/lib/apt/lists/*
