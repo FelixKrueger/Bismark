@@ -148,3 +148,8 @@ snapshot pushed: 8bd0830
   pe_directional_mc2       files  r5  wall   334.65s  peak_conv    667625 KB  peak_temp   1478998 KB  memPeak   17252 MB  pids  43  samples 333  rc=0
 
 ### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C3 timing, 5 reps at 2M, three shapes -> c40edc0 validation: C3 timing, 5 reps at 2M, three shapes (#1120 full-scale)
+snapshot pushed: c40edc0
+
+########## S7 C3 timing, -p 2 reps @2M  [22:56:40] ##########
+### pe_directional_p2 — 3 rep(s) from #2, serial, arm order alternating per rep

@@ -270,3 +270,44 @@ tracks the converted bytes separately for exactly this reason.
 **Memory.** Anonymous peak 14.95 GiB streamed against 18.09 GiB files — a 3.1 GiB saving in
 real allocation, the largest of any shape so far. Two concurrent chunks each reading back
 their own converted files is precisely where the file path costs the most.
+
+### 4.5 C3 with reps — 2,000,000 pairs, 5 interleaved reps per arm (2026-09-11)
+
+Wall time is the claim that needs repetition rather than size, so this runs at 2M pairs where
+a rep costs ten minutes instead of fifty. Every run is still minutes long, far past any
+start-up transient, and arms alternate order between reps.
+
+| shape | n | streamed median | files median | delta |
+|---|---|---|---|---|
+| `pe_directional_p4` | 5 | 603.5 s | 607.5 s | **−0.66 %** |
+| `pe_nondirectional_p4` | 5 | 613.7 s | 617.8 s | **−0.65 %** |
+| `pe_directional_mc2` | 5 | 337.6 s | 337.7 s | **−0.01 %** |
+| `pe_directional_p2` | 1 | 1181.8 s | 1202.8 s | −1.75 % |
+
+Per-rep, sorted (seconds):
+
+| shape | streamed | files |
+|---|---|---|
+| directional | 601.5 603.5 603.5 608.5 609.6 | 604.5 607.5 607.5 610.5 614.5 |
+| non-directional | 603.6 610.7 613.7 614.7 616.7 | 611.7 615.7 617.8 618.8 619.8 |
+| `--multicore 2` | 333.6 335.6 337.6 339.6 340.7 | 334.6 334.7 337.7 338.7 340.7 |
+
+**C3 — PASS. Streaming is never slower, and slightly faster on two of three shapes.** The
+non-directional distributions do not overlap at all: every streamed rep beats every files rep.
+`--multicore 2` is a dead heat (0.01 %, distributions interleaved), which is what a genuine
+null looks like and is a useful control — it says the ~0.65 % elsewhere is not an artefact of
+the harness favouring one arm.
+
+**This overturns §4.3's regression.** The single 10M non-directional run had the streamed arm
+2.4 % slower. With five reps at 2M the same shape is 0.65 % *faster*, 5/5. One of the two is
+scale-dependent and the other is a fluke; n=1 could not tell them apart, which is the entire
+argument for the rep matrix. §4.6 settles it with full-scale reps.
+
+Until then the honest statement is: **no regression is established on any shape**, and the
+one measurement that suggested otherwise has not reproduced.
+
+**C1 at 2M — 16 further pairs, all identical.** Every rep of every shape:
+`pe_directional_p4` ×5, `pe_nondirectional_p4` ×5, `pe_directional_mc2` ×5,
+`pe_directional_p2` ×1. Combined with the three at 10M, **19 arm-pairs are byte-identical**
+with no exceptions. Note the record counts are stable across reps within a shape
+(2,398,276 directional; 2,398,274 non-directional), so the runs are deterministic in both arms.
