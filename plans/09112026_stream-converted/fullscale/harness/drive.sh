@@ -24,12 +24,23 @@ INTERVAL=${INTERVAL:-1}
 CWORK=/fs/$(basename "$WORK")
 
 LOCK=$FS/.bench.lock
+# The lock enforces "one benchmark at a time". It also has to survive its holder
+# being killed: a stale lock once made every later phase refuse instantly and the
+# schedule ran to completion in seconds having measured nothing. So the holder
+# records its pid, and a lock whose holder is gone is reclaimed rather than obeyed.
 if ! mkdir "$LOCK" 2>/dev/null; then
-  echo "REFUSING TO START: $LOCK exists — another benchmark is running." >&2
-  echo "Benchmarks must not overlap (noisy neighbour). Remove it only if stale." >&2
-  exit 1
+  holder=$(cat "$LOCK/pid" 2>/dev/null)
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    echo "REFUSING TO START: benchmark pid $holder still running (lock $LOCK)." >&2
+    echo "Benchmarks must not overlap (noisy neighbour)." >&2
+    exit 1
+  fi
+  echo "NOTE: reclaiming stale lock $LOCK (holder '${holder:-unknown}' is gone)" >&2
+  rm -rf "$LOCK"
+  mkdir "$LOCK" 2>/dev/null || { echo "could not take lock" >&2; exit 1; }
 fi
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+echo $$ > "$LOCK/pid"
+trap 'rm -rf "$LOCK" 2>/dev/null' EXIT INT TERM
 
 mkdir -p "$WORK"
 # run_arm.sh owns the results.tsv header, so the schema is defined in exactly one

@@ -242,3 +242,31 @@ argument for raising `CHANNEL_DEPTH`. See §4.5.
 **Memory.** The file arm's 30.58 GiB total is mostly page cache for its own converted files.
 But its *anonymous* memory is 1.2 GiB higher too, so on this shape streaming saves a little
 real allocation as well — the opposite direction to the concern §2 raised.
+
+### 4.4 `pe_directional_mc2` at 10,000,000 pairs (2026-09-11)
+
+Directional paired-end, `-p 4 --multicore 2` — two concurrent chunks, each with its own pipe
+set.
+
+| | wall | `--temp_dir` peak | of which converted | peak memory, anon | records |
+|---|---|---|---|---|---|
+| **streamed** | **1633.9 s** | 3.92 GiB | **0** | 14.95 GiB | 12,131,476 |
+| **files** | 1642.2 s | 7.09 GiB | **3.19 GiB** | 18.09 GiB | 12,131,476 |
+
+**C1 — PASS, and more than required.** The md5 is `f8129cad…` — *the same digest as §4.1*.
+`--multicore 2` produces output byte-identical to the single-chunk run, in both arms. Chunking
+does not perturb the record stream at all.
+
+**C2 — PASS, with a distinction worth stating.** This is the one shape where the streamed
+arm's `--temp_dir` is *not* empty: it holds 3.92 GiB. That is the `--multicore` input chunk
+splits, which both arms write and which this PR does not touch. The converted payload —
+the thing streaming removes — is 0 against 3.19 GiB. Quoting the temp-dir totals alone
+(3.92 vs 7.09 GiB) would understate the effect and misattribute the remainder; the sampler
+tracks the converted bytes separately for exactly this reason.
+
+**C3 — streamed 8.2 s faster** (0.5 % of ~27 min), the same wash as §4.1. Total CPU 19,800 vs
+19,660 CPU-seconds.
+
+**Memory.** Anonymous peak 14.95 GiB streamed against 18.09 GiB files — a 3.1 GiB saving in
+real allocation, the largest of any shape so far. Two concurrent chunks each reading back
+their own converted files is precisely where the file path costs the most.
