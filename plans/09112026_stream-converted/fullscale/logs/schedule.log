@@ -92,3 +92,7 @@ snapshot pushed: 1833cce
 ########## S8 full-scale reps of both 10M shapes, until the 12:00 guard  [17:53:19] ##########
 REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
 Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: full-scale pe_nondirectional_p4 rep 2 -> 0f6b3d8 validation: full-scale pe_nondirectional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: 0f6b3d8
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
