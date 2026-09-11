@@ -8,6 +8,9 @@ FS=${FS:-/tmp/fs}
 WORK=${WORK:-$FS/run}
 IMAGE=${IMAGE:-bismark-ab}
 REPS=${REPS:-1}
+# Reps are numbered REP_OFFSET .. REP_OFFSET+REPS-1, so a later batch can extend
+# an existing series instead of overwriting rep 1's files.
+REP_OFFSET=${REP_OFFSET:-1}
 SHAPES=${SHAPES:-"pe_directional_p4"}
 R1=${R1:-/fs/data/SRR24766921_10M_1.fastq.gz}
 R2=${R2:-/fs/data/SRR24766921_10M_2.fastq.gz}
@@ -57,8 +60,9 @@ one() { # shape arm rep
 for shape in $SHAPES; do
   [ "$(shape_args "$shape")" = UNKNOWN ] && { echo "unknown shape: $shape" >&2; exit 2; }
   echo "### $shape — $REPS rep(s), serial, arm order alternating per rep"
-  r=1
-  while [ "$r" -le "$REPS" ]; do
+  r=$REP_OFFSET
+  last=$(( REP_OFFSET + REPS - 1 ))
+  while [ "$r" -le "$last" ]; do
     # Alternate which arm goes first. Fixed order would hand the page-cache
     # warm-up penalty to the same arm on every rep.
     if [ $((r % 2)) -eq 1 ]; then order="stream files"; else order="files stream"; fi
