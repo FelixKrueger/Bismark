@@ -17,6 +17,12 @@ R2=${R2:-/fs/data/SRR24766921_10M_2.fastq.gz}
 GENOME=${GENOME:-/fs/genome/GRCm39}
 INTERVAL=${INTERVAL:-1}
 
+# The container sees $FS as /fs, so WORK has to be translated, NOT hardcoded.
+# It was hardcoded to /fs/run once, which sent a 2M batch's output into the 10M
+# run's directories and destroyed one of them. Only the per-phase snapshot into
+# git made that recoverable.
+CWORK=/fs/$(basename "$WORK")
+
 LOCK=$FS/.bench.lock
 if ! mkdir "$LOCK" 2>/dev/null; then
   echo "REFUSING TO START: $LOCK exists — another benchmark is running." >&2
@@ -26,13 +32,18 @@ fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 
 mkdir -p "$WORK"
-[ -f "$WORK/results.tsv" ] || printf 'shape\tarm\trep\twall_s\tpeak_temp_kb\tpeak_conv_kb\tmem_peak_bytes\tcpu_usec\tpids_peak\tout_kb\trc\n' > "$WORK/results.tsv"
+# run_arm.sh owns the results.tsv header, so the schema is defined in exactly one
+# place. Writing it here too is how the file ended up with an 11-column header
+# above 12-column rows.
 
 shape_args() {
   case "$1" in
     pe_directional_p4)    echo "-p 4" ;;
     pe_nondirectional_p4) echo "-p 4 --non_directional" ;;
-    pe_directional_p1)    echo "-p 1" ;;
+    # FULLSCALE.md asks for -p 1 here. Bismark rejects it: "Please select a value
+    # for -p of 2 or more!" (aligner/options.rs:165, matching Perl 7993-8007).
+    # -p 2 is the least-slack configuration that actually runs.
+    pe_directional_p2)    echo "-p 2" ;;
     pe_directional_mc2)   echo "-p 4 --multicore 2" ;;
     *) echo "UNKNOWN" ;;
   esac
@@ -52,14 +63,14 @@ one() { # shape arm rep
   # this run's tree alone.
   docker run --rm -t \
     -v "$FS":/fs -v bismark-target-189:/t \
-    -e R1="$R1" -e R2="$R2" -e GENOME="$GENOME" -e WORK=/fs/run -e INTERVAL="$INTERVAL" \
+    -e R1="$R1" -e R2="$R2" -e GENOME="$GENOME" -e WORK="$CWORK" -e INTERVAL="$INTERVAL" \
     -w /fs "$IMAGE" \
     /fs/bin/run_arm.sh "$1" "$2" "$3" $(shape_args "$1")
 }
 
 for shape in $SHAPES; do
   [ "$(shape_args "$shape")" = UNKNOWN ] && { echo "unknown shape: $shape" >&2; exit 2; }
-  echo "### $shape — $REPS rep(s), serial, arm order alternating per rep"
+  echo "### $shape — $REPS rep(s) from #$REP_OFFSET, serial, arm order alternating per rep"
   r=$REP_OFFSET
   last=$(( REP_OFFSET + REPS - 1 ))
   while [ "$r" -le "$last" ]; do

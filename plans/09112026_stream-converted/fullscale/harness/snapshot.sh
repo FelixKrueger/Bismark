@@ -10,6 +10,13 @@ mkdir -p "$DEST/results" "$DEST/plots" "$DEST/logs"
 for d in run run2m run10m_extra; do
   [ -d "/tmp/fs/$d" ] || continue
   mkdir -p "$DEST/results/$d"
+  # C1 byte-identity for any arm pair that has completed since last time. This
+  # is the primary claim, so it runs on every snapshot rather than at the end.
+  docker run --rm -v /tmp/fs:/fs -v bismark-target-189:/t -e WORK=/fs/$d \
+    bismark-ab /fs/bin/compare.sh >> "/tmp/fs/$d/compare.log" 2>&1
+  [ -f "/tmp/fs/$d/C1.tsv" ] && cp "/tmp/fs/$d/C1.tsv" "$DEST/results/$d/"
+  [ -f "/tmp/fs/$d/compare.log" ] && cp "/tmp/fs/$d/compare.log" "$DEST/results/$d/"
+  cp /tmp/fs/$d/report_diff_*.txt "$DEST/results/$d/" 2>/dev/null
   [ -f "/tmp/fs/$d/results.tsv" ] && cp "/tmp/fs/$d/results.tsv" "$DEST/results/$d/"
   if [ -d "/tmp/fs/$d/series" ]; then
     mkdir -p "$DEST/results/$d/series"; cp /tmp/fs/$d/series/*.tsv "$DEST/results/$d/series/" 2>/dev/null
@@ -40,3 +47,12 @@ plans/09112026_stream-converted/fullscale/RESULTS.md.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 echo "snapshot committed: $LABEL -> $(git log --oneline -1)"
+
+# Push straight away: the point of snapshotting is that a lost session costs at
+# most the phase in flight, and a commit that never left the box does not buy
+# that. Failure here is not fatal — the commit stands and the next phase retries.
+if git push -q fork HEAD:rust/stream-converted 2>&1 | tail -3; then
+  echo "snapshot pushed: $(git log --oneline -1 --format=%h)"
+else
+  echo "snapshot push FAILED (commit is local; will retry next phase)"
+fi

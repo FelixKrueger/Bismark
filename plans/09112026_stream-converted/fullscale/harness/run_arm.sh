@@ -39,7 +39,7 @@ $BIN/bismark --genome "$GENOME" -1 "$R1" -2 "$R2" $extra \
   -o "$out" --temp_dir "$tmp" > "$out/stdout.log" 2> "$out/stderr.log" &
 pid=$!
 
-printf 't_s\ttemp_kb\tout_kb\tconverted_kb\tmem_bytes\tcpu_pct\tpids\tfifos\n' > "$series"
+printf 't_s\ttemp_kb\tout_kb\tconverted_kb\tmem_bytes\tanon_bytes\tcpu_pct\tpids\tfifos\n' > "$series"
 read -r _ prev_cpu < "$CG/cpu.stat"
 prev_us=$t0_us
 
@@ -49,6 +49,10 @@ while kill -0 "$pid" 2>/dev/null; do
   now=$EPOCHREALTIME
   now_us=$(( ${now%.*} * 1000000 + 10#${now#*.} ))
   read -r mem      < "$CG/memory.current"
+  # memory.current counts page cache too, so the file arm looks like it uses
+  # gigabytes more memory when what it actually has is its own converted files
+  # sitting in cache. anon is the allocation that matters for the comparison.
+  read -r _ anon   < "$CG/memory.stat"
   read -r npid     < "$CG/pids.current"
   read -r _ cpu    < "$CG/cpu.stat"
 
@@ -70,9 +74,9 @@ while kill -0 "$pid" 2>/dev/null; do
   prev_cpu=$cpu; prev_us=$now_us
 
   el=$(( now_us - t0_us ))
-  printf '%d.%02d\t%s\t%s\t%s\t%s\t%d.%d\t%s\t%s\n' \
+  printf '%d.%02d\t%s\t%s\t%s\t%s\t%s\t%d.%d\t%s\t%s\n' \
     $(( el / 1000000 )) $(( el % 1000000 / 10000 )) \
-    "$temp_kb" "$out_kb" "$conv_kb" "$mem" \
+    "$temp_kb" "$out_kb" "$conv_kb" "$mem" "$anon" \
     $(( dc / 10 )) $(( dc % 10 )) "$npid" "$fifos" >> "$series"
   sleep "$INTERVAL"
 done
@@ -86,14 +90,17 @@ read -r pids_peak < "$CG/pids.peak"
 read -r _ cpu_tot < "$CG/cpu.stat"
 peak_temp=$(awk -F'\t' 'NR>1 && $2>m {m=$2} END {print m+0}' "$series")
 peak_conv=$(awk -F'\t' 'NR>1 && $4>m {m=$4} END {print m+0}' "$series")
+# printf %d, not print: awk turns a 24-billion-byte value into 2.44536e+10 and
+# throws away the low digits.
+peak_anon=$(awk -F'\t' 'NR>1 && $6>m {m=$6} END {printf "%.0f", m}' "$series")
 final_out=$(du -sk "$out" 2>/dev/null | cut -f1)
 
 # C2: nothing converted may survive in the streamed arm's temp dir.
 leftover=$(find "$tmp" \( -name '*_C_to_T*' -o -name '*_G_to_A*' -o -name '*.fifo.*' \) 2>/dev/null | wc -l)
 
-[ -s "$WORK/results.tsv" ] || printf 'shape\tarm\trep\twall_s\tpeak_temp_kb\tpeak_conv_kb\tmem_peak_bytes\tcpu_usec\tpids_peak\tout_kb\trc\n' > "$WORK/results.tsv"
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-  "$shape" "$arm" "$rep" "$wall" "$peak_temp" "$peak_conv" "$mem_peak" \
+[ -s "$WORK/results.tsv" ] || printf 'shape\tarm\trep\twall_s\tpeak_temp_kb\tpeak_conv_kb\tmem_peak_bytes\tanon_peak_bytes\tcpu_usec\tpids_peak\tout_kb\trc\n' > "$WORK/results.tsv"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$shape" "$arm" "$rep" "$wall" "$peak_temp" "$peak_conv" "$mem_peak" "$peak_anon" \
   "$cpu_tot" "$pids_peak" "${final_out:-0}" "$rc" >> "$WORK/results.tsv"
 
 printf '  %-24s %-6s r%-2s wall %8ss  peak_conv %9s KB  peak_temp %9s KB  memPeak %7s MB  pids %3s  samples %s  rc=%s\n' \
