@@ -197,3 +197,48 @@ Measured across the whole process tree under the widest fan-out available
 Worth noting from the same run: all four conversion streams logged
 `no temp file written`, so non-directional paired-end under `--multicore` streams every one
 of its eight pipes.
+
+### 4.3 `pe_nondirectional_p4` at 10,000,000 pairs (2026-09-11)
+
+Non-directional paired-end, `-p 4` — 4 converted streams and 8 pipes, against the directional
+case's 2 and 4.
+
+| | wall | converted on disk (peak, live) | peak memory, total | peak memory, anon | records |
+|---|---|---|---|---|---|
+| **streamed** | 3045.2 s | **0 KB** | 22.95 GiB | 22.77 GiB | 12,131,470 |
+| **files** | **2973.2 s** | **6.38 GiB** | 30.58 GiB | 23.96 GiB | 12,131,470 |
+
+**C1 — PASS.** md5 over all 12,131,470 records matches; filtered report identical.
+
+**C2 — PASS.** Zero against 6.38 GiB — twice the directional footprint, as expected from four
+converted streams rather than two.
+
+**C3 — streaming is 2.4 % SLOWER on this shape.** 72 seconds on a ~50-minute run. Total CPU
+was near-identical (25,029 vs 24,962 CPU-seconds, 0.3 % apart), so the streamed arm did the
+same work spread over a longer wall.
+
+This is the first cost the feature has shown, and it is the opposite sign to §4.1. The CPU
+traces explain it:
+
+| | early phase (p90) | settles to | tail |
+|---|---|---|---|
+| streamed | 1462 % | flat ~650 % from t=753 s | none — all four finish together |
+| files | 1623 % | ~800 % | drops below 800 % at t=1812 s, coasts out on fewer instances |
+
+The file arm still has the decoupling tail described in §4.1, but here it also front-loads
+harder, and the early advantage more than pays for the tail. With four consumers sharing two
+converted streams there is less slack in the fan-out than with two, so pacing costs something
+where previously it cost nothing.
+
+**Still inside the pass criterion** (§6 asks for "within a few percent") but it is n=1 and it
+wants reps before anyone concludes anything. If 2.4 % proves consistent it is the first real
+argument for raising `CHANNEL_DEPTH`. See §4.5.
+
+> A prediction recorded during the run, and wrong: watching the file arm's CPU collapse to
+> 400 % mid-run, this session expected the tail to make the file arm *slower* overall. It
+> finished 72 s sooner. A visible inefficiency in one phase says nothing about total wall time
+> until the other phases are measured too.
+
+**Memory.** The file arm's 30.58 GiB total is mostly page cache for its own converted files.
+But its *anonymous* memory is 1.2 GiB higher too, so on this shape streaming saves a little
+real allocation as well — the opposite direction to the concern §2 raised.

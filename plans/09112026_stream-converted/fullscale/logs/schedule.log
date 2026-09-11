@@ -43,3 +43,8 @@ snapshot pushed: fd5f4c3
   pe_nondirectional_p4     files  r1  wall  2973.18s  peak_conv   6693466 KB  peak_temp   6693466 KB  memPeak   31330 MB  pids  41  samples 2960  rc=0
 
 ### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: C1/C2 non-directional PE at 10M -> 48421ad validation: C1/C2 non-directional PE at 10M (#1120 full-scale)
+snapshot pushed: 48421ad
+
+########## S4 C1/C2 pe_directional_mc2 @10M  [16:51:08] ##########
+### pe_directional_mc2 — 1 rep(s), serial, arm order alternating per rep
