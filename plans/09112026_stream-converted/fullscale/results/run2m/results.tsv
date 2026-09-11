@@ -1,1 +1,3 @@
-shape	arm	rep	wall_s	peak_temp_kb	peak_conv_kb	mem_peak_bytes	cpu_usec	pids_peak	out_kb	rc
+shape	arm	rep	wall_s	peak_temp_kb	peak_conv_kb	mem_peak_bytes	anon_peak_bytes	cpu_usec	pids_peak	out_kb	rc
+pe_directional_p2	stream	1	1181.78	0	0	9491611648	9220648960	3805189105	25	169256	0
+pe_directional_p2	files	1	1202.83	667625	667625	10759442432	9928200192	3813038977	19	169256	0
