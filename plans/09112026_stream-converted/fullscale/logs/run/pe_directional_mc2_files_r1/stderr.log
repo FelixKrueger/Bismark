@@ -10,8 +10,8 @@ GA index:       /fs/genome/GRCm39/Bisulfite_Genome/GA_conversion/BS_GA
 large index:    false
 FASTA(s):       1 file(s) (Fa)
 aligner_options: -q --score-min L,0,-0.2 -p 4 --reorder --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500
-converted reads: streamed to the aligner through FIFOs (no temp files)
-output:         BAM, dir="/fs/run/out/pe_directional_mc2_stream_r1", basename=None
+converted reads: written to the temp dir as files
+output:         BAM, dir="/fs/run/out/pe_directional_mc2_files_r1", basename=None
 chr 1 (195154279 bp)
 chr 10 (130530862 bp)
 chr 11 (121973369 bp)
@@ -74,10 +74,10 @@ chr GL456368.1 (20208 bp)
 chr MU069434.1 (8412 bp)
 chr JH584295.1 (1976 bp)
 Note: --parallel 2 runs up to 4 concurrent Bowtie 2 instances, each loading a bisulfite index (peak resident bounded by, not equal to, ~15.1 GB of Bowtie 2 index). Memory scales with --parallel; reduce it if memory-limited.
-Streaming C->T converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_1.fastq.gz.temp.1 to 2 aligner instance(s)
-Streaming G->A converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_2.fastq.gz.temp.1 to 2 aligner instance(s)
-Streaming C->T converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_1.fastq.gz.temp.0 to 2 aligner instance(s)
-Streaming G->A converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_2.fastq.gz.temp.0 to 2 aligner instance(s)
+Created C->T converted version of /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_1.fastq.gz.temp.1 -> /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_1.fastq.gz.temp.1_C_to_T.fastq (5000000 sequences)
+Created C->T converted version of /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_1.fastq.gz.temp.0 -> /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_1.fastq.gz.temp.0_C_to_T.fastq (5000000 sequences)
+Created G->A converted version of /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_2.fastq.gz.temp.1 -> /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_2.fastq.gz.temp.1_G_to_A.fastq (5000000 sequences)
+Created G->A converted version of /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_2.fastq.gz.temp.0 -> /fs/run/tmp/pe_directional_mc2_files_r1/SRR24766921_10M_2.fastq.gz.temp.0_G_to_A.fastq (5000000 sequences)
 5000000 reads; of these:
   5000000 (100.00%) were paired; of these:
     2914999 (58.30%) aligned concordantly 0 times
@@ -86,27 +86,23 @@ Streaming G->A converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR
 41.70% overall alignment rate
 5000000 reads; of these:
   5000000 (100.00%) were paired; of these:
-    2916105 (58.32%) aligned concordantly 0 times
-    1467661 (29.35%) aligned concordantly exactly 1 time
-    616234 (12.32%) aligned concordantly >1 times
-41.68% overall alignment rate
-Streamed C->T converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_1.fastq.gz.temp.0 (5000000 sequences, no temp file written)
-Streamed G->A converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_2.fastq.gz.temp.0 (5000000 sequences, no temp file written)
-5000000 reads; of these:
-  5000000 (100.00%) were paired; of these:
     2926603 (58.53%) aligned concordantly 0 times
     1452235 (29.04%) aligned concordantly exactly 1 time
     621162 (12.42%) aligned concordantly >1 times
 41.47% overall alignment rate
 5000000 reads; of these:
   5000000 (100.00%) were paired; of these:
+    2916105 (58.32%) aligned concordantly 0 times
+    1467661 (29.35%) aligned concordantly exactly 1 time
+    616234 (12.32%) aligned concordantly >1 times
+41.68% overall alignment rate
+5000000 reads; of these:
+  5000000 (100.00%) were paired; of these:
     2926410 (58.53%) aligned concordantly 0 times
     1459709 (29.19%) aligned concordantly exactly 1 time
     613881 (12.28%) aligned concordantly >1 times
 41.47% overall alignment rate
-Streamed C->T converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_1.fastq.gz.temp.1 (5000000 sequences, no temp file written)
-Streamed G->A converted version of /fs/run/tmp/pe_directional_mc2_stream_r1/SRR24766921_10M_2.fastq.gz.temp.1 (5000000 sequences, no temp file written)
->>> Writing bisulfite mapping results to /fs/run/out/pe_directional_mc2_stream_r1/SRR24766921_10M_1_bismark_bt2_pe.bam <<<
+>>> Writing bisulfite mapping results to /fs/run/out/pe_directional_mc2_files_r1/SRR24766921_10M_1_bismark_bt2_pe.bam <<<
 Mapping summary for /fs/data/SRR24766921_10M_1.fastq.gz / /fs/data/SRR24766921_10M_2.fastq.gz:
 sequence pairs analysed:  10000000
 unique best alignments:   6065738

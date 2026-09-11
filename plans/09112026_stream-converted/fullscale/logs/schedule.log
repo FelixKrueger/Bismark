@@ -48,3 +48,7 @@ snapshot pushed: 48421ad
 
 ########## S4 C1/C2 pe_directional_mc2 @10M  [16:51:08] ##########
 ### pe_directional_mc2 — 1 rep(s), serial, arm order alternating per rep
+  pe_directional_mc2       stream r1  wall  1633.93s  peak_conv         0 KB  peak_temp   4111947 KB  memPeak   19242 MB  pids  55  samples 1626  rc=0
+  pe_directional_mc2       files  r1  wall  1642.17s  peak_conv   3346733 KB  peak_temp   7432797 KB  memPeak   25526 MB  pids  43  samples 1634  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
