@@ -96,3 +96,7 @@ snapshot committed: full-scale pe_nondirectional_p4 rep 2 -> 0f6b3d8 validation:
 snapshot pushed: 0f6b3d8
 REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
 Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: full-scale pe_directional_p4 rep 2 -> 46e6786 validation: full-scale pe_directional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: 46e6786
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
