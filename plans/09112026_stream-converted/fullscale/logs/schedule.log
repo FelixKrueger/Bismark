@@ -86,3 +86,9 @@ snapshot pushed: 1e0ed3a
 ########## S7 C3 timing, -p 2 reps @2M  [17:53:11] ##########
 REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
 Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: C3 timing, -p 2 reps at 2M -> 1833cce validation: C3 timing, -p 2 reps at 2M (#1120 full-scale)
+snapshot pushed: 1833cce
+
+########## S8 full-scale reps of both 10M shapes, until the 12:00 guard  [17:53:19] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
