@@ -1,0 +1,98 @@
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+Bismark aligner (Rust) — resolved configuration
+aligner:        Bowtie 2 2.5.0 (/usr/bin/bowtie2)
+library:        directional
+layout:         paired-end [FASTQ]
+reads:          /fs/data/SRR24766921_2M_1.fastq.gz+/fs/data/SRR24766921_2M_2.fastq.gz
+genome:         /fs/genome/GRCm39
+CT index:       /fs/genome/GRCm39/Bisulfite_Genome/CT_conversion/BS_CT
+GA index:       /fs/genome/GRCm39/Bisulfite_Genome/GA_conversion/BS_GA
+large index:    false
+FASTA(s):       1 file(s) (Fa)
+aligner_options: -q --score-min L,0,-0.2 -p 4 --reorder --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500
+converted reads: written to the temp dir as files
+output:         BAM, dir="/fs/run2m/out/pe_directional_p4_files_r2", basename=None
+chr 1 (195154279 bp)
+chr 10 (130530862 bp)
+chr 11 (121973369 bp)
+chr 12 (120092757 bp)
+chr 13 (120883175 bp)
+chr 14 (125139656 bp)
+chr 15 (104073951 bp)
+chr 16 (98008968 bp)
+chr 17 (95294699 bp)
+chr 18 (90720763 bp)
+chr 19 (61420004 bp)
+chr 2 (181755017 bp)
+chr 3 (159745316 bp)
+chr 4 (156860686 bp)
+chr 5 (151758149 bp)
+chr 6 (149588044 bp)
+chr 7 (144995196 bp)
+chr 8 (130127694 bp)
+chr 9 (124359700 bp)
+chr MT (16299 bp)
+chr X (169476592 bp)
+chr Y (91455967 bp)
+chr JH584299.1 (953012 bp)
+chr GL456233.2 (559103 bp)
+chr JH584301.1 (259875 bp)
+chr GL456211.1 (241735 bp)
+chr GL456221.1 (206961 bp)
+chr JH584297.1 (205776 bp)
+chr JH584296.1 (199368 bp)
+chr GL456354.1 (195993 bp)
+chr JH584298.1 (184189 bp)
+chr JH584300.1 (182347 bp)
+chr GL456219.1 (175968 bp)
+chr GL456210.1 (169725 bp)
+chr JH584303.1 (158099 bp)
+chr JH584302.1 (155838 bp)
+chr GL456212.1 (153618 bp)
+chr JH584304.1 (114452 bp)
+chr GL456379.1 (72385 bp)
+chr GL456366.1 (47073 bp)
+chr GL456367.1 (42057 bp)
+chr GL456239.1 (40056 bp)
+chr GL456383.1 (38659 bp)
+chr GL456385.1 (35240 bp)
+chr GL456360.1 (31704 bp)
+chr GL456378.1 (31602 bp)
+chr MU069435.1 (31129 bp)
+chr GL456389.1 (28772 bp)
+chr GL456372.1 (28664 bp)
+chr GL456370.1 (26764 bp)
+chr GL456381.1 (25871 bp)
+chr GL456387.1 (24685 bp)
+chr GL456390.1 (24668 bp)
+chr GL456394.1 (24323 bp)
+chr GL456392.1 (23629 bp)
+chr GL456382.1 (23158 bp)
+chr GL456359.1 (22974 bp)
+chr GL456396.1 (21240 bp)
+chr GL456368.1 (20208 bp)
+chr MU069434.1 (8412 bp)
+chr JH584295.1 (1976 bp)
+>>> Writing bisulfite mapping results to /fs/run2m/out/pe_directional_p4_files_r2/SRR24766921_2M_1_bismark_bt2_pe.bam <<<
+Created C->T converted version of /fs/data/SRR24766921_2M_1.fastq.gz -> /fs/run2m/tmp/pe_directional_p4_files_r2/SRR24766921_2M_1.fastq.gz_C_to_T.fastq (2000000 sequences)
+Created G->A converted version of /fs/data/SRR24766921_2M_2.fastq.gz -> /fs/run2m/tmp/pe_directional_p4_files_r2/SRR24766921_2M_2.fastq.gz_G_to_A.fastq (2000000 sequences)
+2000000 reads; of these:
+  2000000 (100.00%) were paired; of these:
+    1176217 (58.81%) aligned concordantly 0 times
+    576200 (28.81%) aligned concordantly exactly 1 time
+    247583 (12.38%) aligned concordantly >1 times
+41.19% overall alignment rate
+2000000 reads; of these:
+  2000000 (100.00%) were paired; of these:
+    1177215 (58.86%) aligned concordantly 0 times
+    578687 (28.93%) aligned concordantly exactly 1 time
+    244098 (12.20%) aligned concordantly >1 times
+41.14% overall alignment rate
+Mapping summary for /fs/data/SRR24766921_2M_1.fastq.gz / /fs/data/SRR24766921_2M_2.fastq.gz:
+sequence pairs analysed:  2000000
+unique best alignments:   1199138
+no alignment found:       561248
+ambiguous (unsuitable):   239614
+directional-rejected:     0
+could-not-extract genomic:0
+strand OT/CTOB/CTOT/OB:   600986/0/0/598152
