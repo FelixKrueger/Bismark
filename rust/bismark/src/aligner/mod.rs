@@ -7525,12 +7525,15 @@ mod tests {
         writeln!(fq, "\n+\n{}", "I".repeat(read.len())).unwrap();
         drop(fq);
 
-        let converted = vec![convert::ConvertedReads {
+        // A single converted file, read once per instance. Not a `Vec` any more:
+        // `build_se_inprocess_streams` now takes ready-made readers, so only the
+        // path is used here.
+        let converted = convert::ConvertedReads {
             name: "conv_C_to_T.fastq".into(),
             path: fq_path,
             count: 1,
             seqid_tab_count: 0,
-        }];
+        };
 
         let score_for = |preset: Mm2Preset| -> i64 {
             let config = run_config_stub(
@@ -7547,7 +7550,7 @@ mod tests {
             // converted file — the shape `build_se_inprocess_streams` now takes.
             let mut readers: Vec<Option<Box<dyn BufRead>>> = (0..2)
                 .map(|_| {
-                    let f = File::open(&converted[0].path).unwrap();
+                    let f = File::open(&converted.path).unwrap();
                     Some(Box::new(BufReader::new(f)) as Box<dyn BufRead>)
                 })
                 .collect();
