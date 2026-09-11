@@ -52,3 +52,16 @@ snapshot pushed: 48421ad
   pe_directional_mc2       files  r1  wall  1642.17s  peak_conv   3346733 KB  peak_temp   7432797 KB  memPeak   25526 MB  pids  43  samples 1634  rc=0
 
 ### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: C1/C2 --multicore 2 at 10M -> 4c32132 validation: C1/C2 --multicore 2 at 10M (#1120 full-scale)
+snapshot pushed: 4c32132
+
+########## S5 C1/C2 pe_directional_p1 @2M  [17:46:19] ##########
+### pe_directional_p1 — 1 rep(s), serial, arm order alternating per rep
+  pe_directional_p1        stream r1  wall     1.00s  peak_conv         0 KB  peak_temp         0 KB  memPeak      26 MB  pids   6  samples 1  rc=1
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+error: Please select a value for -p of 2 or more!
+  pe_directional_p1        files  r1  wall     1.00s  peak_conv         0 KB  peak_temp         0 KB  memPeak      26 MB  pids   6  samples 1  rc=1
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+error: Please select a value for -p of 2 or more!
+
+### results.tsv written to /tmp/fs/run2m/results.tsv

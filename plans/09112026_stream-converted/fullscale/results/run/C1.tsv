@@ -2,3 +2,4 @@ shape	rep	records	records_md5_stream	records_md5_files	bam_verdict	report_verdic
 pe_directional_p4	1	12131476	f8129cad69cbf5ab14684dbd64d8a02d	f8129cad69cbf5ab14684dbd64d8a02d	IDENTICAL	IDENTICAL
 pe_nondirectional_p4	1	12131470	a031d440e536f3cbec7f775fbb764c6f	a031d440e536f3cbec7f775fbb764c6f	IDENTICAL	IDENTICAL
 pe_directional_mc2	1	12131476	f8129cad69cbf5ab14684dbd64d8a02d	f8129cad69cbf5ab14684dbd64d8a02d	IDENTICAL	IDENTICAL
+pe_directional_p1	1	0	NOBAM	NOBAM	NO BAM	IDENTICAL
