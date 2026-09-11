@@ -117,3 +117,32 @@ writer threads behind the fan-out. Nowhere near any limit — see §4.2.
 Plots: `plots/run/pe_directional_p4_r1.png` (six stacked panels — converted bytes, whole
 temp dir, output, cgroup memory, CPU, threads).
 
+#### The instance asymmetry, measured
+
+`FULLSCALE.md` §1 calls natural instance asymmetry "the real unknown", and `BENCHMARKS.md`
+closes on it as the known measurement gap: a tee couples the aligner instances, so a fast one
+can be throttled behind a slow one, and small fixtures never run long enough to show it. The
+CPU trace answers it directly.
+
+| | CPU profile | both instances finish |
+|---|---|---|
+| **files** | 800 % until t=1761 s, then **400 % for the remaining 1194 s** | no — one finishes 20 min early |
+| **streamed** | a flat **645 %** for the whole run, never dropping | yes — together, at t=2944 s |
+
+The asymmetry is real and large: with files, the two strand hypotheses are fully decoupled,
+one finishes twenty minutes before the other, and the machine spends the last 40 % of the run
+at half utilisation. With streaming, the shared bounded channel paces the fast instance to the
+slow one, so both run steadily and finish together.
+
+**And it is free.** Total CPU is identical — 18,990 vs 18,993 CPU-seconds — and the streamed
+arm finished 8.9 s *sooner*. The reason is structural rather than lucky: wall time is set by
+the slowest instance in both arms, and streaming does not slow that instance down; it only
+declines to let the fast one race ahead and then idle. The same work, spread evenly instead of
+front-loaded.
+
+This is the throttling that `CHANNEL_DEPTH` exists to mitigate, observed at full scale and
+costing nothing. It does not need the knob turned.
+
+Thread counts corroborate: the file arm steps 20 → 15 at t=1761 s as an instance exits, while
+the streamed arm holds 26 until both finish at t=2944 s.
+
