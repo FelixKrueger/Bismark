@@ -346,8 +346,8 @@ one measurement that suggested otherwise has not reproduced.
 
 **C1 at 2M — 16 further pairs, all identical.** Every rep of every shape:
 `pe_directional_p4` ×5, `pe_nondirectional_p4` ×5, `pe_directional_mc2` ×5,
-`pe_directional_p2` ×1. Combined with the three at 10M, **19 arm-pairs are byte-identical**
-with no exceptions. Note the record counts are stable across reps within a shape
+`pe_directional_p2` ×1. Combined with the three at 10M, **19 arm-pairs were byte-identical**
+with no exceptions *at this point in the run* — the final tally is in §4.9. Note the record counts are stable across reps within a shape
 (2,398,276 directional; 2,398,274 non-directional), so the runs are deterministic in both arms.
 
 ### 4.6 `-p 2`, the least-slack shape — 4 reps at 2M (2026-09-12)
