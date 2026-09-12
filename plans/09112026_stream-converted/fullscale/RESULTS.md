@@ -311,3 +311,29 @@ one measurement that suggested otherwise has not reproduced.
 `pe_directional_p2` ×1. Combined with the three at 10M, **19 arm-pairs are byte-identical**
 with no exceptions. Note the record counts are stable across reps within a shape
 (2,398,276 directional; 2,398,274 non-directional), so the runs are deterministic in both arms.
+
+### 4.6 `-p 2`, the least-slack shape — 4 reps at 2M (2026-09-12)
+
+`FULLSCALE.md` §4 wanted `-p 1` here on the reasoning that "the fan-out has the least slack".
+Bismark rejects `-p 1`, so this is `-p 2`: two instances of two threads, the fewest the tool
+allows, and the configuration where a bounded channel has the least room to absorb a rate
+difference.
+
+| | median | reps (sorted, s) |
+|---|---|---|
+| **streamed** | **1181.8 s** | 1169.7 · 1181.8 · 1181.8 · 1185.8 |
+| **files** | 1199.8 s | 1190.7 · 1196.8 · 1202.8 · 1205.7 |
+
+**−1.50 %, and the distributions do not overlap**: the slowest streamed rep (1185.8 s) beats
+the fastest files rep (1190.7 s). This is the cleanest separation in the whole matrix.
+
+**It is also the opposite of what the brief expected.** §4 nominated this shape as the one
+where streaming was most likely to hurt. It is the shape where streaming helps most — 1.50 %
+against 0.66 % at `-p 4` and 0.01 % under `--multicore 2`. The ordering across shapes is
+consistent: the fewer threads each aligner instance has, the more streaming wins.
+
+A plausible reading, offered as a hypothesis and not a measurement: with fewer threads the
+aligners are slower, so the single converter thread keeps every consumer fed and the channel
+never becomes the constraint, while the file arm still pays to write a gigabyte and read it
+back. But this run does not isolate that, and the effect is small enough that it does not need
+explaining to be reported.
