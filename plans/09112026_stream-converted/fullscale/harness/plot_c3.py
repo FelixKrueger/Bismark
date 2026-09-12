@@ -51,6 +51,9 @@ for i, r in enumerate(rows):
     labels.append(f"{r['shape'].replace('pe_','')}\n{r['scale']} · n={r['n']}")
 
 ax.axhline(0, color="#555", lw=1, ls="--", zorder=1)
+# headroom so the per-group delta labels never sit on top of a data point
+lo, hi = ax.get_ylim()
+ax.set_ylim(lo, hi + (hi - lo) * 0.13)
 ax.set_xticks(range(len(rows)))
 ax.set_xticklabels(labels, fontsize=8.5)
 ax.set_ylabel("wall time, % relative to the files median for that group")
