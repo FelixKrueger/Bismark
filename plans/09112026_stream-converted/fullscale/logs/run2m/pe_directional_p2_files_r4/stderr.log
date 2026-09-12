@@ -11,7 +11,7 @@ large index:    false
 FASTA(s):       1 file(s) (Fa)
 aligner_options: -q --score-min L,0,-0.2 -p 2 --reorder --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500
 converted reads: written to the temp dir as files
-output:         BAM, dir="/fs/run2m/out/pe_directional_p2_files_r2", basename=None
+output:         BAM, dir="/fs/run2m/out/pe_directional_p2_files_r4", basename=None
 chr 1 (195154279 bp)
 chr 10 (130530862 bp)
 chr 11 (121973369 bp)
@@ -73,9 +73,9 @@ chr GL456396.1 (21240 bp)
 chr GL456368.1 (20208 bp)
 chr MU069434.1 (8412 bp)
 chr JH584295.1 (1976 bp)
->>> Writing bisulfite mapping results to /fs/run2m/out/pe_directional_p2_files_r2/SRR24766921_2M_1_bismark_bt2_pe.bam <<<
-Created C->T converted version of /fs/data/SRR24766921_2M_1.fastq.gz -> /fs/run2m/tmp/pe_directional_p2_files_r2/SRR24766921_2M_1.fastq.gz_C_to_T.fastq (2000000 sequences)
-Created G->A converted version of /fs/data/SRR24766921_2M_2.fastq.gz -> /fs/run2m/tmp/pe_directional_p2_files_r2/SRR24766921_2M_2.fastq.gz_G_to_A.fastq (2000000 sequences)
+>>> Writing bisulfite mapping results to /fs/run2m/out/pe_directional_p2_files_r4/SRR24766921_2M_1_bismark_bt2_pe.bam <<<
+Created C->T converted version of /fs/data/SRR24766921_2M_1.fastq.gz -> /fs/run2m/tmp/pe_directional_p2_files_r4/SRR24766921_2M_1.fastq.gz_C_to_T.fastq (2000000 sequences)
+Created G->A converted version of /fs/data/SRR24766921_2M_2.fastq.gz -> /fs/run2m/tmp/pe_directional_p2_files_r4/SRR24766921_2M_2.fastq.gz_G_to_A.fastq (2000000 sequences)
 2000000 reads; of these:
   2000000 (100.00%) were paired; of these:
     1176217 (58.81%) aligned concordantly 0 times

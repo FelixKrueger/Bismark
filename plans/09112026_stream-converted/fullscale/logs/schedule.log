@@ -153,3 +153,11 @@ snapshot pushed: c40edc0
 
 ########## S7 C3 timing, -p 2 reps @2M  [22:56:40] ##########
 ### pe_directional_p2 — 3 rep(s) from #2, serial, arm order alternating per rep
+  pe_directional_p2        files  r2  wall  1205.74s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10188 MB  pids  19  samples 1201  rc=0
+  pe_directional_p2        stream r2  wall  1181.78s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9060 MB  pids  25  samples 1177  rc=0
+  pe_directional_p2        stream r3  wall  1169.69s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9059 MB  pids  25  samples 1165  rc=0
+  pe_directional_p2        files  r3  wall  1196.78s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10259 MB  pids  19  samples 1192  rc=0
+  pe_directional_p2        files  r4  wall  1190.73s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10257 MB  pids  19  samples 1186  rc=0
+  pe_directional_p2        stream r4  wall  1185.82s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9064 MB  pids  25  samples 1181  rc=0
+
+### results.tsv written to /tmp/fs/run2m/results.tsv
