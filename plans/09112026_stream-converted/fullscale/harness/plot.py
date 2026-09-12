@@ -26,7 +26,8 @@ PANELS = [
     ("converted_kb", "Converted reads\non disk (MiB)", MiB, "{:,.0f} MiB"),
     ("temp_kb",      "--temp_dir\ntotal (MiB)",        MiB, "{:,.0f} MiB"),
     ("out_kb",       "Output dir\n(MiB)",              MiB, "{:,.0f} MiB"),
-    ("mem_bytes",    "Memory\n(GiB)",                  GiB, "{:,.2f} GiB"),
+    ("mem_bytes",    "Memory: cgroup total\n(incl. page cache, GiB)", GiB, "{:,.2f} GiB"),
+    ("anon_bytes",   "Memory: anonymous\n(GiB)",        GiB, "{:,.2f} GiB"),
     ("cpu_pct",      "CPU\n(% of one core)",           1,   "{:,.0f}%"),
     ("pids",         "Procs + threads",                1,   "{:,.0f}"),
 ]

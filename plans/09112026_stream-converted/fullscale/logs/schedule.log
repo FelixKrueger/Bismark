@@ -198,3 +198,7 @@ snapshot pushed: 63f853c
   pe_directional_p4        stream r4  wall  2937.24s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9809 MB  pids  29  samples 2925  rc=0
 
 ### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: extra full-scale rep 4 -> 4de475c validation: extra full-scale rep 4 (#1120 full-scale)
+snapshot pushed: 4de475c
+guard: no time for rep 5
+EXTRA REPS DONE 09:19:27
