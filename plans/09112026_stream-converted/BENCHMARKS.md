@@ -128,15 +128,17 @@ effect and misattribute the remainder.
 
 Median wall, streamed against files. Negative is faster.
 
+<!-- C3TABLE:START -->
 | shape | scale | n | delta |
 |---|---|---|---|
 | `pe_directional_p2` | 2M | 4 | **−1.50 %** |
-| `pe_directional_p4` | 2M | 5 | −0.66 % |
-| `pe_nondirectional_p4` | 2M | 5 | −0.65 % |
-| `pe_directional_mc2` | 2M | 5 | −0.01 % |
-| `pe_nondirectional_p4` | 10M | 3 | −0.55 % |
-| `pe_directional_p4` | 10M | 3 | −0.45 % |
-| `pe_directional_mc2` | 10M | 1 | −0.50 % |
+| `pe_directional_p4` | 2M | 5 | **−0.66 %** |
+| `pe_nondirectional_p4` | 2M | 5 | **−0.65 %** |
+| `pe_nondirectional_p4` | 10M | 3 | **−0.55 %** |
+| `pe_directional_mc2` | 10M | 1 | **−0.50 %** |
+| `pe_directional_p4` | 10M | 2 | **−0.39 %** |
+| `pe_directional_mc2` | 2M | 5 | **−0.01 %** |
+<!-- C3TABLE:END -->
 
 **Streaming is not slower anywhere.** Every figure is negative or zero, both scales, every
 shape. The 2M and 10M results agree on the shapes measured at both.
