@@ -184,3 +184,17 @@ snapshot pushed: 40228a0
   pe_nondirectional_p4     files  r3  wall  2988.33s  peak_conv   6693466 KB  peak_temp   6693466 KB  memPeak   31303 MB  pids  41  samples 2975  rc=0
 
 ### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: full-scale pe_nondirectional_p4 rep 3 -> 63f853c validation: full-scale pe_nondirectional_p4 rep 3 (#1120 full-scale)
+snapshot pushed: 63f853c
+### pe_directional_p4 — 1 rep(s) from #3, serial, arm order alternating per rep
+  pe_directional_p4        stream r3  wall  2974.40s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9804 MB  pids  29  samples 2962  rc=0
+  pe_directional_p4        files  r3  wall  2960.02s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2948  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+
+########## EXTRA pe_directional_p4 rep 4  [07:40:37] ##########
+### pe_directional_p4 — 1 rep(s) from #4, serial, arm order alternating per rep
+  pe_directional_p4        files  r4  wall  2938.87s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2927  rc=0
+  pe_directional_p4        stream r4  wall  2937.24s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9809 MB  pids  29  samples 2925  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
