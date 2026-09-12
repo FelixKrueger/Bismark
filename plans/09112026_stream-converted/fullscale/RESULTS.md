@@ -1,7 +1,45 @@
 # FULL-SCALE VALIDATION — RESULTS (#1120 / PR #1121)
 
 **Brief:** [`../FULLSCALE.md`](../FULLSCALE.md) · **Benchmarks:** [`../BENCHMARKS.md`](../BENCHMARKS.md)
-**Run started:** 2026-09-11 · **Status:** in progress — this file is updated as each phase lands.
+**Run:** 2026-09-11 → 2026-09-12 · **Status:** complete
+
+---
+
+## 0. Verdict
+
+**All three claims pass. Section 7 passes. Nothing found that should block the merge.**
+
+| | claim | result |
+|---|---|---|
+| **C1** | output byte-identical | **PASS** — 24 arm-pairs, 0 differing |
+| **C2** | converted temp files gone | **PASS** — 0 KB against up to 6.38 GiB |
+| **C3** | no wall-time regression | **PASS** — never slower; −0.01 % to −1.50 % |
+
+51 runs, one at a time, mouse RRBS on GRCm39.
+
+**Three things worth a reader's attention beyond the pass/fail.**
+
+*The asymmetry question is closed, and the answer is more interesting than "no regression".*
+The coupling everyone worried about is real and large — with files, the two strand hypotheses
+finish twenty minutes apart and the machine spends the last 40 % of the run at half
+utilisation. Streaming paces them together. Total CPU is identical to within 3 seconds in
+19,000, and wall time is marginally better, because the critical path is the slow instance in
+both arms. The bounded channel does throttle the fast consumer; that throttling is free.
+
+*The feature's premise is demonstrated for the first time.* On a `--temp_dir` smaller than the
+converted set, the file arm dies `ENOSPC` and the streamed arm completes with a full result
+set. Everything else here is an efficiency argument; this is the correctness argument for the
+feature existing, and until now nothing had shown it.
+
+*A regression was reported and then retracted.* One full-scale run showed non-directional
+streaming 2.4 % slower, with a plausible mechanism attached. Reps showed it was an outlier. It
+is left in the record (§4.3, §4.7) rather than edited away.
+
+**Recommendation: merge.** No knob needs turning — `CHANNEL_DEPTH` stays at 4. Two caveats
+that are not blockers: this is one dataset on one genome on one machine, and a clean A/B says
+nothing about edges beyond the three §7 probes.
+
+---
 
 ---
 
