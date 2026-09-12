@@ -1,6 +1,6 @@
 ## Full-scale validation complete — all three claims pass
 
-Ran [`FULLSCALE.md`](https://github.com/ewels/Bismark/blob/rust/stream-converted/plans/09112026_stream-converted/fullscale/FULLSCALE.md) on a 32-core / 124 GB machine. **52 benchmark runs, strictly one at a time.**
+Ran [`FULLSCALE.md`](https://github.com/ewels/Bismark/blob/rust/stream-converted/plans/09112026_stream-converted/fullscale/FULLSCALE.md) on a 32-core / 124 GB machine. **54 benchmark runs, strictly one at a time.**
 
 Full record, per-run time series and plots: [`fullscale/RESULTS.md`](https://github.com/ewels/Bismark/blob/rust/stream-converted/plans/09112026_stream-converted/fullscale/RESULTS.md) · summary in [`BENCHMARKS.md` §3](https://github.com/ewels/Bismark/blob/rust/stream-converted/plans/09112026_stream-converted/BENCHMARKS.md).
 
@@ -8,7 +8,7 @@ Full record, per-run time series and plots: [`fullscale/RESULTS.md`](https://git
 
 | | claim | result |
 |---|---|---|
-| **C1** | output byte-identical | **PASS** — 25 arm-pairs, 0 differing |
+| **C1** | output byte-identical | **PASS** — 26 arm-pairs, 0 differing |
 | **C2** | converted temp files gone | **PASS** — 0 KB vs up to 6.38 GiB |
 | **C3** | no wall-time regression | **PASS** — never slower |
 
@@ -24,7 +24,7 @@ Zero, not "small" — and the file arm holds that for the *entire* 50-minute run
 
 ### C3 — wall time
 
-−1.50 % (`-p 2`), −0.66 % / −0.45 % (directional 2M / 10M), −0.65 % / −0.55 % (non-directional 2M / 10M), −0.01 % (`--multicore 2`). **Negative or zero everywhere, at both scales.** The `--multicore` dead heat is a useful control — a genuine null looks like that, which argues the rest isn't the harness favouring an arm.
+−1.50 % (`-p 2`), −0.66 % / −0.43 % (directional 2M / 10M), −0.65 % / −0.55 % (non-directional 2M / 10M), −0.01 % (`--multicore 2`). **Negative or zero everywhere, at both scales.** The `--multicore` dead heat is a useful control — a genuine null looks like that, which argues the rest isn't the harness favouring an arm.
 
 Honest headline is still **wall-neutral to slightly faster**. But the pre-merge worry was a *regression* from coupling the instances, and there is none.
 
@@ -64,4 +64,4 @@ Combined-index, `--hisat2` and `--rammap_subprocess` keep files by design and ar
 
 **Recommendation: merge.**
 
-<sub>One limit worth stating: on directional 10M the third streamed rep (2974.4 s) is slower than every files rep, so the per-rep spread is comparable to the sub-1 % effect being measured. The *direction* is consistent across all seven shape/scale groups; the magnitude on any single group is not well determined by three reps. C1 and C2 are exact comparisons and carry no such caveat.</sub>
+<sub>**One limit worth stating.** The directional 10M group (n=4) has overlapping distributions — streamed 2937.2 · 2943.2 · 2946.8 · 2974.4 s against files 2938.9 · 2955.7 · 2960.0 · 2961.1 s — where the per-rep spread exceeds the 12.9 s median difference. Four reps do not establish a 0.43 % effect there. What the data does support is the claim C3 makes, *not slower*: every median across seven shape/scale groups is negative, and the two tightest groups (`-p 2` at −1.50 %, non-directional 2M at −0.65 %) show no overlap at all. A consistent sign across seven independent groups is strong; the magnitude on any single group is not. C1 and C2 are exact comparisons and carry no such caveat.</sub>

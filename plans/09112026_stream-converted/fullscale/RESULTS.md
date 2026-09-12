@@ -11,11 +11,11 @@
 
 | | claim | result |
 |---|---|---|
-| **C1** | output byte-identical | **PASS** — 25 arm-pairs, 0 differing |
+| **C1** | output byte-identical | **PASS** — 26 arm-pairs, 0 differing |
 | **C2** | converted temp files gone | **PASS** — 0 KB against up to 6.38 GiB |
 | **C3** | no wall-time regression | **PASS** — never slower; −0.01 % to −1.50 % |
 
-52 runs, one at a time, mouse RRBS on GRCm39.
+54 runs, one at a time, mouse RRBS on GRCm39.
 
 **Three things worth a reader's attention beyond the pass/fail.**
 
@@ -421,23 +421,33 @@ from coupling the aligner instances, and there is no evidence of one.
 
 ### 4.9 Final tally
 
-Benchmarking ended 2026-09-12 07:36 UTC.
+Benchmarking ended 2026-09-12 09:19 UTC.
 
 | | |
 |---|---|
-| benchmark runs | **52**, every one serial on an otherwise idle machine |
-| C1 arm-pairs compared | **25** — 0 differing |
+| benchmark runs | **54**, every one serial on an otherwise idle machine |
+| C1 arm-pairs compared | **26** — 0 differing |
 | shapes | 4 (`-p 2`, `-p 4`, `--non_directional`, `--multicore 2`) |
 | scales | 2,000,000 and 10,000,000 read pairs |
 | §7 probes | 3, all pass |
 
-`pe_directional_p4` at 10M finished at n=3: streamed 2943.2 · 2946.8 · 2974.4 s against files
-2955.7 · 2960.0 · 2961.1 s, median **−0.45 %**. Worth noting the third streamed rep (2974.4 s)
-is slower than every files rep — the per-rep spread is comparable to the effect being measured,
-which is the honest limit on how hard a sub-1 % claim can be pushed from three reps. The
-direction is consistent across seven shape/scale groups; the magnitude on any one of them is
-not.
+`pe_directional_p4` at 10M closed at **n=4**, median **−0.43 %**:
 
-**Deliberately not run**, for time: further full-scale reps (the schedule was stopped early to
-protect the write-up), and the human WGBS accession `SRR24827373` named in `FULLSCALE.md` §3.
-Neither is needed for the three claims; both would strengthen the C3 magnitude.
+| | reps (sorted, s) | median |
+|---|---|---|
+| streamed | 2937.2 · 2943.2 · 2946.8 · **2974.4** | 2945.0 s |
+| files | **2938.9** · 2955.7 · 2960.0 · 2961.1 | 2957.9 s |
+
+**This is the least clean group in the matrix, and worth reading carefully.** The distributions
+overlap: the slowest streamed rep is slower than every files rep, and the fastest files rep is
+faster than three of four streamed reps. The per-rep spread (37 s streamed, 22 s files) is
+larger than the 12.9 s median difference. Four reps do not establish a 0.43 % effect.
+
+What the group *does* support is the claim C3 actually makes — not slower. Across seven
+shape/scale groups every median is negative, and the two groups with the tightest distributions
+(`-p 2` at −1.50 % and non-directional 2M at −0.65 %) have no overlap at all. A consistent sign
+across seven independent groups is strong; the magnitude on any one group is not.
+
+**Deliberately not run:** the human WGBS accession `SRR24827373` named in `FULLSCALE.md` §3,
+and reps beyond these. A fifth full-scale rep was skipped by the harness guard, which declines
+to start a ~105-minute pair that cannot also be written up.
