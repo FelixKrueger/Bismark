@@ -1,0 +1,7 @@
+### pe_directional_p4 — 1 rep(s), serial, arm order alternating per rep
+  pe_directional_p4        stream r1  wall  2946.77s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9805 MB  pids  29  samples 2935  rc=0
+  pe_directional_p4        files  r1  wall  2955.66s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2944  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+/tmp/fs/bin/drive.sh: 72: Syntax error: ")" unexpected
+EXIT=2

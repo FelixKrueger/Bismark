@@ -1,0 +1,2 @@
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+error: Please select a value for -p of 2 or more!

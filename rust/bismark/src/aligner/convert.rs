@@ -122,7 +122,7 @@ pub(crate) fn chomp_newline(line: &[u8]) -> &[u8] {
 /// otherwise create it, make it absolute, and ensure a trailing separator, so
 /// the raw concatenation `<temp_dir><name>` (Perl `${temp_dir}${name}`) is well
 /// formed. Returns the prefix string to concatenate before the file name.
-fn temp_dir_prefix(temp_dir: &Path) -> Result<String> {
+pub(crate) fn temp_dir_prefix(temp_dir: &Path) -> Result<String> {
     if temp_dir.as_os_str().is_empty() {
         return Ok(String::new());
     }
@@ -184,7 +184,7 @@ pub fn bisulfite_convert_fastq_se_ga(
 }
 
 /// The temp-file filename stem for a conversion kind (Perl `_C_to_T` / `_G_to_A`).
-fn file_base_for(kind: ConvKind) -> &'static str {
+pub(crate) fn file_base_for(kind: ConvKind) -> &'static str {
     match kind {
         ConvKind::Ct => "_C_to_T",
         ConvKind::Ga => "_G_to_A",
@@ -194,7 +194,7 @@ fn file_base_for(kind: ConvKind) -> &'static str {
 /// The `/1/1` (R1) or `/2/2` (R2) read-number ID tag inserted before the ID's
 /// trailing `\n` (Perl 5945–5960) — Bowtie 2 strips the outer `/1`,`/2`, leaving
 /// `/1`,`/2`. Mode-independent: only the `tr` direction (`kind`) flips per library.
-fn pe_id_suffix(read_number: u8) -> Result<&'static [u8]> {
+pub(crate) fn pe_id_suffix(read_number: u8) -> Result<&'static [u8]> {
     match read_number {
         1 => Ok(b"/1/1"),
         2 => Ok(b"/2/2"),
@@ -245,19 +245,15 @@ pub(crate) fn bisulfite_convert_fastq_pe_kind(
     convert_fastq_impl(input, temp_dir, opts, kind, suffix, file_base_for(kind))
 }
 
-/// Shared per-record conversion core for SE + PE. `kind` selects the substitution,
-/// `id_suffix` the read-number tag (empty for SE), `file_base` the filename stem
-/// (`_C_to_T` / `_G_to_A`). Everything else (gz, skip/upto, prefix, max-len guard,
-/// record-1 sanity, verbatim id2/qual, truncated-tail drop) is shared.
-fn convert_fastq_impl(
+/// The converted temp file's name — `<prefix.>?<basename><file_base>.<ext>` (Perl
+/// `${temp_dir}${name}`). Shared by the file writers below and by the streaming
+/// path (#1120), which names its FIFOs after the file each one replaces.
+pub(crate) fn converted_name(
     input: &Path,
-    temp_dir: &Path,
     opts: &ConvertOptions,
-    kind: ConvKind,
-    id_suffix: &[u8],
     file_base: &str,
-) -> Result<ConvertedReads> {
-    // ---- output name + path (raw concat, Perl ${temp_dir}${name}) -----------
+    fasta: bool,
+) -> Result<String> {
     let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
         AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
     })?;
@@ -266,17 +262,42 @@ fn convert_fastq_impl(
         None => basename.to_string(),
     };
     name.push_str(file_base);
-    name.push_str(if opts.gzip { ".fastq.gz" } else { ".fastq" });
-    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
-    let full_path = PathBuf::from(&full);
+    name.push_str(match (fasta, opts.gzip) {
+        (false, false) => ".fastq",
+        (false, true) => ".fastq.gz",
+        (true, false) => ".fa",
+        (true, true) => ".fa.gz",
+    });
+    Ok(name)
+}
 
-    // ---- reader (gz or plain) ----------------------------------------------
+/// Open a read file for conversion, transparently decompressing a `.gz` one
+/// (suffix-sniffed, as Perl does). Shared by the file and streaming paths.
+pub(crate) fn open_reader(input: &Path) -> Result<Box<dyn BufRead>> {
     let file = File::open(input)?;
-    let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
+    Ok(if input.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
         Box::new(BufReader::new(file))
-    };
+    })
+}
+
+/// Write the converted FastQ temp *file* for SE + PE. `kind` selects the
+/// substitution, `id_suffix` the read-number tag (empty for SE), `file_base` the
+/// filename stem (`_C_to_T` / `_G_to_A`). The per-record work (skip/upto, max-len
+/// guard, record-1 sanity, verbatim id2/qual, truncated-tail drop) lives in
+/// [`convert_fastq_into`]; this wrapper only opens the (optionally gzipped) file.
+fn convert_fastq_impl(
+    input: &Path,
+    temp_dir: &Path,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    file_base: &str,
+) -> Result<ConvertedReads> {
+    let name = converted_name(input, opts, file_base, false)?;
+    let full_path = PathBuf::from(format!("{}{name}", temp_dir_prefix(temp_dir)?));
+    let mut reader = open_reader(input)?;
 
     // ---- writer (gz or plain) ----------------------------------------------
     let out = File::create(&full_path)?;
@@ -286,6 +307,34 @@ fn convert_fastq_impl(
         Box::new(out)
     });
 
+    let (count, seqid_tab_count) =
+        convert_fastq_into(&mut reader, opts, kind, id_suffix, &mut writer)?;
+
+    writer.flush()?;
+    drop(writer);
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count,
+    })
+}
+
+/// The record loop itself, writing into any sink — the file writer above, or the
+/// per-instance FIFOs of the streaming path (#1120). Returns
+/// `(count, seqid_tab_count)`.
+///
+/// **This is the only copy of the FastQ conversion loop.** Streaming reuses it
+/// verbatim rather than forking it, so the bytes the aligner receives cannot
+/// drift between the two paths (that is what makes the byte-identity gate hold by
+/// construction rather than by argument).
+pub(crate) fn convert_fastq_into<W: Write + ?Sized>(
+    reader: &mut dyn BufRead,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    writer: &mut W,
+) -> Result<(u64, u64)> {
     let (mut id, mut seq, mut id2, mut qual) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut count: u64 = 0;
     let mut seqid_tab_count: u64 = 0;
@@ -356,14 +405,7 @@ fn convert_fastq_impl(
         writer.write_all(&qual)?;
     }
 
-    writer.flush()?;
-    drop(writer);
-    Ok(ConvertedReads {
-        name,
-        path: full_path,
-        count,
-        seqid_tab_count,
-    })
+    Ok((count, seqid_tab_count))
 }
 
 // ===========================================================================
@@ -374,11 +416,16 @@ fn convert_fastq_impl(
 // `convert_fastq_impl`): the 2-vs-4-line read/write, the PER-RECORD `^>` sanity
 // (vs FastQ's record-1-only `@`/`+`), and the ABSENT max-length guard diverge
 // enough that a merged core would be more branches than shared code — and
-// leaving `convert_fastq_impl` UNMODIFIED guarantees the FastQ byte-freeze (its
+// leaving the FastQ record loop UNMODIFIED guarantees the FastQ byte-freeze (its
 // unit tests + the oxy gate). Shared logic is the existing helpers (`fix_id`,
-// `convert_one`, `temp_dir_prefix`, `pe_id_suffix`, `file_base_for`). (rev1 A/B
-// endorsed a shared core; deviation documented — same intent: FastA correct +
-// FastQ frozen + helpers reused.)
+// `convert_one`, `temp_dir_prefix`, `pe_id_suffix`, `file_base_for`,
+// `converted_name`, `open_reader`). (rev1 A/B endorsed a shared core; deviation
+// documented — same intent: FastA correct + FastQ frozen + helpers reused.)
+//
+// #1120 split each loop out of its file wrapper (`convert_fast[aq]_into`) so the
+// streaming path can drive the SAME loop into a pipe. The two loops stay separate
+// from each other, exactly as argued above; what is now shared is each loop with
+// its own streaming caller.
 // ===========================================================================
 
 /// Write the **C→T**-converted FastA temp file for one single-end input
@@ -444,26 +491,11 @@ fn convert_fasta_impl(
     id_suffix: &[u8],
     file_base: &str,
 ) -> Result<ConvertedReads> {
-    // ---- output name + path (raw concat; `.fa` ext, not `.fastq`) ----------
-    let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
-        AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
-    })?;
-    let mut name = match &opts.prefix {
-        Some(p) => format!("{p}.{basename}"),
-        None => basename.to_string(),
-    };
-    name.push_str(file_base);
-    name.push_str(if opts.gzip { ".fa.gz" } else { ".fa" });
-    let full = format!("{}{name}", temp_dir_prefix(temp_dir)?);
-    let full_path = PathBuf::from(&full);
+    let name = converted_name(input, opts, file_base, true)?;
+    let full_path = PathBuf::from(format!("{}{name}", temp_dir_prefix(temp_dir)?));
+    let mut reader = open_reader(input)?;
 
-    // ---- reader / writer (gz or plain) — same as the FastQ core ------------
-    let file = File::open(input)?;
-    let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    // ---- writer (gz or plain) — same as the FastQ core ---------------------
     let out = File::create(&full_path)?;
     let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
         Box::new(GzEncoder::new(out, Compression::default()))
@@ -471,6 +503,28 @@ fn convert_fasta_impl(
         Box::new(out)
     });
 
+    let (count, seqid_tab_count) =
+        convert_fasta_into(&mut reader, opts, kind, id_suffix, &mut writer)?;
+
+    writer.flush()?;
+    drop(writer);
+    Ok(ConvertedReads {
+        name,
+        path: full_path,
+        count,
+        seqid_tab_count,
+    })
+}
+
+/// The FastA record loop, writing into any sink — the [`convert_fastq_into`]
+/// sibling. The only copy of the FastA conversion loop; streaming reuses it.
+pub(crate) fn convert_fasta_into<W: Write + ?Sized>(
+    reader: &mut dyn BufRead,
+    opts: &ConvertOptions,
+    kind: ConvKind,
+    id_suffix: &[u8],
+    writer: &mut W,
+) -> Result<(u64, u64)> {
     let (mut id, mut seq) = (Vec::new(), Vec::new());
     let mut count: u64 = 0;
     let mut seqid_tab_count: u64 = 0;
@@ -525,14 +579,7 @@ fn convert_fasta_impl(
         writer.write_all(&convert_one(&seq, kind))?;
     }
 
-    writer.flush()?;
-    drop(writer);
-    Ok(ConvertedReads {
-        name,
-        path: full_path,
-        count,
-        seqid_tab_count,
-    })
+    Ok((count, seqid_tab_count))
 }
 
 // ===========================================================================

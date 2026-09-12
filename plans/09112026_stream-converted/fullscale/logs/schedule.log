@@ -1,0 +1,204 @@
+
+########## S1 prepare 2M subset  [14:37:12] ##########
+total 661256
+drwxr-xr-x.  2 root root       140 Sep 11 14:37 .
+drwxr-xr-x. 10 root root      4096 Sep 11 14:37 ..
+-rw-r--r--.  1 root root 282591292 Sep 11 12:18 SRR24766921_10M_1.fastq.gz
+-rw-r--r--.  1 root root 281578687 Sep 11 12:18 SRR24766921_10M_2.fastq.gz
+-rw-r--r--.  1 root root  56583425 Sep 11 14:37 SRR24766921_2M_1.fastq.gz
+-rw-r--r--.  1 root root  56360888 Sep 11 14:37 SRR24766921_2M_2.fastq.gz
+
+########## S2 section 7 edge probes  [14:37:19] ##########
+section 7 exit: 0
+
+=== 7.3 — thread and FD counts under the widest fan-out ===
+  peak open FDs (tree): 73     ulimit -n soft=65535 hard=65535
+  peak threads (tree):  35    peak processes: 9
+  exit: 0
+  headroom: 0.1% of the soft FD limit used
+
+=== 7.1 — 200-character sample names under --multicore 4 ===
+  basename length: 190_1.fastq.gz -> 203 chars
+  short: exit 0
+    records: 2398276
+  long: exit 0
+    records: 2398276
+  long-name run is alignment-identical to the short-name run
+
+=== 7.2 — a --temp_dir smaller than the uncompressed input ===
+  temp_dir capacity: 512 MiB
+  one converted copy of R1 alone: 318 MiB (the file arm needs this x2)
+  files   exit 1   records 0
+    file arm failed as expected:
+error: I/O error: No space left on device (os error 28)
+  stream  exit 0   records 2398276
+
+### SECTION 7: ALL PASS
+snapshot committed: section 7 edge probes -> fd5f4c3 validation: section 7 edge probes (#1120 full-scale)
+snapshot pushed: fd5f4c3
+
+########## S3 C1/C2 pe_nondirectional_p4 @10M  [15:10:16] ##########
+### pe_nondirectional_p4 — 1 rep(s), serial, arm order alternating per rep
+  pe_nondirectional_p4     stream r1  wall  3045.21s  peak_conv         0 KB  peak_temp         0 KB  memPeak   23502 MB  pids  53  samples 3032  rc=0
+  pe_nondirectional_p4     files  r1  wall  2973.18s  peak_conv   6693466 KB  peak_temp   6693466 KB  memPeak   31330 MB  pids  41  samples 2960  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: C1/C2 non-directional PE at 10M -> 48421ad validation: C1/C2 non-directional PE at 10M (#1120 full-scale)
+snapshot pushed: 48421ad
+
+########## S4 C1/C2 pe_directional_mc2 @10M  [16:51:08] ##########
+### pe_directional_mc2 — 1 rep(s), serial, arm order alternating per rep
+  pe_directional_mc2       stream r1  wall  1633.93s  peak_conv         0 KB  peak_temp   4111947 KB  memPeak   19242 MB  pids  55  samples 1626  rc=0
+  pe_directional_mc2       files  r1  wall  1642.17s  peak_conv   3346733 KB  peak_temp   7432797 KB  memPeak   25526 MB  pids  43  samples 1634  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: C1/C2 --multicore 2 at 10M -> 4c32132 validation: C1/C2 --multicore 2 at 10M (#1120 full-scale)
+snapshot pushed: 4c32132
+
+########## S5 C1/C2 pe_directional_p1 @2M  [17:46:19] ##########
+### pe_directional_p1 — 1 rep(s), serial, arm order alternating per rep
+  pe_directional_p1        stream r1  wall     1.00s  peak_conv         0 KB  peak_temp         0 KB  memPeak      26 MB  pids   6  samples 1  rc=1
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+error: Please select a value for -p of 2 or more!
+  pe_directional_p1        files  r1  wall     1.00s  peak_conv         0 KB  peak_temp         0 KB  memPeak      26 MB  pids   6  samples 1  rc=1
+Warning: detected Bowtie 2 2.5.0, but byte-identity is only guaranteed against the pinned version 2.5.5.
+error: Please select a value for -p of 2 or more!
+
+### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C1/C2 -p 1 at 2M -> f77601e validation: C1/C2 -p 1 at 2M (#1120 full-scale)
+snapshot pushed: f77601e
+
+########## S6 C3 timing, 5 reps @2M, three shapes  [17:46:32] ##########
+### pe_directional_p4 — 5 rep(s), serial, arm order alternating per rep
+
+########## S5 C1/C2 pe_directional_p2 @2M (FULLSCALE asks -p 1; bismark requires >=2)  [17:52:56] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: C1/C2 -p 2 at 2M -> 3932557 validation: C1/C2 -p 2 at 2M (#1120 full-scale)
+snapshot pushed: 3932557
+
+########## S6 C3 timing, 5 reps @2M, all four shapes  [17:53:04] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: C3 timing, 5 reps at 2M, three shapes -> 1e0ed3a validation: C3 timing, 5 reps at 2M, three shapes (#1120 full-scale)
+snapshot pushed: 1e0ed3a
+
+########## S7 C3 timing, -p 2 reps @2M  [17:53:11] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: C3 timing, -p 2 reps at 2M -> 1833cce validation: C3 timing, -p 2 reps at 2M (#1120 full-scale)
+snapshot pushed: 1833cce
+
+########## S8 full-scale reps of both 10M shapes, until the 12:00 guard  [17:53:19] ##########
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: full-scale pe_nondirectional_p4 rep 2 -> 0f6b3d8 validation: full-scale pe_nondirectional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: 0f6b3d8
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: full-scale pe_directional_p4 rep 2 -> 46e6786 validation: full-scale pe_directional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: 46e6786
+REFUSING TO START: /tmp/fs/.bench.lock exists — another benchmark is running.
+Benchmarks must not overlap (noisy neighbour). Remove it only if stale.
+snapshot committed: full-scale pe_nondirectional_p4 rep 3 -> b2780d7 validation: full-scale pe_nondirectional_p4 rep 3 (#1120 full-scale)
+snapshot pushed: b2780d7
+
+########## S5 C1/C2 pe_directional_p2 @2M (FULLSCALE asks -p 1; bismark requires >=2)  [17:54:21] ##########
+### pe_directional_p2 — 1 rep(s) from #1, serial, arm order alternating per rep
+  pe_directional_p2        stream r1  wall  1181.78s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9051 MB  pids  25  samples 1177  rc=0
+  pe_directional_p2        files  r1  wall  1202.83s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10261 MB  pids  19  samples 1198  rc=0
+
+### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C1/C2 -p 2 at 2M -> 8bd0830 validation: C1/C2 -p 2 at 2M (#1120 full-scale)
+snapshot pushed: 8bd0830
+
+########## S6 C3 timing, 5 reps @2M, all four shapes  [18:34:23] ##########
+### pe_directional_p4 — 5 rep(s) from #1, serial, arm order alternating per rep
+  pe_directional_p4        stream r1  wall   603.52s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9156 MB  pids  29  samples 601  rc=0
+  pe_directional_p4        files  r1  wall   607.45s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10392 MB  pids  23  samples 605  rc=0
+  pe_directional_p4        files  r2  wall   607.51s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10395 MB  pids  23  samples 605  rc=0
+  pe_directional_p4        stream r2  wall   609.58s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9170 MB  pids  29  samples 607  rc=0
+  pe_directional_p4        stream r3  wall   608.55s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9138 MB  pids  29  samples 606  rc=0
+  pe_directional_p4        files  r3  wall   610.49s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10392 MB  pids  23  samples 608  rc=0
+  pe_directional_p4        files  r4  wall   604.48s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10396 MB  pids  23  samples 602  rc=0
+  pe_directional_p4        stream r4  wall   601.49s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9160 MB  pids  29  samples 599  rc=0
+  pe_directional_p4        stream r5  wall   603.51s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9125 MB  pids  29  samples 601  rc=0
+  pe_directional_p4        files  r5  wall   614.49s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10390 MB  pids  23  samples 612  rc=0
+### pe_nondirectional_p4 — 5 rep(s) from #1, serial, arm order alternating per rep
+  pe_nondirectional_p4     stream r1  wall   613.71s  peak_conv         0 KB  peak_temp         0 KB  memPeak   16920 MB  pids  53  samples 611  rc=0
+  pe_nondirectional_p4     files  r1  wall   615.70s  peak_conv   1335250 KB  peak_temp   1335250 KB  memPeak   18397 MB  pids  41  samples 613  rc=0
+  pe_nondirectional_p4     files  r2  wall   611.70s  peak_conv   1335250 KB  peak_temp   1335250 KB  memPeak   18393 MB  pids  41  samples 609  rc=0
+  pe_nondirectional_p4     stream r2  wall   610.67s  peak_conv         0 KB  peak_temp         0 KB  memPeak   16947 MB  pids  53  samples 608  rc=0
+  pe_nondirectional_p4     stream r3  wall   603.62s  peak_conv         0 KB  peak_temp         0 KB  memPeak   16928 MB  pids  53  samples 601  rc=0
+  pe_nondirectional_p4     files  r3  wall   618.77s  peak_conv   1335250 KB  peak_temp   1335250 KB  memPeak   18297 MB  pids  41  samples 616  rc=0
+  pe_nondirectional_p4     files  r4  wall   617.75s  peak_conv   1335250 KB  peak_temp   1335250 KB  memPeak   18393 MB  pids  41  samples 615  rc=0
+  pe_nondirectional_p4     stream r4  wall   614.72s  peak_conv         0 KB  peak_temp         0 KB  memPeak   16960 MB  pids  53  samples 612  rc=0
+  pe_nondirectional_p4     stream r5  wall   616.72s  peak_conv         0 KB  peak_temp         0 KB  memPeak   16936 MB  pids  53  samples 614  rc=0
+  pe_nondirectional_p4     files  r5  wall   619.75s  peak_conv   1335250 KB  peak_temp   1335250 KB  memPeak   18400 MB  pids  41  samples 617  rc=0
+### pe_directional_mc2 — 5 rep(s) from #1, serial, arm order alternating per rep
+  pe_directional_mc2       stream r1  wall   339.61s  peak_conv         0 KB  peak_temp    819071 KB  memPeak   16020 MB  pids  55  samples 338  rc=0
+  pe_directional_mc2       files  r1  wall   338.67s  peak_conv    667625 KB  peak_temp   1487801 KB  memPeak   17251 MB  pids  43  samples 337  rc=0
+  pe_directional_mc2       files  r2  wall   340.71s  peak_conv    667625 KB  peak_temp   1486098 KB  memPeak   17251 MB  pids  43  samples 339  rc=0
+  pe_directional_mc2       stream r2  wall   340.68s  peak_conv         0 KB  peak_temp    820786 KB  memPeak   16019 MB  pids  55  samples 339  rc=0
+  pe_directional_mc2       stream r3  wall   337.61s  peak_conv         0 KB  peak_temp    820687 KB  memPeak   16024 MB  pids  55  samples 336  rc=0
+  pe_directional_mc2       files  r3  wall   334.66s  peak_conv    667625 KB  peak_temp   1478833 KB  memPeak   17252 MB  pids  43  samples 333  rc=0
+  pe_directional_mc2       files  r4  wall   337.66s  peak_conv    667625 KB  peak_temp   1481648 KB  memPeak   17247 MB  pids  43  samples 336  rc=0
+  pe_directional_mc2       stream r4  wall   335.59s  peak_conv         0 KB  peak_temp    820324 KB  memPeak   16024 MB  pids  55  samples 334  rc=0
+  pe_directional_mc2       stream r5  wall   333.58s  peak_conv         0 KB  peak_temp    820194 KB  memPeak   16027 MB  pids  55  samples 332  rc=0
+  pe_directional_mc2       files  r5  wall   334.65s  peak_conv    667625 KB  peak_temp   1478998 KB  memPeak   17252 MB  pids  43  samples 333  rc=0
+
+### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C3 timing, 5 reps at 2M, three shapes -> c40edc0 validation: C3 timing, 5 reps at 2M, three shapes (#1120 full-scale)
+snapshot pushed: c40edc0
+
+########## S7 C3 timing, -p 2 reps @2M  [22:56:40] ##########
+### pe_directional_p2 — 3 rep(s) from #2, serial, arm order alternating per rep
+  pe_directional_p2        files  r2  wall  1205.74s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10188 MB  pids  19  samples 1201  rc=0
+  pe_directional_p2        stream r2  wall  1181.78s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9060 MB  pids  25  samples 1177  rc=0
+  pe_directional_p2        stream r3  wall  1169.69s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9059 MB  pids  25  samples 1165  rc=0
+  pe_directional_p2        files  r3  wall  1196.78s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10259 MB  pids  19  samples 1192  rc=0
+  pe_directional_p2        files  r4  wall  1190.73s  peak_conv    667625 KB  peak_temp    667625 KB  memPeak   10257 MB  pids  19  samples 1186  rc=0
+  pe_directional_p2        stream r4  wall  1185.82s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9064 MB  pids  25  samples 1181  rc=0
+
+### results.tsv written to /tmp/fs/run2m/results.tsv
+snapshot committed: C3 timing, -p 2 reps at 2M -> 74830ff validation: C3 timing, -p 2 reps at 2M (#1120 full-scale)
+snapshot pushed: 74830ff
+
+########## S8 full-scale reps of both 10M shapes, until the 12:00 guard  [00:56:19] ##########
+### pe_nondirectional_p4 — 1 rep(s) from #2, serial, arm order alternating per rep
+  pe_nondirectional_p4     files  r2  wall  3000.42s  peak_conv   6693466 KB  peak_temp   6693466 KB  memPeak   31102 MB  pids  41  samples 2987  rc=0
+  pe_nondirectional_p4     stream r2  wall  2958.10s  peak_conv         0 KB  peak_temp         0 KB  memPeak   22978 MB  pids  53  samples 2945  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: full-scale pe_nondirectional_p4 rep 2 -> a0e156b validation: full-scale pe_nondirectional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: a0e156b
+### pe_directional_p4 — 1 rep(s) from #2, serial, arm order alternating per rep
+  pe_directional_p4        files  r2  wall  2961.14s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2949  rc=0
+  pe_directional_p4        stream r2  wall  2943.24s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9811 MB  pids  29  samples 2931  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: full-scale pe_directional_p4 rep 2 -> 40228a0 validation: full-scale pe_directional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: 40228a0
+### pe_nondirectional_p4 — 1 rep(s) from #3, serial, arm order alternating per rep
+  pe_nondirectional_p4     stream r3  wall  2972.02s  peak_conv         0 KB  peak_temp         0 KB  memPeak   23447 MB  pids  53  samples 2959  rc=0
+  pe_nondirectional_p4     files  r3  wall  2988.33s  peak_conv   6693466 KB  peak_temp   6693466 KB  memPeak   31303 MB  pids  41  samples 2975  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: full-scale pe_nondirectional_p4 rep 3 -> 63f853c validation: full-scale pe_nondirectional_p4 rep 3 (#1120 full-scale)
+snapshot pushed: 63f853c
+### pe_directional_p4 — 1 rep(s) from #3, serial, arm order alternating per rep
+  pe_directional_p4        stream r3  wall  2974.40s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9804 MB  pids  29  samples 2962  rc=0
+  pe_directional_p4        files  r3  wall  2960.02s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2948  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+
+########## EXTRA pe_directional_p4 rep 4  [07:40:37] ##########
+### pe_directional_p4 — 1 rep(s) from #4, serial, arm order alternating per rep
+  pe_directional_p4        files  r4  wall  2938.87s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2927  rc=0
+  pe_directional_p4        stream r4  wall  2937.24s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9809 MB  pids  29  samples 2925  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: extra full-scale rep 4 -> 4de475c validation: extra full-scale rep 4 (#1120 full-scale)
+snapshot pushed: 4de475c
+guard: no time for rep 5
+EXTRA REPS DONE 09:19:27

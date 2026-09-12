@@ -396,6 +396,92 @@ pub struct ReadProcessing {
     pub maximum_length_cutoff: Option<u32>,
 }
 
+/// Whether the converted reads are streamed to the aligner through FIFOs
+/// instead of written to `--temp_dir` as files (#1120), and — when they are not —
+/// why not.
+///
+/// Streaming is the default. It removes the `_C_to_T` / `_G_to_A` temp files from
+/// the run's disk footprint entirely, which for a disk-constrained scratch is the
+/// difference between a run that starts and one that does not. Output is
+/// byte-identical either way, because the converted bytes have exactly one
+/// consumer and Bismark writes its own `@PG`.
+#[derive(Debug, Clone)]
+pub struct StreamConverted {
+    /// Stream through FIFOs (`true`) or write files (`false`).
+    pub enabled: bool,
+    /// Why files are being written, when `enabled` is `false`. `None` only when
+    /// the user asked for files outright with `--no_stream_converted`; every
+    /// automatic fallback carries a reason so it is never silent.
+    pub reason: Option<String>,
+}
+
+/// Resolve the streaming decision from everything knowable without touching the
+/// filesystem. The `--temp_dir` FIFO probe is applied later, in `run` (I/O, and
+/// this runs in every `resolve` unit test).
+///
+/// Bowtie 2 and minimap2 are streamed through FIFOs: both are verified to accept
+/// one for `-U` / `-1` / `-2` and to produce byte-identical records from it
+/// (`plans/09112026_stream-converted/SPIKE.md`). HISAT2 **rejects** a FIFO outright
+/// (exit 255), so it keeps files.
+///
+/// `rammap_in_memory` is the in-process rammap backend, which is a third case: it
+/// aligns inside this process, so it needs no file AND no pipe — the converter
+/// hands it the reads directly. The SUBPROCESS rammap backend keeps files, because
+/// whether the external binary accepts a FIFO is unverified.
+pub fn resolve_stream_converted(
+    no_stream_converted: bool,
+    aligner: Aligner,
+    combined_index: bool,
+    five_base: bool,
+    rammap_in_memory: bool,
+) -> StreamConverted {
+    let no = |reason: &str| StreamConverted {
+        enabled: false,
+        reason: Some(reason.to_string()),
+    };
+    if no_stream_converted {
+        // Asked for explicitly — nothing to explain.
+        return StreamConverted {
+            enabled: false,
+            reason: None,
+        };
+    }
+    if five_base {
+        // 5-Base aligns the raw reads to the UNCONVERTED genome, so it writes no
+        // converted temp files at all — there is nothing to stream.
+        return StreamConverted {
+            enabled: false,
+            reason: None,
+        };
+    }
+    match aligner {
+        Aligner::Bowtie2 | Aligner::Minimap2 => {}
+        Aligner::Hisat2 => {
+            return no(
+                "HISAT2 rejects a named pipe as its read input (it stats the file while \
+                 sniffing the format)",
+            );
+        }
+        Aligner::Rammap if rammap_in_memory => {
+            // The in-process backend aligns inside this process, so it takes the
+            // converted reads in memory — no temp file, and no pipe either.
+        }
+        Aligner::Rammap => {
+            return no(
+                "the subprocess rammap backend reads its converted reads from a file (only the \
+                 in-process backend takes them in memory)",
+            );
+        }
+    }
+    if combined_index {
+        return no("the combined-index alignment models still read the converted reads as files");
+    }
+    StreamConverted {
+        enabled: true,
+        reason: None,
+    }
+}
+
 /// The fully-resolved configuration (the seam consumed by later phases).
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -403,6 +489,11 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
+    /// `[#1120]` Whether the converted reads are streamed through FIFOs rather
+    /// than written to `--temp_dir`. Resolved by [`resolve_stream_converted`] and
+    /// then narrowed in `run` by the `--temp_dir` FIFO probe; every fallback
+    /// carries its reason so it is never silent.
+    pub stream_converted: StreamConverted,
     /// `[v2/experimental]` `--rammap_subprocess`: OPT OUT to the subprocess rammap
     /// backend (external `rammap` binary on `PATH`). `--rammap` now DEFAULTS to the
     /// in-process `rammap-core` backend (auto-threaded); this flag forces the subprocess
@@ -973,6 +1064,22 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
+        // #1120: stream the converted reads instead of writing them, unless the
+        // user, the backend, or the alignment model says otherwise. The
+        // `--temp_dir` FIFO probe narrows this further in `run`.
+        stream_converted: resolve_stream_converted(
+            cli.no_stream_converted,
+            aligner,
+            cli.combined_index
+                || cli.combined_index_sequential
+                || cli.combined_index_single_pass
+                || cli.combined_index_parallel,
+            cli.illumina_5base,
+            // The in-process rammap backend takes its reads in memory; the
+            // subprocess one does not. ONE predicate, shared with the routing in
+            // `process_se_chunk`, so the two can never disagree.
+            crate::aligner::inprocess_rammap_selected(aligner, cli.rammap_subprocess, format),
+        ),
         // rev2: opt-OUT to the subprocess rammap backend (guarded above: requires --rammap).
         rammap_subprocess: cli.rammap_subprocess,
         // rev2 SINGLE SOURCE OF TRUTH for the in-process rammap pool size: explicit
@@ -1693,6 +1800,20 @@ impl RunConfig {
                 self.genome.large_index,
             )
         };
+        // #1120: which side of the streaming decision this run landed on. The
+        // *reason* for a fallback is printed separately by `run` (never-silent);
+        // this line just states the resolved fact.
+        //
+        // Three states, not two: 5-Base aligns to the UNCONVERTED genome, so it
+        // has no converted reads to stream OR to write, and reporting it as
+        // "written to the temp dir as files" would name files that never exist.
+        let converted = if self.five_base {
+            "none (5-Base aligns the raw reads to the unconverted genome)"
+        } else if self.stream_converted.enabled {
+            "streamed to the aligner through FIFOs (no temp files)"
+        } else {
+            "written to the temp dir as files"
+        };
         format!(
             "Bismark aligner (Rust) — resolved configuration\n\
                aligner:        {} {} ({})\n\
@@ -1703,6 +1824,7 @@ impl RunConfig {
                {index_lines}\
                FASTA(s):       {} file(s) ({:?})\n\
                aligner_options: {}\n\
+               converted reads: {converted}\n\
                output:         BAM, dir={:?}, basename={:?}",
             self.aligner.name(),
             self.detected_aligner.version,
@@ -1743,6 +1865,10 @@ pub fn run_config_stub(
     RunConfig {
         command_line: "bismark (test stub)".into(),
         aligner,
+        stream_converted: StreamConverted {
+            enabled: false,
+            reason: None,
+        },
         rammap_subprocess: false,
         rammap_inprocess_threads: 1,
         five_base: false,
