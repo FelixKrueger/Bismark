@@ -337,3 +337,46 @@ aligners are slower, so the single converter thread keeps every consumer fed and
 never becomes the constraint, while the file arm still pays to write a gigabyte and read it
 back. But this run does not isolate that, and the effect is small enough that it does not need
 explaining to be reported.
+
+### 4.7 The §4.3 regression does not reproduce — retracted (2026-09-12)
+
+`pe_nondirectional_p4` at 10M pairs, now three reps per arm:
+
+| | median | reps (sorted, s) |
+|---|---|---|
+| **streamed** | **2972.0 s** | 2958.1 · 2972.0 · **3045.2** |
+| **files** | 2988.3 s | 2973.2 · 2988.3 · 3000.4 |
+
+**−0.55 %.** Two of the three streamed reps beat every files rep. The 3045.2 s that produced
+§4.3's "2.4 % slower" is the slowest of the three and sits 87 s above the next streamed rep,
+against a files spread of 27 s. It was an outlier.
+
+**§4.3's C3 conclusion is withdrawn.** There is no non-directional regression. The C1 and C2
+results in that section stand — those are exact comparisons and unaffected by timing noise.
+
+This is worth keeping as a record of how nearly a wrong conclusion got published. A single
+full-scale run showed a 2.4 % regression with a coherent-sounding mechanism attached — four
+consumers sharing two converted streams, less slack in the fan-out — and that story survived
+because it was plausible, not because it was tested. Reps killed it. The mechanism may still
+be real; it simply is not worth 2.4 % of wall time.
+
+### 4.8 C3 across every shape and scale
+
+| shape | scale | n | delta (streamed vs files) |
+|---|---|---|---|
+| `pe_directional_p2` | 2M | 4 | **−1.50 %** |
+| `pe_directional_p4` | 2M | 5 | −0.66 % |
+| `pe_nondirectional_p4` | 2M | 5 | −0.65 % |
+| `pe_directional_mc2` | 2M | 5 | −0.01 % |
+| `pe_directional_p4` | 10M | 2 | −0.45 % |
+| `pe_nondirectional_p4` | 10M | 3 | −0.55 % |
+| `pe_directional_mc2` | 10M | 1 | −0.50 % |
+
+**Streaming is not slower anywhere.** Every measurement is negative or zero, at both scales,
+on every shape. The largest effect is on the least-parallel shape and the smallest is under
+`--multicore`, and the 2M and 10M figures agree with each other on the two shapes measured at
+both.
+
+The honest headline remains **wall-neutral to slightly faster** — the deltas are under 1 % on
+most shapes and this is a benchmark, not a proof. But the pre-merge concern was a *regression*
+from coupling the aligner instances, and there is no evidence of one.
