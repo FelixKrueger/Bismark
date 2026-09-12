@@ -170,3 +170,10 @@ snapshot pushed: 74830ff
   pe_nondirectional_p4     stream r2  wall  2958.10s  peak_conv         0 KB  peak_temp         0 KB  memPeak   22978 MB  pids  53  samples 2945  rc=0
 
 ### results.tsv written to /tmp/fs/run/results.tsv
+snapshot committed: full-scale pe_nondirectional_p4 rep 2 -> a0e156b validation: full-scale pe_nondirectional_p4 rep 2 (#1120 full-scale)
+snapshot pushed: a0e156b
+### pe_directional_p4 — 1 rep(s) from #2, serial, arm order alternating per rep
+  pe_directional_p4        files  r2  wall  2961.14s  peak_conv   3346733 KB  peak_temp   3346733 KB  memPeak   16264 MB  pids  23  samples 2949  rc=0
+  pe_directional_p4        stream r2  wall  2943.24s  peak_conv         0 KB  peak_temp         0 KB  memPeak    9811 MB  pids  29  samples 2931  rc=0
+
+### results.tsv written to /tmp/fs/run/results.tsv

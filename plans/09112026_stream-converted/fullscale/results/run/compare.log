@@ -40,3 +40,6 @@
   pe_nondirectional_p4     rep2       12131470 records  BAM IDENTICAL        report IDENTICAL
 
 ### C1: all pairs identical
+  pe_directional_p4        rep2       12131476 records  BAM IDENTICAL        report IDENTICAL
+
+### C1: all pairs identical
