@@ -11,11 +11,11 @@
 
 | | claim | result |
 |---|---|---|
-| **C1** | output byte-identical | **PASS** — 24 arm-pairs, 0 differing |
+| **C1** | output byte-identical | **PASS** — 25 arm-pairs, 0 differing |
 | **C2** | converted temp files gone | **PASS** — 0 KB against up to 6.38 GiB |
 | **C3** | no wall-time regression | **PASS** — never slower; −0.01 % to −1.50 % |
 
-51 runs, one at a time, mouse RRBS on GRCm39.
+52 runs, one at a time, mouse RRBS on GRCm39.
 
 **Three things worth a reader's attention beyond the pass/fail.**
 
@@ -418,3 +418,26 @@ both.
 The honest headline remains **wall-neutral to slightly faster** — the deltas are under 1 % on
 most shapes and this is a benchmark, not a proof. But the pre-merge concern was a *regression*
 from coupling the aligner instances, and there is no evidence of one.
+
+### 4.9 Final tally
+
+Benchmarking ended 2026-09-12 07:36 UTC.
+
+| | |
+|---|---|
+| benchmark runs | **52**, every one serial on an otherwise idle machine |
+| C1 arm-pairs compared | **25** — 0 differing |
+| shapes | 4 (`-p 2`, `-p 4`, `--non_directional`, `--multicore 2`) |
+| scales | 2,000,000 and 10,000,000 read pairs |
+| §7 probes | 3, all pass |
+
+`pe_directional_p4` at 10M finished at n=3: streamed 2943.2 · 2946.8 · 2974.4 s against files
+2955.7 · 2960.0 · 2961.1 s, median **−0.45 %**. Worth noting the third streamed rep (2974.4 s)
+is slower than every files rep — the per-rep spread is comparable to the effect being measured,
+which is the honest limit on how hard a sub-1 % claim can be pushed from three reps. The
+direction is consistent across seven shape/scale groups; the magnitude on any one of them is
+not.
+
+**Deliberately not run**, for time: further full-scale reps (the schedule was stopped early to
+protect the write-up), and the human WGBS accession `SRR24827373` named in `FULLSCALE.md` §3.
+Neither is needed for the three claims; both would strengthen the C3 magnitude.

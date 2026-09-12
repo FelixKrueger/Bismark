@@ -92,11 +92,11 @@ cache warmed identically before every run. Arm order alternated between reps. A 
 series per run: converted bytes on disk, whole temp dir, output, memory (total *and*
 anonymous), CPU, threads.
 
-**51 runs.**
+**52 runs.**
 
 ### C1 — byte-identity: PASS
 
-**24 arm-pairs compared, 0 differing.** md5 over `samtools view` record bodies plus the
+**25 arm-pairs compared, 0 differing.** md5 over `samtools view` record bodies plus the
 path-filtered report, every shape, every rep, both scales. Record counts are stable across
 reps within a shape, so both arms are deterministic.
 
@@ -136,7 +136,7 @@ Median wall, streamed against files. Negative is faster.
 | `pe_nondirectional_p4` | 2M | 5 | **−0.65 %** |
 | `pe_nondirectional_p4` | 10M | 3 | **−0.55 %** |
 | `pe_directional_mc2` | 10M | 1 | **−0.50 %** |
-| `pe_directional_p4` | 10M | 2 | **−0.39 %** |
+| `pe_directional_p4` | 10M | 3 | **−0.45 %** |
 | `pe_directional_mc2` | 2M | 5 | **−0.01 %** |
 <!-- C3TABLE:END -->
 
