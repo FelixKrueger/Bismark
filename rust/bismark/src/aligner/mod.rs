@@ -1138,13 +1138,37 @@ fn five_base_aligner_options(config: &RunConfig) -> String {
                 .map(|x| x.get())
                 .unwrap_or(2)
         });
-    match config.aligner {
-        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
-        Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),
+    five_base_engine_options(config.aligner, &config.aligner_options, n)
+}
+
+/// The per-engine 5-Base option string for `n` aligner threads. bowtie2/hisat2 need
+/// `--reorder`: with `-p N > 1` they otherwise emit records in thread-completion order,
+/// and the PE loop reads SAM in lockstep with the FastQ (#1125). minimap2 always keeps
+/// input order.
+fn five_base_engine_options(aligner: Aligner, resolved: &str, n: usize) -> String {
+    match aligner {
+        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n} --reorder"),
+        Aligner::Hisat2 => {
+            format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n} --reorder")
+        }
         // minimap2 (default 5-Base engine): reuse the resolved options but lift the
         // faithful `-t 2` to `-t {n}` (all cores) for this non-byte-identical path.
-        _ => config.aligner_options.replace("-t 2", &format!("-t {n}")),
+        _ => resolved.replace("-t 2", &format!("-t {n}")),
     }
+}
+
+/// #1125: fail loud if an aligner SAM record does not belong to the FastQ read the
+/// lockstep loop is on (`expected` = the mate-suffix-stripped FastQ identifier). A
+/// silent desync pairs one read's CIGAR/POS with another read's SEQ.
+fn five_base_check_lockstep(rec: &SamRecord, expected: &str) -> Result<()> {
+    if strip_mate_suffix(&rec.qname) != expected {
+        return Err(AlignerError::Validation(format!(
+            "5-Base: aligner output out of step with the FastQ input (desync): SAM record \
+             '{}' where read '{expected}' was expected",
+            rec.qname
+        )));
+    }
+    Ok(())
 }
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
@@ -1491,7 +1515,7 @@ fn five_base_align_and_call_pe(
         std::collections::HashSet::new();
     let mut dups: u64 = 0;
     while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
-        let Some((_id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
+        let Some((id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
             break;
         };
         count += 1;
@@ -1526,9 +1550,14 @@ fn five_base_align_and_call_pe(
         // #787: force whitespace truncation (see the SE path) — minimap2 PE truncates the
         // QNAME at the first space, so the real Illumina header's `1:N:0:` comment must be
         // dropped here too or every pair desyncs.
-        let fixed = convert::fix_id(convert::chomp_newline(&id1), true);
-        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
-        let identifier = strip_mate_suffix(&String::from_utf8_lossy(id_bytes));
+        let fastq_identifier = |id: &[u8]| {
+            let fixed = convert::fix_id(convert::chomp_newline(id), true);
+            let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
+            strip_mate_suffix(&String::from_utf8_lossy(id_bytes))
+        };
+        let identifier = fastq_identifier(&id1);
+        five_base_check_lockstep(rec1, &identifier)?;
+        five_base_check_lockstep(rec2, &fastq_identifier(&id2))?;
         let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
         let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
         let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
@@ -1612,6 +1641,25 @@ fn five_base_emit_pe_record(
     if !proper {
         counters.no_single_alignment_found += 1;
         return Ok(None);
+    }
+    // #1125: each mate's CIGAR must span exactly its FastQ read. The window-length gate
+    // below cannot catch every disagreement (a CIGAR 2 bp too long that ends at a
+    // chromosome edge loses its +2 context and still measures read_len + 2), and a
+    // mismatch that slips through kills the BAM writer much later.
+    for (rec, seq, mate) in [(rec1, seq1_uc, 1), (rec2, seq2_uc, 2)] {
+        let query_len: u64 = crate::aligner::methylation::parse_cigar(&rec.cigar)?
+            .iter()
+            .filter(|(_, op)| matches!(op, b'M' | b'I' | b'S' | b'=' | b'X'))
+            .map(|&(len, _)| u64::from(len))
+            .sum();
+        if query_len != seq.len() as u64 {
+            return Err(AlignerError::Validation(format!(
+                "5-Base: read {mate} of '{identifier}' is {} bp but its aligner CIGAR {} \
+                 spans {query_len} bp (aligner output out of step with the FastQ input?)",
+                seq.len(),
+                rec.cigar
+            )));
+        }
     }
     counters.unique_best_alignment_count += 1;
     let index = if rec1.flag & 0x10 != 0 { 3 } else { 0 }; // R1 reverse → OB, else OT
@@ -6578,6 +6626,58 @@ mod tests {
         );
         assert_eq!(c.unique_best_alignment_count, 1);
         assert_eq!(c.total_me_cpg, 1);
+    }
+
+    /// #1125: bowtie2/hisat2 with `-p N > 1` emit records in thread-completion order
+    /// unless `--reorder` is given; the 5-Base PE loop reads them in lockstep with the
+    /// FastQ, so `--reorder` is load-bearing. minimap2 always preserves input order.
+    #[test]
+    fn five_base_engine_options_reorder_for_bowtie2_hisat2() {
+        let bt2 = five_base_engine_options(Aligner::Bowtie2, "", 4);
+        assert!(bt2.split_whitespace().any(|t| t == "--reorder"), "{bt2}");
+        assert!(bt2.contains("-p 4"), "{bt2}");
+        let hs2 = five_base_engine_options(Aligner::Hisat2, "", 4);
+        assert!(hs2.split_whitespace().any(|t| t == "--reorder"), "{hs2}");
+        let mm2 = five_base_engine_options(Aligner::Minimap2, "-ax sr -t 2", 4);
+        assert_eq!(mm2, "-ax sr -t 4");
+    }
+
+    /// #1125: the lockstep QNAME check accepts the matching pair (mate suffixes
+    /// stripped) and rejects a record belonging to a different read pair.
+    #[test]
+    fn five_base_check_lockstep_detects_desync() {
+        let ok = SamRecord::parse("p1/1\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII").unwrap();
+        assert!(five_base_check_lockstep(&ok, "p1").is_ok());
+        let other = SamRecord::parse("p7\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII").unwrap();
+        let err = five_base_check_lockstep(&other, "p1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("desync") && err.contains("p7") && err.contains("p1"),
+            "{err}"
+        );
+    }
+
+    /// #1125 crash path: a mate whose CIGAR is exactly 2 bases longer than its FastQ read
+    /// and ends at the chromosome edge made the 3′ +2 append guard fire, leaving the
+    /// window at CIGAR-length == read_len + 2 — so the length gate passed and the BAM
+    /// writer later died with "read length-sequence length mismatch". A CIGAR/read length
+    /// disagreement is a desync and must fail loud here instead.
+    #[test]
+    fn five_base_emit_pe_cigar_read_length_mismatch_is_error() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA"); // 16 bp
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t4M\t=\t11\t14\tTGAA\tIIII").unwrap();
+        // R2 6M at POS 11 ends at the chromosome end (16) but the FastQ R2 is only 4 bp.
+        let r2 = SamRecord::parse("p\t147\tchr1\t11\t60\t6M\t=\t3\t-14\tAACGAA\tIIIIII").unwrap();
+        let mut c = Counters::default();
+        let err = five_base_emit_pe_record(
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
+            &mut c,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("CIGAR"), "{err}");
     }
 
     /// A non-proper pair (R1 not flagged 0x2, e.g. one mate unmapped) emits nothing and
