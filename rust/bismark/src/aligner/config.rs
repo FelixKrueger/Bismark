@@ -498,6 +498,8 @@ pub struct RunConfig {
     pub add_barcode: bool,
     /// `--add_umi`: write `UR:Z:<umi>` parsed from QNAME field 1.
     pub add_umi: bool,
+    /// `--strandID`: write `YS:Z:<strand>` on paired-end records.
+    pub strand_id: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -1020,6 +1022,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ambig_bam: cli.ambig_bam,
         add_barcode: cli.add_barcode,
         add_umi: cli.add_umi,
+        strand_id: cli.strand_id,
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
@@ -1710,7 +1713,11 @@ impl RunConfig {
             self.genome.genome_dir.display(),
             self.genome.fastas.len(),
             self.genome.fasta_kind,
-            self.aligner_options,
+            if self.five_base {
+                crate::aligner::five_base_aligner_options(self)
+            } else {
+                self.aligner_options.clone()
+            },
             self.output.output_dir,
             self.output.basename,
         )
@@ -1787,6 +1794,7 @@ pub fn run_config_stub(
         ambig_bam: false,
         add_barcode: false,
         add_umi: false,
+        strand_id: false,
         output: OutputTarget {
             output_dir: PathBuf::from("."),
             temp_dir: PathBuf::from("."),

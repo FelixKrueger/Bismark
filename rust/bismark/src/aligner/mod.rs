@@ -214,6 +214,9 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
+    if config.strand_id && matches!(config.layout, config::ReadLayout::SingleEnd { .. }) {
+        eprintln!("Note: --strandID only applies to paired-end output; it has no effect here.");
+    }
     // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
     // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
     // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
@@ -1531,7 +1534,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
 /// bowtie2,hisat2 `-p N`. (`-p` and `--multicore`/`--parallel` are different axes:
 /// `-p` = threads inside one aligner instance, `--multicore` = the fork model; for the
 /// single-instance 5-Base path `-p` is the right knob.)
-fn five_base_aligner_options(config: &RunConfig) -> String {
+pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
     let n = config
         .bowtie_threads
         .filter(|&p| p > 0)
@@ -1547,8 +1550,11 @@ fn five_base_aligner_options(config: &RunConfig) -> String {
                 .unwrap_or(2)
         });
     match config.aligner {
-        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n}"),
-        Aligner::Hisat2 => format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n}"),
+        // `--reorder`: the driver pairs FASTQ and SAM records by position.
+        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n} --reorder"),
+        Aligner::Hisat2 => {
+            format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n} --reorder")
+        }
         // minimap2 (default 5-Base engine): reuse the resolved options but lift the
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
         // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
@@ -1933,7 +1939,7 @@ fn five_base_align_and_call_pe(
         std::collections::HashSet::new();
     let mut dups: u64 = 0;
     while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
-        let Some((_id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
+        let Some((id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
             break;
         };
         count += 1;
@@ -1969,9 +1975,15 @@ fn five_base_align_and_call_pe(
         // #787: force whitespace truncation (see the SE path) — minimap2 PE truncates the
         // QNAME at the first space, so the real Illumina header's `1:N:0:` comment must be
         // dropped here too or every pair desyncs.
-        let fixed = convert::fix_id(convert::chomp_newline(&id1), true);
-        let id_bytes = fixed.strip_prefix(b"@").unwrap_or(&fixed);
-        let identifier = strip_mate_suffix(&String::from_utf8_lossy(id_bytes));
+        let identifier = five_base_fastq_id(&id1);
+        five_base_check_lockstep(config.aligner.name(), count, &identifier, rec1, "R1")?;
+        five_base_check_lockstep(
+            config.aligner.name(),
+            count,
+            &five_base_fastq_id(&id2),
+            rec2,
+            "R2",
+        )?;
         let seq1_uc: Vec<u8> = convert::chomp_newline(&seq1).to_ascii_uppercase();
         let seq2_uc: Vec<u8> = convert::chomp_newline(&seq2).to_ascii_uppercase();
         let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
@@ -2000,6 +2012,7 @@ fn five_base_align_and_call_pe(
             refid,
             config.phred64,
             config.dovetail,
+            config.strand_id,
             config.five_base_baseq,
             counters,
         )? {
@@ -2030,6 +2043,36 @@ fn five_base_align_and_call_pe(
     Ok(())
 }
 
+/// A FASTQ header as the aligner reports it: `@` dropped, cut at the first whitespace,
+/// `/1`/`/2` stripped.
+fn five_base_fastq_id(header: &[u8]) -> String {
+    let fixed = convert::fix_id(convert::chomp_newline(header), true);
+    strip_mate_suffix(&String::from_utf8_lossy(
+        fixed.strip_prefix(b"@").unwrap_or(&fixed),
+    ))
+}
+
+/// Fail if the aligner's record for read pair `pair` is not the FASTQ read `fastq_id`.
+fn five_base_check_lockstep(
+    aligner: &str,
+    pair: u64,
+    fastq_id: &str,
+    rec: &SamRecord,
+    mate: &str,
+) -> Result<()> {
+    let sam_id = strip_mate_suffix(&rec.qname);
+    let fastq_id = fastq_id.trim_end_matches('\r');
+    // Aligners cap QNAME at the SAM limit of 254 characters.
+    let truncated = sam_id.len() >= 254 && fastq_id.starts_with(sam_id.as_str());
+    if sam_id == fastq_id || truncated {
+        return Ok(());
+    }
+    Err(AlignerError::Validation(format!(
+        "{aligner} output is out of step with the FASTQ input at read pair {pair}: {mate} is \
+         '{fastq_id}' in the FASTQ but '{sam_id}' in the alignment"
+    )))
+}
+
 /// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
 /// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
@@ -2047,6 +2090,7 @@ fn five_base_emit_pe_record(
     refid: &HashMap<String, usize>,
     phred64: bool,
     dovetail: bool,
+    strand_id: bool,
     baseq: u8,
     counters: &mut Counters,
 ) -> Result<Option<(crate::io::BismarkRecord, crate::io::BismarkRecord)>> {
@@ -2113,6 +2157,7 @@ fn five_base_emit_pe_record(
         refid,
         phred64,
         dovetail,
+        strand_id,
         // 5-Base UMIs use --five_base_umi_qname (RX written by the 5-Base path); the general
         // --barcode/--umi tag emission is not wired here, so pass no extra tags.
         crate::aligner::output::BarcodeUmiTags::default(),
@@ -5318,6 +5363,7 @@ fn route_pe_decision(
                 refid,
                 config.phred64,
                 dovetail,
+                config.strand_id,
                 barcode_umi,
             )?;
             write_record(&mut sinks.bam, &rec1)?;
@@ -7298,8 +7344,8 @@ mod tests {
         let r2 = SamRecord::parse("p\t147\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0").unwrap();
         let mut c = Counters::default();
         let (o1, o2) = five_base_emit_pe_record(
-            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
-            &mut c,
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
+            0, &mut c,
         )
         .unwrap()
         .expect("proper pair emits two records");
@@ -7325,8 +7371,8 @@ mod tests {
         let r2 = SamRecord::parse("p\t133\t*\t0\t0\t*\t*\t0\t0\tGAAT\tIIII").unwrap();
         let mut c = Counters::default();
         let out = five_base_emit_pe_record(
-            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, 0,
-            &mut c,
+            &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
+            0, &mut c,
         )
         .unwrap();
         assert!(out.is_none());
@@ -7725,5 +7771,89 @@ mod tests {
             replace_minimap2_threads("-a -t 25 -x sr", 8),
             "-a -t 8 -x sr"
         );
+    }
+
+    #[test]
+    fn five_base_lockstep_accepts_mate_suffix_and_rejects_another_read() {
+        let sam = |q: &str| {
+            SamRecord::parse(&format!(
+                "{q}\t99\tchr1\t100\t42\t4M\t=\t150\t54\tACGT\tFFFF\n"
+            ))
+            .unwrap()
+        };
+        assert!(five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readA"), "R1").is_ok());
+        assert!(five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readA/2"), "R2").is_ok());
+        let err = five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readB"), "R1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("read pair 7") && err.contains("'readA'") && err.contains("'readB'"),
+            "{err}"
+        );
+    }
+
+    fn five_base_stub(aligner: config::Aligner) -> RunConfig {
+        let mut c = config::run_config_stub(
+            aligner,
+            config::Mm2Preset::Sr,
+            PathBuf::from("ct"),
+            PathBuf::from("ga"),
+            config::LibraryType::Directional,
+            config::ReadLayout::PairedEnd {
+                mates1: vec!["r1.fq".into()],
+                mates2: vec!["r2.fq".into()],
+            },
+        );
+        c.five_base = true;
+        c.bowtie_threads = Some(4);
+        c
+    }
+
+    #[test]
+    fn five_base_bowtie2_and_hisat2_keep_input_order() {
+        for aligner in [config::Aligner::Bowtie2, config::Aligner::Hisat2] {
+            let opts = five_base_aligner_options(&five_base_stub(aligner));
+            let toks: Vec<&str> = opts.split_whitespace().collect();
+            assert!(toks.contains(&"--reorder"), "{aligner:?}: {opts}");
+            assert!(
+                toks.windows(2).any(|w| w == ["-p", "4"]),
+                "{aligner:?}: {opts}"
+            );
+        }
+    }
+
+    #[test]
+    fn five_base_summary_prints_the_options_that_run() {
+        let config = five_base_stub(config::Aligner::Bowtie2);
+        let summary = config.summary();
+        assert!(
+            summary.contains(&format!(
+                "aligner_options: {}\n",
+                five_base_aligner_options(&config)
+            )),
+            "{summary}"
+        );
+    }
+
+    #[test]
+    fn five_base_fastq_id_matches_aligner_qname_normalisation() {
+        assert_eq!(five_base_fastq_id(b"@pair1/1\n"), "pair1");
+        assert_eq!(five_base_fastq_id(b"@pair1 1:N:0:ACGT\n"), "pair1");
+        assert_eq!(five_base_fastq_id(b"@pair1/2\t2:N:0:ACGT\n"), "pair1");
+    }
+
+    #[test]
+    fn five_base_lockstep_tolerates_crlf_and_qname_cap() {
+        let sam = |q: &str| {
+            SamRecord::parse(&format!(
+                "{q}\t99\tchr1\t100\t42\t4M\t=\t150\t54\tACGT\tFFFF\n"
+            ))
+            .unwrap()
+        };
+        assert!(five_base_check_lockstep("Bowtie 2", 1, "readA\r", &sam("readA"), "R1").is_ok());
+        let long = "x".repeat(300);
+        assert!(five_base_check_lockstep("Bowtie 2", 1, &long, &sam(&long[..254]), "R1").is_ok());
+        let other = format!("y{}", &long[1..]);
+        assert!(five_base_check_lockstep("Bowtie 2", 1, &other, &sam(&long[..254]), "R1").is_err());
     }
 }
