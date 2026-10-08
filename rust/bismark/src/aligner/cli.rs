@@ -458,7 +458,7 @@ pub struct Cli {
     /// minimap2 Nanopore preset (`-x map-ont`; the default; minimap2 mode only).
     #[arg(long = "mm2_nanopore", visible_alias = "nanopore")]
     pub mm2_nanopore: bool,
-    /// Report the strand identity (deferred).
+    /// Paired-end only: add `YS:Z:OT|CTOT|CTOB|OB` naming each pair's alignment strand.
     #[arg(long = "strandID")]
     pub strand_id: bool,
 
