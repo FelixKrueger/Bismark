@@ -2073,6 +2073,24 @@ fn five_base_check_lockstep(
     )))
 }
 
+/// Fail unless `cigar` consumes exactly `read_len` read bases (M/I/S/=/X).
+fn five_base_check_cigar_covers_read(
+    identifier: &str,
+    mate: &str,
+    cigar: &str,
+    read_len: usize,
+) -> Result<()> {
+    let covered = crate::aligner::inprocess::consumed_read_len(cigar);
+    if covered == Some(read_len) {
+        return Ok(());
+    }
+    let covered = covered.map_or_else(|| "an unparseable number of".to_string(), |n| n.to_string());
+    Err(AlignerError::Validation(format!(
+        "the aligner's CIGAR {cigar} for {mate} of read pair '{identifier}' covers {covered} read \
+         bases, but the read has {read_len}"
+    )))
+}
+
 /// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
 /// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
@@ -2100,6 +2118,8 @@ fn five_base_emit_pe_record(
         counters.no_single_alignment_found += 1;
         return Ok(None);
     }
+    five_base_check_cigar_covers_read(identifier, "R1", &rec1.cigar, seq1_uc.len())?;
+    five_base_check_cigar_covers_read(identifier, "R2", &rec2.cigar, seq2_uc.len())?;
     counters.unique_best_alignment_count += 1;
     let index = if rec1.flag & 0x10 != 0 { 3 } else { 0 }; // R1 reverse → OB, else OT
     let best = BestAlignmentPaired {
@@ -7855,5 +7875,39 @@ mod tests {
         assert!(five_base_check_lockstep("Bowtie 2", 1, &long, &sam(&long[..254]), "R1").is_ok());
         let other = format!("y{}", &long[1..]);
         assert!(five_base_check_lockstep("Bowtie 2", 1, &other, &sam(&long[..254]), "R1").is_err());
+    }
+
+    #[test]
+    fn five_base_pe_rejects_a_cigar_that_does_not_cover_its_read() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t6M\t=\t5\t6\tTGAA\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t147\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0").unwrap();
+        let err = five_base_emit_pe_record(
+            &r1,
+            &r2,
+            "p",
+            b"TGAA",
+            b"IIII",
+            b"GAAT",
+            b"IIII",
+            &genome,
+            &refid,
+            false,
+            true,
+            false,
+            0,
+            &mut Counters::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("6M")
+                && err.contains("R1")
+                && err.contains("covers 6 read bases, but the read has 4"),
+            "{err}"
+        );
+        assert!(five_base_check_cigar_covers_read("p", "R2", "2S2M", 4).is_ok());
+        assert!(five_base_check_cigar_covers_read("p", "R2", "4Z", 4).is_err());
     }
 }
