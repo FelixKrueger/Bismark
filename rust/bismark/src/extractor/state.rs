@@ -207,7 +207,7 @@ impl ExtractState {
             // > 20% orphans: orphan_reads_called * 5 > records_processed.
             if self.report.orphan_reads_called.saturating_mul(5) > self.report.records_processed {
                 eprintln!(
-                    "warning: --allow_discordant: {} of {} records are orphans (>20%); \
+                    "warning: --allow_discordant: {} of {} templates are orphans (>20%); \
                      input may not be name-grouped (query-sorted / name-collated)",
                     self.report.orphan_reads_called, self.report.records_processed
                 );

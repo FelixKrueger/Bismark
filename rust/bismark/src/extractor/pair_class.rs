@@ -21,6 +21,7 @@
 //! is always [`PairClass::Concordant`], so flag-on output on Bismark input is
 //! byte-identical to the default path (modulo the opt-in report section).
 
+use crate::extractor::error::BismarkExtractorError;
 use crate::extractor::overlap::is_forward_pair_strand;
 use crate::io::{BismarkPair, BismarkStrand};
 
@@ -144,6 +145,32 @@ fn is_top_origin(strand: BismarkStrand) -> bool {
 fn reference_end_of(record: &crate::io::BismarkRecord, start: usize) -> usize {
     use crate::io::CigarExt;
     record.cigar().reference_end(start)
+}
+
+/// Templates read before [`OrphanGuard`] checks the orphan rate.
+pub const ORPHAN_CHECK_TEMPLATES: u64 = 1000;
+
+/// Fails an `--allow_discordant` run whose first [`ORPHAN_CHECK_TEMPLATES`] templates are mostly
+/// orphans, the signature of input that is not name-grouped.
+#[derive(Debug, Default)]
+pub struct OrphanGuard {
+    templates: u64,
+    orphans: u64,
+}
+
+impl OrphanGuard {
+    /// Count one template (a pair, or an orphan when `orphan`).
+    pub fn observe(&mut self, orphan: bool) -> Result<(), BismarkExtractorError> {
+        self.templates += 1;
+        self.orphans += u64::from(orphan);
+        if self.templates == ORPHAN_CHECK_TEMPLATES && self.orphans * 2 > self.templates {
+            return Err(BismarkExtractorError::NotNameGrouped {
+                orphans: self.orphans,
+                templates: self.templates,
+            });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -303,5 +330,31 @@ mod tests {
         assert_eq!(r2.record_strand(), BismarkStrand::OT);
         let pair = BismarkPair::from_mates(r1, r2).unwrap();
         assert_eq!(classify_pair(&pair, 0, 0), PairClass::Concordant);
+    }
+
+    #[test]
+    fn orphan_guard_fails_a_mostly_orphan_start_only_once_enough_templates_are_seen() {
+        let mut all_orphans = OrphanGuard::default();
+        for _ in 1..ORPHAN_CHECK_TEMPLATES {
+            assert!(
+                all_orphans.observe(true).is_ok(),
+                "no verdict before the check point"
+            );
+        }
+        assert!(matches!(
+            all_orphans.observe(true),
+            Err(BismarkExtractorError::NotNameGrouped {
+                orphans: 1000,
+                templates: 1000
+            })
+        ));
+
+        let mut half = OrphanGuard::default();
+        for i in 0..2 * ORPHAN_CHECK_TEMPLATES {
+            assert!(
+                half.observe(i % 2 == 0).is_ok(),
+                "exactly half orphans is not over half"
+            );
+        }
     }
 }

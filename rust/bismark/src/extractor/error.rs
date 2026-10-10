@@ -244,6 +244,18 @@ pub enum BismarkExtractorError {
         message: String,
     },
 
+    /// `--allow_discordant` input whose first templates are mostly orphans.
+    #[error(
+        "--allow_discordant: {orphans} of the first {templates} templates are orphans, so the input \
+         is not name-grouped; run `samtools collate` (or `samtools sort -n`) on it first"
+    )]
+    NotNameGrouped {
+        /// Orphan templates among the first `templates`.
+        orphans: u64,
+        /// Templates (pairs + orphans) read when the check ran.
+        templates: u64,
+    },
+
     // ─── Inline-streaming epic Phase 2 (in-process downstream chain) ─────────
     /// The in-process `bismark2bedGraph` / `coverage2cytosine` chain failed —
     /// argv parse error, config validation error, or a `run()` error from the

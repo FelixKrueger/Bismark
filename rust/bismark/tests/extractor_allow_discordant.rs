@@ -139,6 +139,42 @@ fn run(bam: &Path, outdir: &Path, paired: bool, extra: &[&str]) -> assert_cmd::a
     cmd.assert()
 }
 
+/// As [`run`] but in the default (strand-split) output mode, without `--comprehensive`.
+fn run_default(bam: &Path, outdir: &Path, extra: &[&str]) -> assert_cmd::assert::Assert {
+    fs::create_dir_all(outdir).unwrap();
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+    cmd.arg(bam)
+        .arg("--paired-end")
+        .arg("--output_dir")
+        .arg(outdir);
+    for a in extra {
+        cmd.arg(a);
+    }
+    cmd.assert()
+}
+
+fn legacy_and_parallel_config(
+    bam: &Path,
+    dir: &Path,
+    parallel: &str,
+) -> bismark::extractor::cli::ResolvedConfig {
+    fs::create_dir_all(dir).unwrap();
+    Cli::try_parse_from([
+        "bismark_methylation_extractor",
+        "--paired-end",
+        "--comprehensive",
+        "--allow_discordant",
+        "--parallel",
+        parallel,
+        "--output_dir",
+        dir.to_str().unwrap(),
+        bam.to_str().unwrap(),
+    ])
+    .unwrap()
+    .validate()
+    .unwrap()
+}
+
 fn dir_snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut map = BTreeMap::new();
     for entry in fs::read_dir(dir).unwrap() {
@@ -760,4 +796,224 @@ fn se_mode_secondary_skipped_and_counted() {
     run(&bam, &out_off, false, &[])
         .failure()
         .stderr(predicates::str::contains("missing required Bismark tag"));
+}
+
+/// Same-origin, same-orientation (`OT`+`OT`) overlapping pair: the one FF class whose mates sit on
+/// the same strand and can share reference positions, so the generic dedup must count them once.
+#[test]
+fn ot_ot_overlapping_pair_counts_shared_positions_once() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("sample.bam");
+    let r1 = synth(b"ff", b"CT", b"CT", b"ZZZZZ.....", 100, 0, 0x1 | 0x40);
+    let r2 = synth(b"ff", b"CT", b"CT", b"ZZZZZ.....", 102, 0, 0x1 | 0x80);
+    write_bam(&bam, header_two_chr(), vec![Rec::Bism(r1), Rec::Bism(r2)]);
+
+    let out = work.path().join("on");
+    run(&bam, &out, true, &["--allow_discordant"]).success();
+    let report = read_report(&out, "sample");
+    assert_eq!(
+        total_calls(&report),
+        7,
+        "5 from R1 + 2 unique to R2 (105, 106)"
+    );
+    assert_eq!(
+        report_value(
+            &report,
+            "Same-chromosome discordant pairs called independently:"
+        ),
+        1
+    );
+    let blob = context_blob(&out, "sample");
+    for pos in 100..=106 {
+        let needle = format!("\tchr1\t{pos}\t");
+        assert_eq!(
+            blob.matches(&needle).count(),
+            1,
+            "ref pos {pos} once:\n{blob}"
+        );
+    }
+}
+
+/// Default (strand-split) mode: an Independent pair routes each mate by its own strand, so a
+/// directional pair's `CTOT` R2 lands in the `CTOT` file rather than R1's `OT` file.
+#[test]
+fn independent_pair_routes_each_mate_to_its_own_strand_file() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("sample.bam");
+    let r1 = synth(b"x", b"CT", b"CT", b"Z.........", 100, 0, 0x1 | 0x40);
+    let r2 = synth(b"x", b"GA", b"CT", b"Z.........", 300, 1, 0x1 | 0x80);
+    write_bam(&bam, header_two_chr(), vec![Rec::Bism(r1), Rec::Bism(r2)]);
+
+    let out = work.path().join("out");
+    run_default(&bam, &out, &["--allow_discordant"]).success();
+    let ot = fs::read_to_string(out.join("CpG_OT_sample.txt")).unwrap();
+    let ctot = fs::read_to_string(out.join("CpG_CTOT_sample.txt")).unwrap();
+    assert!(
+        ot.contains("\tchr1\t100\t") && !ot.contains("\tchr2\t"),
+        "R1 only in OT:\n{ot}"
+    );
+    assert!(
+        ctot.contains("\tchr2\t") && !ctot.contains("\tchr1\t"),
+        "R2 only in CTOT:\n{ctot}"
+    );
+}
+
+/// More than one 4096-item producer batch, with an orphan on the batch boundary: `--parallel`
+/// output is worker-count invariant and the serial driver matches the parallel one.
+#[test]
+fn parallel_and_serial_agree_across_batch_boundaries() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("big.bam");
+    let mut recs = Vec::new();
+    for i in 0..10_000usize {
+        let q = format!("t{i}");
+        let q = q.as_bytes();
+        let start = 100 + (i * 37) % 900_000;
+        match i % 4 {
+            0 => {
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"CT",
+                    b"CT",
+                    b"Zz.X.h....",
+                    start,
+                    0,
+                    0x1 | 0x40,
+                )));
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"GA",
+                    b"CT",
+                    b"Zz.X.h....",
+                    start + 20,
+                    0,
+                    0x1 | 0x80,
+                )));
+            }
+            1 => {
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"CT",
+                    b"CT",
+                    b"Z.........",
+                    start,
+                    0,
+                    0x1 | 0x40,
+                )));
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"GA",
+                    b"CT",
+                    b"Z.........",
+                    start,
+                    1,
+                    0x1 | 0x80,
+                )));
+            }
+            2 => {
+                recs.push(Rec::Raw(raw_secondary(q, start, 0)));
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"CT",
+                    b"GA",
+                    b"z.H.x.....",
+                    start + 20,
+                    0,
+                    0x1 | 0x40,
+                )));
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"GA",
+                    b"GA",
+                    b"z.H.x.....",
+                    start,
+                    0,
+                    0x1 | 0x80,
+                )));
+            }
+            _ => {
+                recs.push(Rec::Bism(synth(
+                    q,
+                    b"CT",
+                    b"CT",
+                    b"Z.H.x.....",
+                    start,
+                    0,
+                    0x1 | 0x40,
+                )));
+                recs.push(Rec::Raw(raw_unmapped(q, 0x1 | 0x80)));
+            }
+        }
+    }
+    write_bam(&bam, header_two_chr(), recs);
+
+    let p1 = work.path().join("p1");
+    let p4 = work.path().join("p4");
+    run(&bam, &p1, true, &["--allow_discordant", "--parallel", "1"]).success();
+    run(&bam, &p4, true, &["--allow_discordant", "--parallel", "4"]).success();
+    assert_eq!(dir_snapshot(&p1), dir_snapshot(&p4), "--parallel 1 vs 4");
+    assert_eq!(
+        report_value(
+            &read_report(&p1, "big"),
+            "Orphan reads (mate unmapped) called:"
+        ),
+        2500
+    );
+
+    let legacy = work.path().join("legacy");
+    let parallel = work.path().join("parallel");
+    extract_pe(&bam, &legacy_and_parallel_config(&bam, &legacy, "1")).unwrap();
+    extract_pe_parallel(&bam, &legacy_and_parallel_config(&bam, &parallel, "4")).unwrap();
+    assert_eq!(
+        dir_snapshot(&legacy),
+        dir_snapshot(&parallel),
+        "serial vs parallel driver"
+    );
+}
+
+/// Input that is not name-grouped makes almost every record an orphan; both drivers stop once the
+/// first 1000 templates are mostly orphans instead of writing inflated output.
+#[test]
+fn input_that_is_not_name_grouped_fails_early_in_both_drivers() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("ungrouped.bam");
+    let recs = (0..1200usize)
+        .map(|i| {
+            let q = format!("r{i}");
+            Rec::Bism(synth(
+                q.as_bytes(),
+                b"CT",
+                b"CT",
+                b"Z.........",
+                100 + i * 10,
+                0,
+                0x1 | 0x40,
+            ))
+        })
+        .collect();
+    write_bam(&bam, header_two_chr(), recs);
+
+    let out = work.path().join("cli");
+    let assert = run(&bam, &out, true, &["--allow_discordant"]).failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("not name-grouped") && stderr.contains("samtools collate"),
+        "{stderr}"
+    );
+
+    for (dir, serial) in [("legacy", true), ("parallel", false)] {
+        let out = work.path().join(dir);
+        let cfg = legacy_and_parallel_config(&bam, &out, if serial { "1" } else { "4" });
+        let err = if serial {
+            extract_pe(&bam, &cfg)
+        } else {
+            extract_pe_parallel(&bam, &cfg)
+        }
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("of the first 1000 templates are orphans"),
+            "{dir}: {err}"
+        );
+    }
 }
