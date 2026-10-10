@@ -30,6 +30,10 @@
 
   **minimap2/rammap MAPQ values therefore differ from Bismark 3.1.0 and Perl v0.25.1, and minimap2 SE is no longer byte-identical to Perl v0.25.1 + minimap2** — the previous values were a faithful port of a Perl bug, and unlike the Bowtie 2 case above this is a default (non-`--local`) path, so the parity claim is retired rather than narrowed. Two further notes: this is **Bismark's own scale, not agreement with minimap2**, which derives its own MAPQ from chain scores on a 0–60 scale that Bismark discards because it recomputes MAPQ across the 2–4 strand instances it runs; and `--score_min` is never passed to minimap2 at all, yet it still feeds this normalisation, so an unusually steep `--score_min` raises minimap2 MAPQ without changing any alignment.
 
+### bismark extract (methylation extractor)
+
+- **New opt-in `--allow_discordant` for aligner-agnostic input.** The methylation extractor can now consume BAMs from general-purpose bisulfite aligners that emit Bismark-format `XM`/`XR`/`XG` tags — not just the Bismark aligner — without an external `samtools view -f 0x2 -F 0x900` pre-filter. With the flag it skips (and counts) secondary (`0x100`) / supplementary (`0x800`) alignments, calls cross-chromosome and same-chromosome discordant pairs independently, and calls orphan reads whose mate is unmapped; every new class is tallied in a dedicated splitting-report section. It is **OFF by default and byte-identical to the previous behaviour when off** (including the historical cross-chromosome / unpaired-record errors). A stderr warning (not gated by `--quiet`) fires when more than 20% of records are orphans, which usually means the input is not name-grouped (query-sorted / name-collated).
+
 ## Bismark 3.1.0 (released 2026-07-13)
 
 ### bismark (aligner)
