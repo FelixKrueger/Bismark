@@ -30,7 +30,7 @@ use crate::extractor::cli::ResolvedConfig;
 use crate::extractor::error::BismarkExtractorError;
 use crate::extractor::header::build_chr_name_table;
 use crate::extractor::overlap::{drop_overlap, drop_overlap_generic};
-use crate::extractor::pair_class::{PairClass, classify_pair};
+use crate::extractor::pair_class::{OrphanGuard, PairClass, classify_pair};
 use crate::extractor::route::route_call;
 use crate::extractor::state::ExtractState;
 
@@ -428,6 +428,7 @@ fn extract_pe_discordant(
 ) -> Result<(), BismarkExtractorError> {
     let mut records = reader.records();
     let mut pending: Option<BismarkRecord> = None;
+    let mut guard = OrphanGuard::default();
     loop {
         // R1: a pushed-back record or the next read.
         let r1 = match pending.take() {
@@ -460,6 +461,7 @@ fn extract_pe_discordant(
         // R1 is an orphan and R2 belongs to the next template.
         if !BismarkPair::qnames_match(&r1, &r2) {
             handle_one_orphan(&r1, state, chr_table, config)?;
+            guard.observe(true)?;
             pending = Some(r2);
             continue;
         }
@@ -478,6 +480,7 @@ fn extract_pe_discordant(
                 handle_one_pair_independent(&pair, state, chr_table, config, r1_refid, r2_refid)?;
             }
         }
+        guard.observe(false)?;
     }
     Ok(())
 }

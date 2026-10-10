@@ -84,7 +84,7 @@ use crate::extractor::header::build_chr_name_table;
 use crate::extractor::mbias::MbiasTable;
 use crate::extractor::output::SplittingReport;
 use crate::extractor::overlap::{drop_overlap, drop_overlap_generic};
-use crate::extractor::pair_class::{PairClass, classify_pair};
+use crate::extractor::pair_class::{OrphanGuard, PairClass, classify_pair};
 use crate::extractor::pipeline::derive_basename;
 use crate::extractor::route::compute_yacht_columns;
 use crate::extractor::state::ExtractState;
@@ -744,6 +744,7 @@ fn drive_reader(
         // `pending` holds a record read as an R2 whose qname did not match its
         // R1 (its mate was unmapped/filtered) — it becomes the next R1.
         let mut pending: Option<BismarkRecord> = None;
+        let mut guard = OrphanGuard::default();
         loop {
             // R1: from a pushed-back record (already ticked) or the next read.
             let r1 = match pending.take() {
@@ -790,6 +791,11 @@ fn drive_reader(
             // (pushed back as the next R1).
             if !BismarkPair::qnames_match(&r1, &r2) {
                 push_orphan(&mut items, r1);
+                if let Err(error) = guard.observe(true) {
+                    items.push(WorkerInputItem::Err { error });
+                    let _ = flush_batch!();
+                    return;
+                }
                 pending = Some(r2);
                 if items.len() >= BATCH_SIZE {
                     if !flush_batch!() {
@@ -839,6 +845,11 @@ fn drive_reader(
                 },
             };
             items.push(item);
+            if let Err(error) = guard.observe(false) {
+                items.push(WorkerInputItem::Err { error });
+                let _ = flush_batch!();
+                return;
+            }
             if items.len() >= BATCH_SIZE {
                 if !flush_batch!() {
                     return; // all workers gone
