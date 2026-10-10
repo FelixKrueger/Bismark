@@ -502,7 +502,7 @@ pub fn single_end_sam_output(
 }
 
 /// Assemble the TWO SAM/BAM records for one PE alignment (Perl `paired_end_SAM_output`,
-/// 8713–9225, default `!old_flag !rg_tag !strandID !non_bs_mm` path). Returns
+/// 8713–9225, default `!old_flag !rg_tag !non_bs_mm` path). Returns
 /// (read 1, read 2) in fixed order. `seq_1`/`seq_2` are the uc original reads;
 /// `qual_1`/`qual_2` the raw ASCII quality; `dovetail` = `!--no_dovetail` (Perl
 /// 8047–8048, gates the TLEN dovetail sub-cases). RNEXT is `=` (same tid),
@@ -521,6 +521,7 @@ pub fn paired_end_sam_output(
     refid: &HashMap<String, usize>,
     phred64: bool,
     dovetail: bool,
+    strand_id: bool,
     opts: BarcodeUmiTags,
 ) -> Result<(BismarkRecord, BismarkRecord)> {
     // FLAG = a per-index constant pair (Perl 8825–8868); index 1/2 swap the R1/R2
@@ -537,6 +538,14 @@ pub fn paired_end_sam_output(
             )));
         }
     };
+    // `--strandID` (Perl 8744-8761, 9202-9214): `YS:Z:` names the alignment strand.
+    let ys = strand_id.then_some(match best.index {
+        0 => "OT",
+        1 => "CTOB",
+        2 => "CTOT",
+        3 => "OB",
+        _ => unreachable!("index validated above"),
+    });
 
     // +2 ref trim is INDEX-keyed for both mates (Perl 8772–8779) — NOT read_conv
     // keyed like SE. index 0/3: R1 drop last 2, R2 drop first 2; index 1/2: R1
@@ -611,6 +620,7 @@ pub fn paired_end_sam_output(
         ext.read_conversion_1,
         ext.genome_conversion,
         phred64,
+        ys,
         opts,
     )?;
     let rec2 = build_pe_mate(
@@ -632,6 +642,7 @@ pub fn paired_end_sam_output(
         ext.read_conversion_2,
         ext.genome_conversion,
         phred64,
+        ys,
         opts,
     )?;
     Ok((rec1, rec2))
@@ -661,6 +672,7 @@ fn build_pe_mate(
     read_conv: Conversion,
     genome_conv: Conversion,
     phred64: bool,
+    ys: Option<&str>,
     opts: BarcodeUmiTags,
 ) -> Result<BismarkRecord> {
     let mut actual_seq = original_seq.to_vec();
@@ -725,6 +737,10 @@ fn build_pe_mate(
         Tag::from(*b"XG"),
         Value::String(BString::from(genome_conv.as_str())),
     );
+    if let Some(ys) = ys {
+        rec.data_mut()
+            .insert(Tag::from(*b"YS"), Value::String(BString::from(ys)));
+    }
     append_barcode_umi_tags(rec.data_mut(), id, opts);
 
     BismarkRecord::from_noodles_record(rec)
@@ -771,9 +787,46 @@ pub fn write_record<W: std::io::Write>(
     writer: &mut BamWriter<W>,
     record: &BismarkRecord,
 ) -> Result<()> {
-    writer
-        .write_record(record)
-        .map_err(|e| AlignerError::Validation(format!("failed to write BAM record: {e}")))
+    writer.write_record(record).map_err(|e| {
+        AlignerError::Validation(format!(
+            "failed to write BAM record {}: {e}",
+            describe_record(record.inner())
+        ))
+    })
+}
+
+/// QNAME, CIGAR and the CIGAR-vs-SEQ lengths of a record, for write-error messages.
+fn describe_record(rec: &RecordBuf) -> String {
+    let name = rec
+        .name()
+        .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
+        .unwrap_or_else(|| "*".to_string());
+    let mut cigar = String::new();
+    let mut cigar_read_len = 0usize;
+    for op in rec.cigar().as_ref() {
+        let c = match op.kind() {
+            Kind::Match => 'M',
+            Kind::Insertion => 'I',
+            Kind::Deletion => 'D',
+            Kind::Skip => 'N',
+            Kind::SoftClip => 'S',
+            Kind::HardClip => 'H',
+            Kind::Pad => 'P',
+            Kind::SequenceMatch => '=',
+            Kind::SequenceMismatch => 'X',
+        };
+        if matches!(c, 'M' | 'I' | 'S' | '=' | 'X') {
+            cigar_read_len += op.len();
+        }
+        cigar.push_str(&format!("{}{c}", op.len()));
+    }
+    if cigar.is_empty() {
+        cigar.push('*');
+    }
+    format!(
+        "{name} (CIGAR {cigar} covers {cigar_read_len} read bases, SEQ has {})",
+        rec.sequence().len()
+    )
 }
 
 /// Write the first ambiguous alignment's **raw** aligner SAM line to the
@@ -1225,6 +1278,7 @@ mod tests {
             &refid_of(&["chr1"]),
             false,
             true,
+            false,
             opts,
         )
         .unwrap();
@@ -1687,6 +1741,7 @@ mod tests {
             &refid_of(&["chr1"]),
             false,
             dovetail,
+            false,
             BarcodeUmiTags::default(),
         )
         .unwrap();
@@ -1848,6 +1903,7 @@ mod tests {
             &refid_of(&["chr1"]),
             false,
             true,
+            false,
             BarcodeUmiTags::default(),
         )
         .unwrap();
@@ -1862,6 +1918,65 @@ mod tests {
         assert_eq!(
             r2.inner().data().get(&Tag::from(*b"XM")),
             Some(&Value::String(BString::from("h...")))
+        );
+    }
+
+    #[test]
+    fn pe_strand_id_writes_ys_after_xg_for_every_index() {
+        for (index, label) in [(0, "OT"), (1, "CTOB"), (2, "CTOT"), (3, "OB")] {
+            let (best, ext) = pe_io(index, 100, 140, 110, 150);
+            let run = |strand_id: bool| {
+                paired_end_sam_output(
+                    "q",
+                    b"ACGT",
+                    b"ACGT",
+                    b"FFFF",
+                    b"FFFF",
+                    &best,
+                    &ext,
+                    b"....",
+                    b"....",
+                    &refid_of(&["chr1"]),
+                    false,
+                    true,
+                    strand_id,
+                    BarcodeUmiTags::default(),
+                )
+                .unwrap()
+            };
+            let (r1, r2) = run(true);
+            for r in [r1.inner(), r2.inner()] {
+                let tags: Vec<[u8; 2]> = r.data().iter().map(|(t, _)| <[u8; 2]>::from(t)).collect();
+                assert_eq!(
+                    tags,
+                    [*b"NM", *b"MD", *b"XM", *b"XR", *b"XG", *b"YS"],
+                    "index {index}"
+                );
+                assert_eq!(
+                    r.data().get(&Tag::from(*b"YS")),
+                    Some(&Value::String(BString::from(label)))
+                );
+            }
+            let (r1, r2) = run(false);
+            assert!(r1.inner().data().get(&Tag::from(*b"YS")).is_none());
+            assert!(r2.inner().data().get(&Tag::from(*b"YS")).is_none());
+        }
+    }
+
+    #[test]
+    fn describe_record_names_the_read_and_both_lengths() {
+        let mut rec = RecordBuf::default();
+        *rec.name_mut() = Some(BString::from("pair42"));
+        *rec.cigar_mut() = Cigar::from(vec![
+            Op::new(Kind::SoftClip, 2),
+            Op::new(Kind::Match, 10),
+            Op::new(Kind::Deletion, 3),
+            Op::new(Kind::Insertion, 1),
+        ]);
+        *rec.sequence_mut() = Sequence::from(b"ACGTACGTACG".to_vec());
+        assert_eq!(
+            describe_record(&rec),
+            "pair42 (CIGAR 2S10M3D1I covers 13 read bases, SEQ has 11)"
         );
     }
 }

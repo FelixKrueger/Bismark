@@ -2,9 +2,11 @@
 
 Thank you for your interest in contributing to Bismark.
 
+**Please open pull requests against the `dev` branch.** `master` only receives releases.
+
 ## Bismark (Perl) is in maintenance freeze
 
-The Perl version of Bismark (`v0.25.x`, this repository's default branch) is in **maintenance freeze**.
+The Perl version of Bismark (`v0.25.x`, in [`legacy_perl/`](legacy_perl)) is in **maintenance freeze**.
 It now receives **critical correctness and security fixes only** — no new features and no performance
 changes.
 
@@ -30,7 +32,7 @@ frozen branch before you invest time in a pull request.
 ## What should go to the Rust suite instead
 
 Everything else: **new features, performance work, new aligners or modes, and refactors.** The Rust
-suite is developed on the **`master`** branch. Good starting points:
+suite lives in [`rust/`](rust); please target **`dev`** with these too. Good starting points:
 
 - [Rust rewrite: scope and motivation](https://felixkrueger.github.io/Bismark/rust/overview/)
 - [Benchmarks](https://felixkrueger.github.io/Bismark/rust/benchmarks/)
