@@ -296,26 +296,22 @@ fn build_pe_argv(
 
 /// A spawned-but-unread [`AlignerStream`] (#1120).
 ///
-/// A newtype rather than a flag, so an unprimed stream cannot be mistaken for a
-/// live one: before priming its `current` is `None`, which is indistinguishable
-/// from EOF and would silently drop every alignment. [`prime`](Self::prime) is
-/// the only way out of it.
+/// A newtype so an unprimed stream cannot be used as a live one: before priming,
+/// `current` is `None`, which reads as EOF. [`prime`](Self::prime) is the only
+/// way to get the [`AlignerStream`].
 pub struct UnprimedAlignerStream(AlignerStream);
 
 impl UnprimedAlignerStream {
-    /// Has this child already exited, and with what status?
+    /// Has this child already exited, and with what status? Non-blocking.
     ///
-    /// Non-blocking. Used between the spawn and prime steps of the streaming path
-    /// (#1120) to tell "still starting up" from "died without ever opening its
-    /// FIFO" — the latter would otherwise park a writer forever and silently
-    /// starve every sibling instance sharing the conversion pass.
+    /// Distinguishes a child that is still starting from one that died without
+    /// opening its FIFO, which would otherwise leave its writer blocked forever.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         Ok(self.0.child.try_wait()?)
     }
 
-    /// Read past the `@` header to the first alignment record — the second half
-    /// of [`AlignerStream::spawn`]. Blocks until the aligner produces output, so
-    /// on the streaming path every child must already be spawned.
+    /// Read past the `@` header to the first alignment record (the second half of
+    /// [`AlignerStream::spawn`]). Blocks until the aligner produces output.
     pub fn prime(mut self) -> Result<AlignerStream> {
         let mut line = String::new();
         self.0.current = loop {
@@ -349,17 +345,13 @@ impl AlignerStream {
         Self::spawn_unprimed(aligner, bin, options, orient, index, input)?.prime()
     }
 
-    /// Spawn the child **without reading anything from it** — the first half of
-    /// [`AlignerStream::spawn`].
+    /// Spawn the child without reading anything from it (the first half of
+    /// [`AlignerStream::spawn`]).
     ///
-    /// Split out for the streaming path (#1120). When the reads arrive over a
-    /// FIFO, reading the first record cannot complete until the converter's
-    /// writer thread has been let past its blocking open-for-write, and that only
-    /// happens once *this* child opens the pipe for read. Several children share
-    /// one conversion pass through a bounded channel, so every child must be
-    /// spawned before **any** of them is primed — otherwise the fan-out stalls on
-    /// a consumer that does not exist yet and the run deadlocks. On the file path
-    /// the two halves are adjacent and the split is a no-op.
+    /// On the streaming path, the first record only arrives once the converter's
+    /// writers are past their blocking FIFO opens, and several children share one
+    /// conversion pass. So every child must be spawned before any is primed, or
+    /// the run deadlocks.
     pub fn spawn_unprimed(
         aligner: Aligner,
         bin: &Path,
@@ -428,15 +420,54 @@ impl AlignerStream {
             )))
         }
     }
+    /// The error for this child if it has already exited unsuccessfully.
+    /// Non-blocking; for reporting the instance that actually failed when the
+    /// merge stops on a symptom.
+    pub fn failure(&mut self) -> Option<AlignerError> {
+        exited_unsuccessfully(&mut self.child, self.aligner)
+    }
 }
 
 impl Drop for AlignerStream {
     fn drop(&mut self) {
-        // If not finished cleanly, kill THEN wait — kill alone leaves a zombie.
         if !self.finished {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            kill_and_reap(&mut self.child);
         }
+    }
+}
+
+/// Kill an aligner child that did not finish, and reap it.
+///
+/// `bowtie2` and `hisat2` are wrapper scripts that run the real binary
+/// (`bowtie2-align-s`, `hisat2-align-s`) as their own child, so the wrapper's
+/// children are killed first; killing only the wrapper would orphan the aligner.
+/// Best-effort: without `pkill` only the direct child is killed. A child that
+/// was already reaped is left alone, since its pid may now belong to someone
+/// else. Wait after the kill, or it is left a zombie.
+fn kill_and_reap(child: &mut std::process::Child) {
+    if let Ok(None) = child.try_wait() {
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-P", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// The error for a child that has already exited unsuccessfully, if it has.
+/// Non-blocking.
+fn exited_unsuccessfully(
+    child: &mut std::process::Child,
+    aligner: Aligner,
+) -> Option<AlignerError> {
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => Some(AlignerError::Validation(format!(
+            "{} exited unsuccessfully ({status})",
+            aligner.name()
+        ))),
+        _ => None,
     }
 }
 
@@ -608,17 +639,15 @@ pub struct PairedAlignerStream {
     aligner: Aligner,
 }
 
-/// A spawned-but-unread [`PairedAlignerStream`] — the PE sibling of
-/// [`UnprimedAlignerStream`], and a newtype for the same reason.
+/// A spawned-but-unread [`PairedAlignerStream`]; the PE sibling of
+/// [`UnprimedAlignerStream`].
 pub struct UnprimedPairedAlignerStream(PairedAlignerStream);
 
 impl UnprimedPairedAlignerStream {
-    /// Has this child already exited, and with what status?
+    /// Has this child already exited, and with what status? Non-blocking.
     ///
-    /// Non-blocking. Used between the spawn and prime steps of the streaming path
-    /// (#1120) to tell "still starting up" from "died without ever opening its
-    /// FIFO" — the latter would otherwise park a writer forever and silently
-    /// starve every sibling instance sharing the conversion pass.
+    /// Distinguishes a child that is still starting from one that died without
+    /// opening its FIFO, which would otherwise leave its writer blocked forever.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         Ok(self.0.child.try_wait()?)
     }
@@ -665,11 +694,8 @@ impl PairedAlignerStream {
         Self::spawn_unprimed(aligner, bin, options, orient, index, input1, input2)?.prime()
     }
 
-    /// Spawn the child **without reading anything from it** — the PE analog of
-    /// [`AlignerStream::spawn_unprimed`], and needed for the same reason (#1120):
-    /// on the streaming path a child must open its two FIFOs for read before the
-    /// writers behind them can make progress, so all children are spawned first
-    /// and primed afterwards.
+    /// Spawn the child without reading anything from it; the PE analog of
+    /// [`AlignerStream::spawn_unprimed`], split out for the same reason.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn_unprimed(
         aligner: Aligner,
@@ -747,13 +773,18 @@ impl PairedAlignerStream {
             )))
         }
     }
+    /// The error for this child if it has already exited unsuccessfully.
+    /// Non-blocking; for reporting the instance that actually failed when the
+    /// merge stops on a symptom.
+    pub fn failure(&mut self) -> Option<AlignerError> {
+        exited_unsuccessfully(&mut self.child, self.aligner)
+    }
 }
 
 impl Drop for PairedAlignerStream {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            kill_and_reap(&mut self.child);
         }
     }
 }
@@ -1428,6 +1459,40 @@ mod tests {
         s.advance().unwrap();
         assert!(s.current().is_none()); // EOF
         s.finish().unwrap();
+    }
+
+    /// Dropping an unfinished stream must also kill what the wrapper started:
+    /// `bowtie2` runs `bowtie2-align-s` as its own child.
+    #[cfg(unix)]
+    #[test]
+    fn drop_kills_the_wrappers_child_too() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pidfile = dir.path().join("grandchild.pid");
+        let body = format!(
+            "sleep 300 & echo $! > {}\nprintf 'a\\t4\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\t*\\tI\\n'\nwait",
+            pidfile.display()
+        );
+        let (_d, s) = spawn_fake(&body);
+        let pid = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .to_string();
+        drop(s);
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", &pid])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        for _ in 0..100 {
+            if !alive() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the wrapper's child (pid {pid}) survived the drop");
     }
 
     #[cfg(unix)]

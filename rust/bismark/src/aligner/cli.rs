@@ -369,15 +369,12 @@ pub struct Cli {
     /// Temporary directory (default: output directory's parent / CWD).
     #[arg(long = "temp_dir", value_name = "PATH")]
     pub temp_dir: Option<PathBuf>,
-    /// `[#1120]` Write the in-silico converted reads (`_C_to_T` / `_G_to_A`) to
-    /// `--temp_dir` as FILES instead of streaming them to the aligner through named
-    /// pipes. Streaming is the default: the converted reads have exactly one
-    /// consumer (the aligner), so on a disk-constrained scratch this removes their
-    /// footprint entirely, at no measured cost in wall time. Use this to fall back
-    /// to files if you need to inspect them, or to bisect a suspected streaming bug.
-    /// Output is byte-identical either way. Runs that cannot stream (`--hisat2`,
-    /// combined-index modes, or a `--temp_dir` that will not host a FIFO) fall back
-    /// to files on their own and say so.
+    /// `[#1120]` Write the converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir`
+    /// as files instead of streaming them to the aligner through named pipes (the
+    /// default, which needs no temp disk space). Useful for inspecting the converted
+    /// reads. Output is byte-identical either way. Runs that cannot stream
+    /// (`--hisat2`, combined-index modes, or a `--temp_dir` that cannot host a FIFO)
+    /// fall back to files automatically and say so.
     #[arg(long = "no_stream_converted")]
     pub no_stream_converted: bool,
     /// Output base name (overrides the derived name).

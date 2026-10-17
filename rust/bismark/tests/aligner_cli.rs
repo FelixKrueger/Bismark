@@ -416,17 +416,15 @@ fn happy_path_resolves_and_prints_config() {
                 ))
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
-                // #1120: the C->T conversion now STREAMS to the aligner by
-                // default, so the banner names the stream, not a created file.
+                // #1120: the C->T conversion streams to the aligner by default.
                 .and(predicate::str::contains("Streaming C->T converted"))
                 .and(predicate::str::contains("no temp file written"))
                 // Phase 5: the pipeline ran end-to-end (fake bowtie2 emits unmapped).
                 .and(predicate::str::contains("Mapping summary"))
                 .and(predicate::str::contains("no alignment found:")),
         );
-    // Phase 6: the C->T temp file is DELETED after the run (Perl 1974–1981) —
-    // and under #1120's default it is never written in the first place, nor is
-    // the FIFO that replaced it left behind.
+    // Phase 6: no C->T temp file remains (Perl 1974–1981). When streaming it is
+    // never written, and the FIFO is removed too.
     assert!(!temp.path().join("reads.fq_C_to_T.fastq").is_file());
     assert_eq!(
         std::fs::read_dir(temp.path()).unwrap().count(),
@@ -446,11 +444,11 @@ fn happy_path_resolves_and_prints_config() {
 }
 
 /// #1120: an aligner instance that exits cleanly without reading its pipe must
-/// not starve the sibling that shares its converted source. The input is well
-/// over the ~1 MiB of per-instance slack, which is where that used to hang.
+/// not starve the sibling that shares its converted source. The input exceeds
+/// the ~1 MiB of per-instance slack so a starved sibling would hang.
 ///
-/// Few, long reads: the non-reading stub must exit before its stdout is read,
-/// so its output has to fit in one pipe buffer.
+/// Few, long reads: the non-reading stub exits before its stdout is read, so its
+/// output must fit in one pipe buffer.
 #[cfg(unix)]
 #[test]
 fn streamed_run_survives_an_instance_that_never_reads_its_input() {

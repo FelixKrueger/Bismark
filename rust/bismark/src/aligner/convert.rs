@@ -245,9 +245,8 @@ pub(crate) fn bisulfite_convert_fastq_pe_kind(
     convert_fastq_impl(input, temp_dir, opts, kind, suffix, file_base_for(kind))
 }
 
-/// The converted temp file's name — `<prefix.>?<basename><file_base>.<ext>` (Perl
-/// `${temp_dir}${name}`). Shared by the file writers below and by the streaming
-/// path (#1120), which names its FIFOs after the file each one replaces.
+/// The converted temp file's name, `<prefix.>?<basename><file_base>.<ext>` (Perl
+/// `${temp_dir}${name}`). The streaming path names its FIFOs the same way.
 pub(crate) fn converted_name(
     input: &Path,
     opts: &ConvertOptions,
@@ -320,14 +319,11 @@ fn convert_fastq_impl(
     })
 }
 
-/// The record loop itself, writing into any sink — the file writer above, or the
-/// per-instance FIFOs of the streaming path (#1120). Returns
-/// `(count, seqid_tab_count)`.
+/// The FastQ record loop, writing into any sink (the temp file above, or the
+/// streaming path's FIFOs). Returns `(count, seqid_tab_count)`.
 ///
-/// **This is the only copy of the FastQ conversion loop.** Streaming reuses it
-/// verbatim rather than forking it, so the bytes the aligner receives cannot
-/// drift between the two paths (that is what makes the byte-identity gate hold by
-/// construction rather than by argument).
+/// This is the only copy of the loop; both paths use it, so the bytes the aligner
+/// receives cannot differ between them.
 pub(crate) fn convert_fastq_into<W: Write + ?Sized>(
     reader: &mut dyn BufRead,
     opts: &ConvertOptions,
@@ -419,13 +415,10 @@ pub(crate) fn convert_fastq_into<W: Write + ?Sized>(
 // leaving the FastQ record loop UNMODIFIED guarantees the FastQ byte-freeze (its
 // unit tests + the oxy gate). Shared logic is the existing helpers (`fix_id`,
 // `convert_one`, `temp_dir_prefix`, `pe_id_suffix`, `file_base_for`,
-// `converted_name`, `open_reader`). (rev1 A/B endorsed a shared core; deviation
-// documented — same intent: FastA correct + FastQ frozen + helpers reused.)
+// `converted_name`, `open_reader`).
 //
-// #1120 split each loop out of its file wrapper (`convert_fast[aq]_into`) so the
-// streaming path can drive the SAME loop into a pipe. The two loops stay separate
-// from each other, exactly as argued above; what is now shared is each loop with
-// its own streaming caller.
+// Each loop (`convert_fast[aq]_into`) is separate from its file wrapper so the
+// streaming path can drive the same loop into a pipe.
 // ===========================================================================
 
 /// Write the **C→T**-converted FastA temp file for one single-end input
@@ -516,8 +509,8 @@ fn convert_fasta_impl(
     })
 }
 
-/// The FastA record loop, writing into any sink — the [`convert_fastq_into`]
-/// sibling. The only copy of the FastA conversion loop; streaming reuses it.
+/// The FastA record loop, writing into any sink; the [`convert_fastq_into`]
+/// sibling, likewise shared by the file and streaming paths.
 pub(crate) fn convert_fasta_into<W: Write + ?Sized>(
     reader: &mut dyn BufRead,
     opts: &ConvertOptions,

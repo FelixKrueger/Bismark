@@ -1,26 +1,19 @@
-//! FIFO plumbing for streaming the converted reads to the aligner (#1120).
+//! Streaming the converted reads to the aligner through FIFOs (#1120).
 //!
-//! The in-silico converted reads (`_C_to_T` / `_G_to_A`) are today written to
-//! `--temp_dir` in full before the aligner is spawned, which is the binding
-//! constraint on a disk-limited scratch. They have exactly **one** consumer (the
-//! aligner — the methylation caller re-reads the *original* FastQ,
-//! [`super::mod`] `:3084`), so they can be handed over as FIFOs instead of files
-//! and never touch the disk.
+//! The converted reads (`_C_to_T` / `_G_to_A`) have exactly one consumer, the
+//! aligner (the methylation caller re-reads the original FastQ), so they can be
+//! handed over through named pipes instead of temp files and never touch the disk.
+//! This module creates and removes the pipes, runs one conversion pass per source,
+//! and fans it out to one writer thread per aligner instance. It also provides the
+//! in-memory variant used by the in-process rammap backend. The routing decision
+//! lives in [`super::config`].
 //!
-//! This module owns only the named pipes themselves: create them under the run's
-//! temp dir, hand out the paths the aligner argv needs, and unlink them again.
-//! The converter/writer threads that fill them live in [`super::convert`]'s
-//! streaming sibling; the routing decision lives in [`super::config`].
+//! Pipes are made with `mkfifo(1)` rather than `libc::mkfifo`, which avoids a
+//! direct `libc` dependency and keeps the fallback to files (taken when `mkfifo`
+//! is missing or fails) a live code path.
 //!
-//! **`mkfifo(1)`, not `libc::mkfifo`** (PLAN D-7): `libc` is only a transitive
-//! dependency today, so declaring it would touch `rust/THIRD-PARTY-NOTICES.md`
-//! — and a missing or refusing `mkfifo` is precisely the condition the
-//! never-silent fallback to files exists to detect, so shelling out keeps that
-//! fallback live code rather than dead code.
-//!
-//! **Not every backend can be streamed.** HISAT2 rejects a FIFO outright (exit
-//! 255 — it stats/seeks while sniffing the format), so it keeps the file path.
-//! See `plans/09112026_stream-converted/SPIKE.md`.
+//! HISAT2 rejects a FIFO (exit 255; it stats the input while sniffing the
+//! format), so it keeps the file path.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -35,20 +28,17 @@ use crate::aligner::error::{AlignerError, Result};
 
 /// Create one named pipe at `path`.
 ///
-/// Any pre-existing entry at `path` is removed first: the names are PID-scoped
-/// (see [`FifoSet::create`]), so an entry already sitting there is a leftover of
-/// a run that died before its [`FifoSet`] dropped, and `mkfifo` would otherwise
-/// fail `EEXIST` on it forever.
+/// Any existing entry at `path` is removed first: names are unique per process
+/// and set ([`fifo_name`]), so one already there is a leftover of a dead run, and
+/// `mkfifo` would fail `EEXIST` on it.
 fn mkfifo(path: &Path) -> Result<()> {
     let _ = std::fs::remove_file(path);
     let status = Command::new("mkfifo").arg(path).status().map_err(|e| {
         AlignerError::Validation(format!("could not run mkfifo for {}: {e}", path.display()))
     })?;
     if !status.success() {
-        // Length is no longer a plausible cause ([`NAME_STEM_CAP`]), so what is
-        // left is a temp dir that filled or went read-only after the start-up
-        // probe. Name the escape hatch either way, since the text is otherwise
-        // opaque.
+        // Names are length-capped ([`NAME_STEM_CAP`]), so the likely cause is a
+        // temp dir that filled or went read-only after the start-up probe.
         return Err(AlignerError::Validation(format!(
             "mkfifo {} failed ({status}); re-run with --no_stream_converted to write the \
              converted reads as files instead",
@@ -60,15 +50,11 @@ fn mkfifo(path: &Path) -> Result<()> {
 
 /// A set of named pipes standing in for the converted temp files of one chunk.
 ///
-/// One FIFO per *aligner instance per mate* — never one per converted file. Each
-/// converted file has two concurrent readers in every library mode
-/// (`se_instance_plan`, `pe_instance_plan`), and two readers cannot share one
-/// pipe; the conversion pass is fanned out to them instead.
+/// One FIFO per aligner instance per mate, not one per converted file: two
+/// readers cannot share a pipe, so the conversion pass is fanned out instead.
 ///
-/// The pipes are unlinked on [`Drop`], including on the error path — a partially
-/// created set drops as soon as `create` returns `Err`, so no caller has to
-/// unwind it. Unlinking a FIFO does not disturb a process that already has it
-/// open, so dropping early is safe.
+/// The pipes are unlinked on [`Drop`], including when `create` fails partway.
+/// Unlinking does not disturb a process that already has the FIFO open.
 #[derive(Debug)]
 pub struct FifoSet {
     paths: Vec<PathBuf>,
@@ -77,12 +63,9 @@ pub struct FifoSet {
 impl FifoSet {
     /// Create one FIFO per entry of `names` under `temp_dir`, returning the set.
     ///
-    /// `names` are file names, not paths; they are concatenated onto the
-    /// normalised temp dir exactly as the converted temp files are
-    /// (`temp_dir_prefix`), so the FIFOs land beside the files they replace. The
-    /// caller is responsible for making each name unique within the run — see
-    /// [`fifo_name`], which scopes them by PID so two Bismark runs sharing one
-    /// `--temp_dir` cannot collide.
+    /// `names` are file names, joined to the temp dir exactly as the converted
+    /// temp files are (`temp_dir_prefix`). The caller makes each name unique; see
+    /// [`fifo_name`].
     pub fn create(temp_dir: &Path, names: &[String]) -> Result<Self> {
         let prefix = temp_dir_prefix(temp_dir)?;
         let mut set = FifoSet {
@@ -92,14 +75,13 @@ impl FifoSet {
             let path = PathBuf::from(format!("{prefix}{name}"));
             mkfifo(&path)?;
             // Push only after mkfifo succeeded, so Drop never unlinks a path we
-            // did not create (and so the failing path is not silently removed
-            // out from under the diagnostic).
+            // did not create.
             set.paths.push(path);
         }
         Ok(set)
     }
 
-    /// The created pipe paths, in `names` order — what goes into the aligner argv.
+    /// The created pipe paths, in `names` order.
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
     }
@@ -108,8 +90,7 @@ impl FifoSet {
 impl Drop for FifoSet {
     fn drop(&mut self) {
         for p in &self.paths {
-            // Best-effort, as every other temp cleanup in the aligner is: a
-            // failure here costs an empty inode, not correctness.
+            // Best-effort, like the aligner's other temp cleanup.
             let _ = std::fs::remove_file(p);
         }
     }
@@ -117,42 +98,29 @@ impl Drop for FifoSet {
 
 /// How much of the converted name a FIFO name keeps.
 ///
-/// The name exists to make a stray pipe self-explaining; nothing functional reads
-/// it. So it is capped rather than allowed to grow with the input's name, which
-/// keeps the total comfortably inside the 255-byte limit that every common
-/// filesystem puts on one path component. Without a cap a long sample name could
-/// pass the start-up probe as a file and then fail `mkfifo` mid-run — a run that
-/// worked with files failing only because it now streams.
+/// The name only makes a stray pipe recognisable, so it is capped to keep the
+/// whole name well inside the usual 255-byte path-component limit. Otherwise a
+/// long sample name could pass the start-up probe and then fail `mkfifo` mid-run.
 const NAME_STEM_CAP: usize = 64;
 
 /// Hands out a distinct id to every [`FifoSet`] created in this process.
 ///
-/// **Uniqueness must not depend on the converted name.** `--multicore N` runs its
-/// chunks concurrently in ONE process, so the pid and the slot numbers repeat
-/// across chunks, and the only thing left to tell chunk 0's pipe from chunk 1's
-/// would be the name — whose distinguishing part (`.temp.<i>`) sits at the END of
-/// the basename, exactly where [`NAME_STEM_CAP`] truncates. Two chunks would then
-/// agree on a path, and because `mkfifo` unlinks first, the second would delete
-/// the first's live pipe and both would write into one: interleaved reads and
-/// silently wrong output, with no error anywhere.
-///
-/// This counter makes the path unique by construction, which leaves the name free
-/// to be purely descriptive.
+/// `--multicore N` runs chunks concurrently in one process, so pid and slot
+/// repeat across chunks, and the part of the name that differs (`.temp.<i>`) is
+/// at the end, where [`NAME_STEM_CAP`] truncates. Without this id two chunks could
+/// share a path; since `mkfifo` unlinks first, both would then write into one
+/// pipe and silently corrupt the output.
 static NEXT_FIFO_SET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The FIFO file name standing in for converted temp file `converted_name` as
 /// read by aligner instance `slot`.
 ///
-/// Keeps (up to [`NAME_STEM_CAP`] bytes of) the converted name visible so a stray
-/// pipe is self-explaining. **Uniqueness comes from `slot`, the pid, and `set`
-/// (see [`NEXT_FIFO_SET`]), never from the name**, which is truncated and so
-/// cannot be relied on to differ.
+/// Keeps up to [`NAME_STEM_CAP`] characters of the converted name for
+/// recognisability. Uniqueness comes from `slot`, the pid and `set`
+/// ([`NEXT_FIFO_SET`]), never from the truncated name.
 ///
-/// The format extension stays **last** (`…_C_to_T.s0.4242.fifo.fastq`, not
-/// `…_C_to_T.fastq.s0.4242.fifo`). Bowtie 2 and minimap2 sniff content rather
-/// than names, but plenty of surrounding tooling does not — Bismark's own
-/// converter picks its decompressor off the input's suffix — so a pipe that still
-/// looks like the file it replaces is the safer shape for no extra cost.
+/// The format extension stays last (`…_C_to_T.s0.4242.0.fifo.fastq`) for tools
+/// that pick a format by suffix.
 pub fn fifo_name(converted_name: &str, slot: usize, set: u64) -> String {
     let pid = std::process::id();
     let (stem, ext) = match converted_name.rsplit_once('.') {
@@ -175,12 +143,70 @@ pub(crate) fn next_fifo_set() -> u64 {
     NEXT_FIFO_SET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Remove FIFOs a killed Bismark run left in `temp_dir`.
+///
+/// A run stopped by a signal never drops its [`FifoSet`], so its pipes stay
+/// behind. Each name carries the creating pid ([`fifo_name`], and the start-up
+/// probe's `bismark_fifo_probe.<pid>.<n>`), so a pipe whose pid is no longer
+/// running is removed. Only named pipes matching those patterns are touched, and
+/// a pid that is running, whoever owns it, is left alone. Best-effort.
+#[cfg(unix)]
+pub fn sweep_stale_fifos(temp_dir: &Path) {
+    use std::os::unix::fs::FileTypeExt;
+    let Ok(entries) = std::fs::read_dir(temp_dir) else {
+        return;
+    };
+    let me = std::process::id();
+    for entry in entries.flatten() {
+        let is_fifo = entry.file_type().is_ok_and(|t| t.is_fifo());
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(fifo_owner_pid) else {
+            continue;
+        };
+        if is_fifo && pid != me && !pid_is_running(pid) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn sweep_stale_fifos(_temp_dir: &Path) {}
+
+/// The pid embedded in a name made by [`fifo_name`] or the start-up probe.
+fn fifo_owner_pid(name: &str) -> Option<u32> {
+    if let Some(rest) = name.strip_prefix("bismark_fifo_probe.") {
+        return rest.split('.').next()?.parse().ok();
+    }
+    // `<stem>.s<slot>.<pid>.<set>.fifo[.<ext>]`
+    let parts: Vec<&str> = name.split('.').collect();
+    let f = parts.iter().rposition(|&p| p == "fifo")?;
+    if f < 3 {
+        return None;
+    }
+    let (slot, pid, set) = (parts[f - 3], parts[f - 2], parts[f - 1]);
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !(slot.strip_prefix('s').is_some_and(digits) && digits(set)) {
+        return None;
+    }
+    pid.parse().ok()
+}
+
+/// Is `pid` a live process? `ps -p` answers for any owner; if `ps` cannot be run
+/// the answer is "yes", so nothing is removed.
+fn pid_is_running(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-p", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_or(true, |s| s.success())
+}
+
 /// Can `temp_dir` host a named pipe at all?
 ///
-/// A `--temp_dir` on a filesystem without FIFO support, or a `mkfifo(1)` that is
-/// not on `PATH`, is the never-silent fallback-to-files condition (PLAN D-2).
-/// Answered by actually creating and unlinking one, because no portable
-/// filesystem-capability query exists; `false` on any failure.
+/// Answered by creating and unlinking one, since there is no portable capability
+/// query; `false` on any failure (no FIFO support, or no `mkfifo` on `PATH`), in
+/// which case the run falls back to files.
 pub fn temp_dir_supports_fifo(temp_dir: &Path) -> bool {
     let name = format!(
         "bismark_fifo_probe.{}.{}",
@@ -197,26 +223,19 @@ pub fn temp_dir_supports_fifo(temp_dir: &Path) -> bool {
 //   R1.fq.gz ─> convert C→T ─┬─> [bounded chan] ─> writer ─> fifo_s0_m1 ─> bowtie2 --norc
 //                            └─> [bounded chan] ─> writer ─> fifo_s3_m1 ─> bowtie2 --nofw
 //
-// CPU is one pass per source — exactly what the file path does today. Memory is
-// bounded by the channel depth. The input is read once, so a non-seekable input
-// behaves as before.
+// CPU is one pass per source, as on the file path. Memory is bounded by the
+// channel depth. The input is read once.
 // ===========================================================================
 
 /// How much converted output accumulates before it is handed to the writers.
 ///
-/// Comfortably above the 64 KiB pipe buffer, so a writer's `write_all` is a
-/// couple of pipe-sized transfers rather than per-record syscalls.
+/// Above the 64 KiB pipe buffer, so writes are pipe-sized rather than per record.
 const BLOCK_BYTES: usize = 256 * 1024;
 
 /// Blocks in flight per consumer. With [`BLOCK_BYTES`] this is ~1 MiB of slack
-/// per aligner instance — enough that a momentarily slower instance does not
-/// throttle its sibling, and small enough that the memory cost is noise next to
-/// the aligner's index.
-///
-/// ponytail: a fixed depth, not a tuned one. The asymmetric-consumer wall-time
-/// case (a `-p 1` instance beside a `-p 4` one) is unmeasured — proven
-/// deadlock-free and byte-identical, not proven fast. This constant is the knob
-/// if that measurement ever says so (PLAN D-6).
+/// per aligner instance: enough that a briefly slower instance does not throttle
+/// its sibling, and negligible next to the aligner's index. Not tuned for
+/// instances with very different speeds.
 const CHANNEL_DEPTH: usize = 4;
 
 /// How a conversion pass cuts its output into blocks and how many blocks each
@@ -230,8 +249,8 @@ struct Shape {
     lines_per_block: Option<usize>,
 }
 
-/// The FIFO path: byte-sized blocks. Each aligner child reads its pipe on its
-/// own, so a little slack is enough.
+/// The FIFO path: byte-sized blocks. Each aligner child reads its pipe
+/// independently, so a little slack is enough.
 const FIFO_SHAPE: Shape = Shape {
     depth: CHANNEL_DEPTH,
     lines_per_block: None,
@@ -241,11 +260,10 @@ const FIFO_SHAPE: Shape = Shape {
 #[cfg(feature = "rammap-inprocess")]
 const IN_MEMORY_BLOCK_RECORDS: usize = 256;
 
-/// The in-memory path. Its consumers are read one at a time by the merge, each
-/// pulling [`crate::aligner::inprocess::CHUNK`] records per refill while its
-/// siblings read nothing, so every consumer must be able to queue a whole chunk
-/// (plus slack) or the shared conversion pass stalls. Sized in records, not
-/// bytes, so long reads do not shrink it.
+/// The in-memory path. The merge refills one consumer at a time by
+/// [`crate::aligner::inprocess::CHUNK`] records while its siblings read nothing,
+/// so each consumer must be able to queue a whole chunk (plus slack) or the
+/// shared conversion pass stalls. Sized in records so long reads do not shrink it.
 #[cfg(feature = "rammap-inprocess")]
 const IN_MEMORY_SHAPE: Shape = Shape {
     depth: crate::aligner::inprocess::CHUNK.div_ceil(IN_MEMORY_BLOCK_RECORDS) + CHANNEL_DEPTH,
@@ -255,27 +273,25 @@ const IN_MEMORY_SHAPE: Shape = Shape {
 
 /// Writer lifecycle states, as seen from outside the writer thread.
 ///
-/// A plain shared cell rather than a channel, because **two** readers need this
-/// answer — the pre-prime reader handshake and the teardown — and a channel is
-/// one-shot: whichever asked first would consume it and leave the other guessing.
+/// A shared atomic rather than a channel, because both the reader handshake and
+/// the teardown read it, and a channel message can be consumed only once.
 mod writer_state {
     /// Still blocked in open-for-write; nothing has opened the pipe for read.
     pub const PARKED: u8 = 0;
-    /// Past the open — a reader arrived.
+    /// Past the open: a reader arrived.
     pub const OPENED: u8 = 1;
     /// The open itself failed; nobody will ever be its reader.
     pub const OPEN_FAILED: u8 = 2;
     /// Its reader left early; blocked in a second open-for-write so a late
-    /// reader gets EOF. Past the start-up handshake, but still needs releasing
-    /// at teardown.
+    /// reader gets EOF. Still needs releasing at teardown.
     pub const REOPENING: u8 = 3;
 }
 
 /// One converted read stream to produce: an input file, a substitution, and the
 /// paired-end read-number tag (`b""` for single-end).
 ///
-/// The unit of *conversion work* — distinct from a consumer, which is one aligner
-/// instance's view of one source. Two or four consumers share each source.
+/// The unit of conversion work, as distinct from a consumer (one aligner
+/// instance's view of a source). Several consumers can share a source.
 #[derive(Debug, Clone)]
 pub(crate) struct ConvSource {
     /// The original read file to convert.
@@ -289,13 +305,14 @@ pub(crate) struct ConvSource {
 /// A [`Write`] that buffers into blocks and hands each block to every consumer
 /// of one source.
 ///
-/// Every consumer gets the same bytes, so the aligner sees byte-for-byte what the
-/// file path would have written for it.
+/// Every consumer gets the same bytes the file path would have written.
 struct FanOut {
     senders: Vec<SyncSender<Arc<[u8]>>>,
     buf: Vec<u8>,
     lines_per_block: Option<usize>,
     lines: usize,
+    /// Set once a consumer has gone away mid-stream.
+    lost_consumer: bool,
 }
 
 impl FanOut {
@@ -305,32 +322,39 @@ impl FanOut {
             buf: Vec::with_capacity(BLOCK_BYTES + 4096),
             lines_per_block,
             lines: 0,
+            lost_consumer: false,
         }
     }
 
     fn send_block(&mut self) -> std::io::Result<()> {
-        // One allocation per block, shared by every consumer: `Arc<[u8]>` makes the
-        // fan-out a refcount bump rather than a deep copy per instance (four copies
-        // per block for non-directional paired-end).
+        // One allocation per block, shared by every consumer via `Arc`.
         let block: Arc<[u8]> = Arc::from(std::mem::replace(
             &mut self.buf,
             Vec::with_capacity(BLOCK_BYTES + 4096),
         ));
         self.lines = 0;
-        for tx in &self.senders {
-            // A closed receiver means that instance's writer thread gave up —
-            // which only happens when its aligner died. Surface it; the child's
-            // exit status is the useful half of the diagnostic and is reported
-            // by `AlignerStream::finish`.
-            tx.send(Arc::clone(&block)).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "an aligner instance stopped reading its converted reads",
-                )
-            })?;
+        // A closed receiver means that consumer stopped reading (its aligner
+        // died). Keep feeding the others whole records: cutting them off mid-record
+        // would make a healthy sibling fail and hide the dead one's exit status.
+        // The loss is reported once the pass ends.
+        let before = self.senders.len();
+        self.senders
+            .retain(|tx| tx.send(Arc::clone(&block)).is_ok());
+        if self.senders.len() < before {
+            self.lost_consumer = true;
+        }
+        if self.senders.is_empty() {
+            return Err(consumer_lost());
         }
         Ok(())
     }
+}
+
+fn consumer_lost() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "an aligner instance stopped reading its converted reads",
+    )
 }
 
 impl Write for FanOut {
@@ -364,11 +388,11 @@ impl Write for FanOut {
 /// aligner instance, then call [`finish`](Self::finish) once the merge has
 /// drained every instance.
 ///
-/// **Lifecycle, and why the order is not negotiable.** Opening a FIFO for write
-/// blocks until a reader opens it, so [`start`](Self::start) leaves every writer
-/// thread parked in `open`. The caller must then spawn *all* aligner children
-/// before priming any of them ([`super::align::AlignerStream::spawn_unprimed`]);
-/// each child's open releases its writer, and only then can bytes flow.
+/// Opening a FIFO for write blocks until a reader opens it, so `start` leaves
+/// every writer thread parked in `open`. The caller must spawn all aligner
+/// children before priming any
+/// ([`super::align::AlignerStream::spawn_unprimed`]); each child's open releases
+/// its writer.
 pub(crate) struct StreamedConversion {
     /// One FIFO path per consumer, in the caller's demand order.
     paths: Vec<PathBuf>,
@@ -376,9 +400,8 @@ pub(crate) struct StreamedConversion {
     converters: Vec<JoinHandle<Result<u64>>>,
     /// One writer thread per consumer.
     writers: Vec<JoinHandle<Result<()>>>,
-    /// Per consumer: one of [`writer_state`], published by that writer once its
-    /// blocking open-for-write has returned. Read — never consumed — by both the
-    /// reader handshake and the teardown.
+    /// Per consumer: one of [`writer_state`], published by that writer. Read by
+    /// both the reader handshake and the teardown.
     opened: Vec<Arc<AtomicU8>>,
     /// Declared last so the pipes are unlinked *after* the thread handles are
     /// dropped (Rust drops fields in declaration order).
@@ -390,13 +413,11 @@ impl StreamedConversion {
     ///
     /// `demands[c]` is the index into `sources` that consumer `c` reads; the
     /// returned [`path`](Self::path)`(c)` is the FIFO to put in that instance's
-    /// argv. Every source must have at least one consumer — one that does not is
-    /// rejected rather than skipped, so [`finish`](Self::finish)'s counts stay
-    /// aligned with `sources`.
+    /// argv. Every source must have at least one consumer, so
+    /// [`finish`](Self::finish)'s counts stay aligned with `sources`.
     ///
-    /// `--gzip` is deliberately ignored here: it exists to shrink the converted
-    /// *file*, and there is no file. Compressing bytes that go straight into a
-    /// pipe would cost CPU for nothing, so the FIFO names carry no `.gz` either.
+    /// `--gzip` is ignored: there is no file to shrink, so the pipe carries plain
+    /// bytes and its name has no `.gz`.
     pub(crate) fn start(
         temp_dir: &Path,
         fasta: bool,
@@ -404,12 +425,11 @@ impl StreamedConversion {
         sources: &[ConvSource],
         demands: &[usize],
     ) -> Result<Self> {
-        // The FIFO is named after the file it replaces, minus the `.gz` (see above).
+        // Name the FIFO after the file it replaces, minus the `.gz`.
         let mut plain = opts.clone();
         plain.gzip = false;
 
-        // Claimed once per set, so concurrent `--multicore` chunks cannot agree on
-        // a path even when their (truncated) names match.
+        // One id per set, so concurrent `--multicore` chunks get distinct paths.
         let set = next_fifo_set();
         let mut names = Vec::with_capacity(demands.len());
         for (consumer, &src) in demands.iter().enumerate() {
@@ -453,7 +473,7 @@ impl StreamedConversion {
         })
     }
 
-    /// The FIFO to hand aligner instance `consumer` — its `-U` / `-1` / `-2` path.
+    /// The FIFO for aligner instance `consumer` (its `-U` / `-1` / `-2` path).
     pub(crate) fn path(&self, consumer: usize) -> &Path {
         &self.paths[consumer]
     }
@@ -461,25 +481,17 @@ impl StreamedConversion {
     /// Block until every consumer has opened its pipe, or until one of them has
     /// died without doing so.
     ///
-    /// **This is what keeps a failed instance from hanging the run.** The fan-out
-    /// is bounded, so a consumer that never reads fills its channel after about
-    /// [`CHANNEL_DEPTH`] blocks and then stalls the shared conversion pass — which
-    /// starves every *sibling* instance too. The siblings then block mid-merge on
-    /// a child that is alive but will never receive another read, and nothing ever
-    /// times out. The file path has no such coupling: each instance reads its own
-    /// file, so a dead instance surfaces as a non-zero exit. Without this check the
-    /// streaming path would turn that loud failure into a silent hang.
+    /// This keeps a failed instance from hanging the run. The fan-out is bounded,
+    /// so a consumer that never reads fills its channel after [`CHANNEL_DEPTH`]
+    /// blocks and stalls the shared conversion pass, starving its siblings, which
+    /// then block mid-merge with no timeout.
     ///
-    /// `child_status` reports whether the child behind a given consumer has
-    /// already exited (`UnprimedAlignerStream::try_wait`). Polled rather than
-    /// timed out on purpose: an aligner loading a mammalian index can legitimately
-    /// take minutes before it opens its reads, so any fixed deadline would be
-    /// either flaky or useless.
+    /// `child_status` reports whether the child behind a consumer has exited
+    /// (`UnprimedAlignerStream::try_wait`). It is polled rather than given a
+    /// deadline, since loading a large index can take minutes.
     ///
-    /// Only a **non-zero** exit before opening is fatal. A child that exits
-    /// cleanly without reading its input has produced whatever it was going to
-    /// produce, so the run carries on and its writer is released at once — which
-    /// is also what the repo's fake `bowtie2` stubs do.
+    /// Only a non-zero exit before opening is an error. A child that exits cleanly
+    /// without reading has its writer released at once and the run continues.
     pub(crate) fn await_readers<F>(&self, mut child_status: F) -> Result<()>
     where
         F: FnMut(usize) -> Result<Option<std::process::ExitStatus>>,
@@ -507,11 +519,9 @@ impl StreamedConversion {
                                 self.paths[c].display()
                             )));
                         }
-                        // Exited CLEANLY without reading its input (the shape of
-                        // the repo's test stubs). Not a failure, but release its
-                        // writer now: left parked, its channel fills and stalls
-                        // the conversion its siblings share. The child is gone, so
-                        // no one else can be reading this pipe.
+                        // Exited cleanly without reading. Release its writer now,
+                        // or its channel fills and stalls the siblings. The child
+                        // is gone, so nobody else can be reading this pipe.
                         if !self.writers[c].is_finished() {
                             release(&self.paths[c]);
                         }
@@ -529,10 +539,9 @@ impl StreamedConversion {
     /// Join every writer and converter, returning the per-source record count in
     /// `sources` order (the `(N sequences)` the file path reports on its banner).
     ///
-    /// Call this only after the merge has drained every aligner instance —
-    /// joining earlier would wait for consumers that are not reading. On any
-    /// error path, drop the value instead: the threads are detached and the pipes
-    /// unlinked, and the process is on its way out.
+    /// Call this only after the merge has drained every aligner instance; joining
+    /// earlier would wait for consumers that are not reading. On an error path,
+    /// drop the value instead (see the [`Drop`] impl).
     pub(crate) fn finish(mut self) -> Result<Vec<u64>> {
         self.drain_unopened();
         let mut first_err = None;
@@ -561,35 +570,25 @@ impl StreamedConversion {
     /// Unpark any writer whose aligner never opened its pipe, by opening it here
     /// and discarding what comes out.
     ///
-    /// An aligner that exits without reading its input — a stub, a wrapper, or a
-    /// real one that dies during start-up — leaves its writer blocked in
-    /// open-for-write forever, and joining that writer would hang the whole run.
-    /// It is safe to read the pipe ourselves at both call sites, because by then
-    /// every aligner child has been reaped — there is no longer anyone the bytes
-    /// could be stolen from, and the child's own exit status is what reports the
-    /// failure. That holds for a different reason on each path, and **both reasons
-    /// are load-bearing**:
+    /// An aligner that exits without reading its input leaves its writer blocked
+    /// in open-for-write, and joining that writer would hang the run.
     ///
-    /// - From [`finish`](Self::finish), the caller has already awaited every
-    ///   instance's `AlignerStream::finish`, which `wait()`s the child.
-    /// - From [`drop`](Self::drop), the caller is returning an error, and the
-    ///   `Vec` of streams is declared *after* the `StreamedConversion` in both
-    ///   streaming drivers — so it drops *first*, and `AlignerStream`'s own `Drop`
-    ///   kills and waits each child before this runs. Moving the
-    ///   `StreamedConversion` binding below the streams would silently invert that
-    ///   and let this steal bytes from a live aligner.
+    /// Reading the pipe here is safe because every aligner child has been reaped
+    /// by the time this runs, so no live aligner can lose bytes to it. The
+    /// streaming drivers (`run_se_instances_streamed` / `run_pe_instances_streamed`)
+    /// spawn, merge and reap or kill every child before returning, on success and
+    /// on error, so this holds both in [`finish`](Self::finish) and in
+    /// [`Drop`].
     ///
-    /// The `open` below cannot block: it is only reached when nothing has opened
-    /// the pipe for read, which means the writer is (or is about to be) parked in
-    /// open-for-write, and two opposing opens release each other.
+    /// The `open` cannot block: it is reached only while the writer is (or is
+    /// about to be) parked in open-for-write, and opposing opens release each
+    /// other.
     fn drain_unopened(&mut self) {
         for ((state, path), writer) in self.opened.iter().zip(&self.paths).zip(&self.writers) {
-            // Release ONLY a writer still parked in open. One past it will end on
-            // its own, and opening its pipe here would steal bytes. And a writer
-            // that has already returned — normally, or by panicking before it
-            // published any state — is never coming to the other end, so opening
-            // would block for a writer that does not exist: the very hang this
-            // exists to prevent.
+            // Release only a writer still parked in open; one past it ends on its
+            // own. A writer that has already returned (even by panicking before
+            // publishing its state) will never open its end, so opening here
+            // would block forever.
             let parked = matches!(
                 state.load(Ordering::Acquire),
                 writer_state::PARKED | writer_state::REOPENING
@@ -603,8 +602,8 @@ impl StreamedConversion {
 }
 
 /// Open `path` for read and discard everything written to it, on a detached
-/// thread, so its writer can run to completion. Only for a pipe whose aligner is
-/// gone.
+/// thread, so its writer can run to completion. Only for a pipe whose aligner
+/// has exited.
 fn release(path: &Path) {
     if let Ok(mut f) = std::fs::File::open(path) {
         std::thread::spawn(move || {
@@ -615,42 +614,29 @@ fn release(path: &Path) {
 
 impl Drop for StreamedConversion {
     fn drop(&mut self) {
-        // The error path: release any parked writer as above, then detach rather
-        // than join.
+        // The error path. Every aligner child has already been reaped by the
+        // streaming driver, so release any parked writer (see `drain_unopened`)
+        // and detach the threads rather than join them, so a failing chunk cannot
+        // hang. Each released thread ends on its own, which matters because
+        // `--multicore N` keeps sibling chunks running after a chunk error.
         //
-        // Detaching (rather than joining) is what keeps a failing chunk from
-        // hanging. A released writer ends on its own — it drains its channel into
-        // the discard reader, or sees the channel disconnect — but waiting for it
-        // here would put an unbounded wait on the error path, which is the one
-        // path that must always make progress. The threads are per-chunk and
-        // finite, and each one is already unblocked by the time we let it go.
-        //
-        // NB `--multicore N` does NOT exit the process on a chunk error: it
-        // collects a `Vec<Result<_>>` and reports the lowest-index failure
-        // (`parallel.rs`), so sibling chunks keep running. Detached threads must
-        // therefore terminate on their own rather than rely on process exit.
-        //
-        // A completed `finish()` leaves nothing to release (`writers` is empty).
-        // `_fifos` drops after this, unlinking the pipes — which is why the
-        // release happens here and not afterwards.
+        // After `finish()`, `writers` is empty and there is nothing to release.
+        // `_fifos` drops after this, so the release runs before the unlink.
         if !self.writers.is_empty() {
             self.drain_unopened();
         }
     }
 }
 
-/// Start one converter thread per source, fanning each out to the consumers that
-/// demand it, and hand back one receiver per consumer.
-///
-/// The half of the machinery that has nothing to do with pipes: both the FIFO path
-/// ([`StreamedConversion`]) and the in-process path ([`InMemoryConversion`]) need
-/// exactly this, and neither should own a second copy of it.
-///
-/// Every source must have at least one consumer. A source nobody reads is a
-/// planning bug, not something to skip quietly: it would shift every later count
-/// onto the wrong source in the caller's banner.
+/// One receiver per consumer, plus one converter handle per source.
 type Converters = (Vec<Receiver<Arc<[u8]>>>, Vec<JoinHandle<Result<u64>>>);
 
+/// Start one converter thread per source, fanning each out to the consumers that
+/// demand it, and hand back one receiver per consumer. Shared by
+/// [`StreamedConversion`] and [`InMemoryConversion`].
+///
+/// A source with no consumer is an error rather than skipped, since it would
+/// misalign the per-source counts.
 fn spawn_converters(
     fasta: bool,
     opts: &ConvertOptions,
@@ -693,12 +679,8 @@ fn spawn_converters(
 
 /// The reading end of one consumer's channel, as a [`Read`].
 ///
-/// Compiled only with the in-process backend, which is the only consumer that can
-/// take its reads without a file or a pipe between it and the converter.
-///
-/// Lets an in-process aligner consume converted reads with no file and no pipe
-/// between it and the converter. The bytes are the same bytes the file path would
-/// have written, so the reader on the far side is unchanged.
+/// Lets the in-process aligner consume converted reads with no file or pipe in
+/// between; the bytes are those the file path would have written.
 #[cfg(feature = "rammap-inprocess")]
 pub(crate) struct ChannelReader {
     rx: Receiver<Arc<[u8]>>,
@@ -726,16 +708,10 @@ impl std::io::Read for ChannelReader {
     }
 }
 
-/// An in-flight conversion delivered **in memory**, with no file and no FIFO.
-///
-/// The in-process rammap backend runs in this process and reads its converted
-/// reads through a [`BufRead`](std::io::BufRead). Pointing it at a temp file meant
-/// the converter serialised records to disk so that the very same process could
-/// parse them back — a round trip through the filesystem that never left the
-/// program. A FIFO would remove the disk but keep the syscalls; this removes both.
-///
-/// The conversion loop is the same one the file path runs, so the bytes the
-/// aligner sees are unchanged.
+/// An in-flight conversion delivered in memory, with no file and no FIFO, for the
+/// in-process rammap backend, which reads through a
+/// [`BufRead`](std::io::BufRead) in this same process. The conversion loop is the
+/// file path's, so the bytes are unchanged.
 #[cfg(feature = "rammap-inprocess")]
 pub(crate) struct InMemoryConversion {
     converters: Vec<JoinHandle<Result<u64>>>,
@@ -796,13 +772,11 @@ fn join<T>(h: JoinHandle<Result<T>>) -> Result<T> {
 
 /// Fill one FIFO from its channel.
 ///
-/// The `open` blocks until the aligner child opens the pipe for read — that is the
-/// handshake the whole ordering discipline exists to satisfy.
+/// The `open` blocks until the aligner child opens the pipe for read.
 fn writer_thread(path: PathBuf, rx: Receiver<Arc<[u8]>>, state: Arc<AtomicU8>) -> Result<()> {
     let fifo = std::fs::OpenOptions::new().write(true).open(&path);
-    // Publish that the blocking open is behind us — success or failure — before
-    // doing anything else, so neither the reader handshake nor the teardown can
-    // observe this writer as still parked once it is not.
+    // Publish that the blocking open has returned, success or failure, before
+    // anything else, so no observer sees this writer as parked once it is not.
     state.store(
         if fifo.is_ok() {
             writer_state::OPENED
@@ -814,11 +788,10 @@ fn writer_thread(path: PathBuf, rx: Receiver<Arc<[u8]>>, state: Arc<AtomicU8>) -
     let mut fifo = fifo?;
     while let Ok(block) = rx.recv() {
         if let Err(e) = fifo.write_all(&block) {
-            // The reader went away mid-stream. Stop taking blocks, so the
-            // converter fails loudly instead of stalling on this channel, then
-            // hand any LATE reader an empty stream: a wrapper that sniffs the
-            // input and closes it leaves the real aligner to open the path
-            // again, and with no writer that open would block for ever.
+            // The reader went away mid-stream. Stop taking blocks so the
+            // converter errors instead of stalling, then give any late reader an
+            // empty stream: a wrapper may sniff the input and close it before the
+            // real aligner opens the path, which with no writer would block.
             drop(rx);
             drop(fifo);
             reopen_and_close(&path, &state);
@@ -848,8 +821,8 @@ fn reopen_and_close(path: &Path, state: &AtomicU8) {
 
 /// Run one conversion pass, fanning it out to every consumer of that source.
 ///
-/// Reuses [`convert::convert_fastq_into`] / [`convert::convert_fasta_into`]
-/// verbatim — the same loop the file path runs — so the two paths cannot drift.
+/// Uses [`convert::convert_fastq_into`] / [`convert::convert_fasta_into`], the
+/// same loops the file path runs.
 fn converter_thread(
     input: PathBuf,
     fasta: bool,
@@ -867,9 +840,12 @@ fn converter_thread(
         convert::convert_fastq_into(&mut *reader, &opts, kind, id_suffix, &mut out)?
     };
     out.flush()?;
-    // Dropping the senders is what tells the writers there is no more input, so
-    // they can close their end and let the aligner see EOF.
+    let lost = out.lost_consumer;
+    // Dropping the senders ends the writers' input, so the aligner sees EOF.
     drop(out);
+    if lost {
+        return Err(consumer_lost().into());
+    }
     Ok(count)
 }
 
@@ -878,8 +854,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// A FIFO is neither a regular file nor a directory — enough to tell it from
-    /// a `File::create` without pulling in the unix-only `FileTypeExt`.
+    /// A FIFO is neither a regular file nor a directory; enough here without the
+    /// unix-only `FileTypeExt`.
     fn is_fifo(p: &Path) -> bool {
         let md = std::fs::symlink_metadata(p).expect("fifo should exist");
         !md.is_file() && !md.is_dir() && !md.file_type().is_symlink()
@@ -921,6 +897,41 @@ mod tests {
     }
 
     #[test]
+    fn fifo_owner_pid_reads_both_name_shapes() {
+        assert_eq!(fifo_owner_pid("r_C_to_T.s3.4242.7.fifo.fastq"), Some(4242));
+        assert_eq!(fifo_owner_pid("r_C_to_T.s0.17.0.fifo"), Some(17));
+        assert_eq!(fifo_owner_pid("bismark_fifo_probe.99.3"), Some(99));
+        assert_eq!(fifo_owner_pid("reads.fastq"), None);
+        assert_eq!(fifo_owner_pid("my.fifo"), None);
+        assert_eq!(fifo_owner_pid("x.sA.1.2.fifo"), None);
+    }
+
+    /// A pipe left by a run that no longer exists is removed; one belonging to a
+    /// live process, and anything that is not a pipe, is kept.
+    #[cfg(unix)]
+    #[test]
+    fn sweep_removes_only_stale_pipes() {
+        let tmp = TempDir::new().unwrap();
+        // A pid that cannot be running: above the kernel's pid limit.
+        let dead = fifo_name("r_C_to_T.fastq", 0, 0)
+            .replace(&format!(".{}.", std::process::id()), ".4294967.");
+        let live = fifo_name("r_C_to_T.fastq", 1, 0);
+        let _set = FifoSet::create(tmp.path(), std::slice::from_ref(&live)).unwrap();
+        mkfifo(&tmp.path().join(&dead)).unwrap();
+        let plain = tmp.path().join("r.s0.4294967.0.fifo.fastq.txt");
+        std::fs::write(&plain, b"").unwrap();
+        let plain_named_like_a_fifo = tmp.path().join("q.s0.4294967.0.fifo.fastq");
+        std::fs::write(&plain_named_like_a_fifo, b"").unwrap();
+
+        sweep_stale_fifos(tmp.path());
+
+        assert!(!tmp.path().join(&dead).exists(), "stale pipe must go");
+        assert!(tmp.path().join(&live).exists(), "our own pipe must stay");
+        assert!(plain.exists());
+        assert!(plain_named_like_a_fifo.exists(), "only pipes are removed");
+    }
+
+    #[test]
     fn probe_succeeds_on_a_real_temp_dir() {
         let tmp = TempDir::new().unwrap();
         assert!(temp_dir_supports_fifo(tmp.path()));
@@ -949,9 +960,8 @@ mod tests {
         }
     }
 
-    /// A fixture big enough to need several [`BLOCK_BYTES`] blocks, so the
-    /// bounded channel actually fills and both consumers have to be drained
-    /// concurrently — the condition a single writer thread would deadlock on.
+    /// A fixture spanning several [`BLOCK_BYTES`] blocks, so the bounded channel
+    /// fills and both consumers must be drained concurrently.
     fn write_fixture(dir: &Path) -> PathBuf {
         let path = dir.join("reads.fastq");
         let mut fq = Vec::new();
@@ -965,9 +975,8 @@ mod tests {
         path
     }
 
-    /// Phase 2 gate: the bytes a consumer reads off its FIFO are exactly the
-    /// bytes the file path would have written for it — for BOTH consumers of the
-    /// same source, from ONE conversion pass.
+    /// Each consumer's FIFO carries exactly the bytes the file path would have
+    /// written, for both consumers of one source, from one conversion pass.
     #[test]
     fn streamed_bytes_match_the_converted_file() {
         let tmp = TempDir::new().unwrap();
@@ -994,8 +1003,7 @@ mod tests {
         let streamed =
             StreamedConversion::start(tmp.path(), false, &o, &sources, &demands).unwrap();
 
-        // Stand in for the aligner children: open every pipe for read BEFORE
-        // draining any of them, exactly as the real ordering discipline requires.
+        // Stand in for the aligner children: open every pipe before draining any.
         let readers: Vec<_> = demands
             .iter()
             .enumerate()
@@ -1014,13 +1022,8 @@ mod tests {
         }
     }
 
-    /// An aligner that never reads its input must not hang the run.
-    ///
-    /// A writer blocks in open-for-write until something opens the pipe for read,
-    /// so a stub aligner (or a real one that dies at start-up) would park it
-    /// forever and `finish` would wait on it for ever. This is the regression
-    /// test for that hang — it deadlocked the whole `aligner_cli` suite, whose
-    /// fake `bowtie2` prints SAM records without reading a byte.
+    /// An aligner that never reads its input must not hang `finish`: its writer
+    /// is parked in open-for-write and must be released.
     #[test]
     fn finish_does_not_hang_when_nothing_reads_the_pipe() {
         let tmp = TempDir::new().unwrap();
@@ -1031,31 +1034,18 @@ mod tests {
             kind: ConvKind::Ct,
             id_suffix: b"",
         }];
-        // Two consumers, NEITHER of which is ever opened — as two stub aligners
-        // leave them. NB the fan-out couples consumers: one that never reads
-        // eventually fills its channel and stalls the shared conversion pass, so
-        // it starves its siblings too. That is inherent to a bounded fan-out and
-        // harmless for real aligners, which all read their input. The hang this
-        // guards against is the one that survives even after every aligner has
-        // exited, which is where `finish` is called.
+        // Two consumers, neither ever opened, called after every "aligner" has
+        // exited (where `finish` runs).
         let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
         let counts = streamed.finish().unwrap();
         assert_eq!(counts, vec![20_000]);
     }
 
-    /// An instance that dies before opening its pipe must be reported, not waited
-    /// on for ever.
+    /// An instance that dies before opening its pipe is reported as an error
+    /// naming it, rather than stalling its siblings.
     ///
-    /// This is the silent-hang case: the fan-out is bounded, so a consumer that
-    /// never reads stalls the shared conversion pass and starves its siblings,
-    /// which then block mid-merge on children that are alive but will never get
-    /// another read. Nothing times out. `await_readers` turns it into an error
-    /// naming the instance.
-    ///
-    /// NB no reader is attached here, deliberately. An earlier version of this
-    /// test opened consumer 0 and joined it at the end — which could never
-    /// return, precisely *because* the stalled consumer 1 starves consumer 0.
-    /// That is the bug under test; a test that reproduces it on itself just hangs.
+    /// No reader is attached to consumer 0: the stalled consumer 1 would starve it,
+    /// so joining it would hang the test.
     #[test]
     fn await_readers_reports_an_instance_that_died_before_opening() {
         let tmp = TempDir::new().unwrap();
@@ -1084,9 +1074,8 @@ mod tests {
         );
     }
 
-    /// A stub that exits CLEANLY without reading is not a failure: the run
-    /// continues rather than being killed. This is the `aligner_cli` fake shape,
-    /// and getting it wrong took out eight paired-end tests.
+    /// A child that exits cleanly without reading is not a failure (the shape of
+    /// the `aligner_cli` fake aligners).
     #[test]
     fn await_readers_tolerates_an_instance_that_exits_cleanly_without_reading() {
         let tmp = TempDir::new().unwrap();
@@ -1101,14 +1090,12 @@ mod tests {
 
         let ok = std::process::Command::new("true").status().unwrap();
         assert!(ok.success());
-        // Neither pipe is ever opened and both "children" exited 0 — as two stubs
-        // would. This must RETURN, not error and not spin.
+        // Neither pipe is opened and both "children" exited 0: must return Ok.
         streamed.await_readers(|_| Ok(Some(ok))).unwrap();
         streamed.finish().unwrap();
     }
 
-    /// The happy path of the same handshake: every pipe opened, no child exited,
-    /// `await_readers` returns and the run proceeds.
+    /// Every pipe opened and no child exited: `await_readers` returns.
     #[test]
     fn await_readers_returns_once_every_pipe_is_open() {
         let tmp = TempDir::new().unwrap();
@@ -1135,8 +1122,7 @@ mod tests {
         streamed.finish().unwrap();
     }
 
-    /// The same hang, on the error path: dropping without `finish` must not leave
-    /// a parked writer behind either.
+    /// Dropping without `finish` must not leave a parked writer behind.
     #[test]
     fn drop_releases_a_parked_writer() {
         let tmp = TempDir::new().unwrap();
@@ -1151,8 +1137,7 @@ mod tests {
         drop(streamed); // nothing ever opened the pipe
     }
 
-    /// `--gzip` shrinks a temp *file*; with no file it is a no-op, and the pipe
-    /// carries the same plain bytes an ungzipped run would have written.
+    /// `--gzip` is a no-op when streaming: the pipe carries the plain bytes.
     #[test]
     fn gzip_is_a_no_op_on_the_streaming_path() {
         let tmp = TempDir::new().unwrap();
@@ -1184,12 +1169,9 @@ mod tests {
         assert_eq!(got, expected);
     }
 
-    /// The in-memory path must deliver exactly the bytes the file path would have
-    /// written, for every consumer, from one conversion pass.
-    ///
-    /// This is the same gate as `streamed_bytes_match_the_converted_file`, for the
-    /// sink that has no pipe in it. The in-process backend parses these bytes with
-    /// the same reader it used on the file, so equal bytes means equal alignments.
+    /// The in-memory path delivers exactly the bytes the file path would have
+    /// written, for every consumer, from one conversion pass (the in-memory
+    /// counterpart of `streamed_bytes_match_the_converted_file`).
     #[test]
     #[cfg(feature = "rammap-inprocess")]
     fn in_memory_bytes_match_the_converted_file() {
@@ -1254,8 +1236,7 @@ mod tests {
         }];
         let (readers, conversion) = InMemoryConversion::start(false, &o, &sources, &[0]).unwrap();
         drop(readers); // never read a byte
-        // The converter sees its consumer go away and stops; `finish` reports that
-        // rather than blocking for ever.
+        // The converter sees its consumer go away and stops; `finish` returns.
         let _ = conversion.finish();
     }
 
@@ -1285,10 +1266,9 @@ mod tests {
         path
     }
 
-    /// The in-process merge reads its streams one at a time, each pulling a whole
-    /// `CHUNK` of records while its siblings read nothing. With byte-sized slack
-    /// that deadlocked for reads over ~300 bp; the in-memory shape must queue a
-    /// whole chunk per consumer whatever the read length.
+    /// The in-process merge refills one stream at a time by a whole `CHUNK` of
+    /// records, so the in-memory shape must queue a whole chunk per consumer
+    /// whatever the read length (byte-sized slack deadlocks on long reads).
     #[test]
     #[cfg(feature = "rammap-inprocess")]
     fn in_memory_survives_chunked_reads_of_long_records() {
@@ -1335,9 +1315,9 @@ mod tests {
         assert_eq!(records, vec![n * 4, n * 4], "lines read per consumer");
     }
 
-    /// An instance that exits cleanly without opening its pipe must have its
-    /// writer released straight away. Left parked until teardown, its channel
-    /// fills after ~1 MiB and starves the sibling reading the same source.
+    /// An instance that exits cleanly without opening its pipe has its writer
+    /// released at once; left parked, its channel fills after ~1 MiB and starves
+    /// the sibling reading the same source.
     #[test]
     fn a_clean_exit_without_reading_does_not_starve_the_sibling() {
         let tmp = TempDir::new().unwrap();
@@ -1367,6 +1347,41 @@ mod tests {
         });
         assert!(counts.0 > CHANNEL_DEPTH * BLOCK_BYTES);
         assert_eq!(counts.1, vec![20_000]);
+    }
+
+    /// One consumer quitting must not cut its sibling off mid-record: the
+    /// sibling still receives the whole stream, and the loss is reported at the
+    /// end rather than as a truncated read in the healthy instance.
+    #[test]
+    fn a_dead_consumer_does_not_truncate_its_sibling() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let expected = std::fs::read(
+            crate::aligner::convert::bisulfite_convert_fastq_se(&input, tmp.path(), &o)
+                .unwrap()
+                .path,
+        )
+        .unwrap();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+        let p0 = streamed.path(0).to_path_buf();
+        let p1 = streamed.path(1).to_path_buf();
+
+        let (got, finished) = within(60, move || {
+            use std::io::Read;
+            let sibling = std::thread::spawn(move || std::fs::read(p0).unwrap());
+            let mut f = std::fs::File::open(&p1).unwrap();
+            f.read_exact(&mut [0u8; 16]).unwrap();
+            drop(f);
+            (sibling.join().unwrap(), streamed.finish())
+        });
+        assert!(got == expected, "the sibling must receive every byte");
+        assert!(finished.is_err(), "the lost consumer is still reported");
     }
 
     /// A reader that opens the pipe and closes it early (a wrapper sniffing the
@@ -1480,9 +1495,8 @@ mod tests {
         assert!(fifo_name("noext", 0, 0).ends_with(".fifo"));
     }
 
-    /// A long sample name must not push the pipe name past what the filesystem
-    /// will take. Without the cap, a name that worked as a FILE could fail
-    /// `mkfifo` mid-run, which is the whole reason the cap exists.
+    /// A long sample name must not push the pipe name past the filesystem's
+    /// path-component limit.
     #[test]
     fn fifo_names_stay_short_for_any_input_name() {
         let long = format!("{}_C_to_T.fastq", "s".repeat(400));
@@ -1500,12 +1514,8 @@ mod tests {
 
     /// Two concurrent chunks of the SAME long-named input must not agree on a path.
     ///
-    /// `--multicore N` runs its chunks concurrently in one process, so the pid and
-    /// the slot numbers repeat. The names differ only by `.temp.<i>` at the END of
-    /// the basename, which is exactly what `NAME_STEM_CAP` truncates. Before the
-    /// set id, both chunks produced the same path, and since `mkfifo` unlinks
-    /// first, the second chunk would delete the first's live pipe and both would
-    /// write into one: interleaved reads, wrong output, no error.
+    /// Their names differ only by `.temp.<i>` at the end, which `NAME_STEM_CAP`
+    /// truncates, so only the set id keeps the paths apart (see [`NEXT_FIFO_SET`]).
     #[test]
     fn concurrent_chunks_of_a_long_named_input_get_distinct_paths() {
         let long = "S".repeat(200);
@@ -1540,8 +1550,7 @@ mod tests {
         assert_eq!(all.len(), total, "set ids must never repeat");
     }
 
-    /// The cap must fall on a character boundary, or a non-ASCII sample name
-    /// would panic the run rather than align it.
+    /// The cap falls on a character boundary, so a non-ASCII name cannot panic.
     #[test]
     fn fifo_names_cap_on_a_char_boundary() {
         let long = format!("{}.fastq", "é".repeat(200));

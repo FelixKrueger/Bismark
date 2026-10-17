@@ -1,26 +1,13 @@
-//! `#1120` — streaming the converted reads to the aligner through FIFOs.
+//! `#1120`: streaming the converted reads to the aligner through FIFOs.
 //!
-//! Two tiers, mirroring the repo's other aligner gates:
+//! Tier 1 (always runs, no fixtures) checks the routing matrix: a backend or
+//! alignment model that cannot take a pipe must fall back to files and say why.
 //!
-//! **Tier 1 (always runs, no fixtures)** — the routing matrix. Streaming is the
-//! DEFAULT, so the thing that must never regress silently is the *fallback*: a
-//! backend or alignment model that cannot take a pipe has to land on files and
-//! say why. These assertions need no aligner binary and no genome.
-//!
-//! **Tier 2 (runs where Bowtie 2 is installed)** — the byte-identity A/B. The
-//! same input is aligned twice, once streamed and once with
-//! `--no_stream_converted`, and the two BAMs must agree record for record. It
-//! also asserts the streaming arm leaves **no** `_C_to_T` / `_G_to_A` file and no
-//! stray FIFO behind, which is the entire point of the feature. Without
-//! `bowtie2`/`bowtie2-build` on `PATH` it prints a SKIP and passes — CI installs
-//! no aligner. The prepared E. coli index is cached under `target/` so the
-//! ~30 s `bowtie2-build` is paid once, not once per run.
-//!
-//! The broader matrix (all three library types × SE/PE, `--gzip`, `-p 4`,
-//! `--multicore 2`, `--skip`/`--upto`, `--prefix`) runs in a container via
-//! `plans/09112026_stream-converted/spikes/ab-run.sh`, which compares with
-//! `samtools view` and so also covers the unmapped records this test's reader
-//! filters out.
+//! Tier 2 (runs where Bowtie 2 is installed) aligns the same input streamed and
+//! with `--no_stream_converted`, requires the BAM records to match, and checks
+//! the streaming arm leaves no `_C_to_T` / `_G_to_A` file or FIFO behind. Without
+//! `bowtie2`/`bowtie2-build` on `PATH` it prints a SKIP and passes. The E. coli
+//! index is cached under `target/` so `bowtie2-build` runs once.
 
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
@@ -52,8 +39,8 @@ fn no_stream_converted_forces_files_without_a_complaint() {
     );
 }
 
-/// HISAT2 rejects a FIFO outright (exit 255 — it stats the file while sniffing
-/// the format), so it must keep the file path, and must say so.
+/// HISAT2 rejects a FIFO (exit 255; it stats the file while sniffing the
+/// format), so it keeps files and says so.
 #[test]
 fn hisat2_falls_back_to_files_and_says_why() {
     let s = resolve_stream_converted(false, Aligner::Hisat2, false, false, false);
@@ -64,8 +51,7 @@ fn hisat2_falls_back_to_files_and_says_why() {
     assert!(reason.contains("HISAT2"), "{reason}");
 }
 
-/// Every mode that still reads converted *files* must be an explicit, explained
-/// fallback rather than a silent one.
+/// Every mode that reads converted files must explain its fallback.
 #[test]
 fn every_unsupported_mode_explains_itself() {
     for (label, s) in [
@@ -86,9 +72,8 @@ fn every_unsupported_mode_explains_itself() {
     }
 }
 
-/// 5-Base aligns the raw reads to the UNCONVERTED genome, so it writes no
-/// converted temp files at all — there is nothing to stream and nothing to
-/// explain.
+/// 5-Base aligns raw reads to the unconverted genome, so there is nothing to
+/// stream and nothing to explain.
 #[test]
 fn five_base_has_nothing_to_stream() {
     let s = resolve_stream_converted(false, Aligner::Minimap2, false, true, false);
@@ -96,9 +81,8 @@ fn five_base_has_nothing_to_stream() {
     assert!(s.reason.is_none());
 }
 
-/// `[#1120]` The in-process rammap backend aligns inside this process, so it takes
-/// the converted reads in memory: no temp file and no FIFO. The SUBPROCESS backend
-/// keeps files, because whether the external binary accepts a pipe is unverified.
+/// The in-process rammap backend takes the converted reads in memory (no temp
+/// file, no FIFO); the subprocess backend keeps files.
 #[test]
 fn in_process_rammap_takes_its_reads_in_memory() {
     let in_memory = resolve_stream_converted(false, Aligner::Rammap, false, false, true);
@@ -118,8 +102,7 @@ fn in_process_rammap_takes_its_reads_in_memory() {
     );
 }
 
-/// `--no_stream_converted` still wins for the in-process backend, so the flag
-/// remains a complete escape hatch back to files on every path.
+/// `--no_stream_converted` also applies to the in-process backend.
 #[test]
 fn no_stream_converted_also_turns_off_the_in_memory_path() {
     let s = resolve_stream_converted(true, Aligner::Rammap, false, false, true);
@@ -159,11 +142,8 @@ fn repo_root() -> PathBuf {
 }
 
 /// Prepare (once) a Bowtie 2 bisulfite index of the repo's E. coli fixture,
-/// cached under `target/`.
-///
-/// E. coli, not lambda: an early spike against an unconverted lambda index gave a
-/// 0.06% alignment rate, which makes a byte-identity claim vacuous. E. coli gives
-/// ~51%, so the alignment path is genuinely exercised.
+/// cached under `target/`. E. coli aligns ~51% of the test reads, so the
+/// comparison exercises real alignments.
 fn prepared_genome() -> Option<PathBuf> {
     let dir = repo_root().join("rust/target/tests/stream_converted_genome");
     let marker = dir.join(".prepared");
@@ -192,10 +172,8 @@ fn prepared_genome() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Every mapped record, rendered for comparison. The BAM *header* is deliberately
-/// not compared: its `@PG CL:` line is the verbatim argv, which necessarily
-/// differs between the two arms (one of them carries `--no_stream_converted`).
-/// Record bodies carry no paths, so they must match exactly.
+/// Every mapped record, rendered for comparison. The header is not compared: its
+/// `@PG CL:` line is the argv, which differs between the two arms.
 fn records(bam: &Path) -> Vec<String> {
     let mut reader = bismark::io::BamReader::from_path(bam).expect("open BAM");
     reader
@@ -249,7 +227,7 @@ fn assert_ab_identical(genome: &Path, label: &str, args: &[&str]) {
         assert_eq!(x, y, "[{label}] record {i} differs");
     }
 
-    // The whole point: nothing converted reaches the disk on the streaming arm.
+    // Nothing converted reaches the disk on the streaming arm.
     let leftovers: Vec<String> = std::fs::read_dir(stream_temp)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -261,7 +239,7 @@ fn assert_ab_identical(genome: &Path, label: &str, args: &[&str]) {
         "[{label}] streaming arm left {leftovers:?} in the temp dir"
     );
 
-    // Never-silent, in both directions.
+    // Both arms announce which path they took.
     assert!(
         stream_err.contains("no temp file written"),
         "[{label}] the streaming arm must say it streamed"
@@ -287,8 +265,8 @@ fn streamed_and_file_paths_produce_identical_bams() {
     let r2 = root.join("test_files/test_R2.fastq.gz");
     let (r1, r2) = (r1.to_str().unwrap(), r2.to_str().unwrap());
 
-    // Directional SE and PE, plus non-directional PE — 1, 2 and 4 converted
-    // streams respectively, which is the fan-out degree that matters.
+    // Directional SE and PE, plus non-directional PE: 1, 2 and 4 converted
+    // streams respectively.
     assert_ab_identical(&genome, "se", &["--single_end", r1]);
     assert_ab_identical(&genome, "pe", &["-1", r1, "-2", r2]);
     assert_ab_identical(
