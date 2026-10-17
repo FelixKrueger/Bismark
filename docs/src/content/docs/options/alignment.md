@@ -188,6 +188,8 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
   Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap_subprocess`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
 
+  While a run streams, its named pipes sit in `--temp_dir` (one `*.fifo.*` entry per aligner input) and are removed when it finishes. Pipes left behind by a run that was killed are removed by the next run that uses the same `--temp_dir`.
+
 - `--sam`
 
   The output will be written out in `SAM` format instead of the default `BAM` format.

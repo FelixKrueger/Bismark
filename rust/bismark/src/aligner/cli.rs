@@ -373,8 +373,8 @@ pub struct Cli {
     /// as files instead of streaming them to the aligner through named pipes (the
     /// default, which needs no temp disk space). Useful for inspecting the converted
     /// reads. Output is byte-identical either way. Runs that cannot stream
-    /// (`--hisat2`, combined-index modes, or a `--temp_dir` that cannot host a FIFO)
-    /// fall back to files automatically and say so.
+    /// (`--hisat2`, combined-index modes, `--rammap_subprocess`, or a `--temp_dir`
+    /// that cannot host a FIFO) fall back to files automatically and say so.
     #[arg(long = "no_stream_converted")]
     pub no_stream_converted: bool,
     /// Output base name (overrides the derived name).
