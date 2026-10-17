@@ -76,8 +76,8 @@ asymmetry.** Deferred to pre-merge validation by agreement; queue depth is the m
 
 ## 3. Full-scale validation (2026-09-12)
 
-Run against [`fullscale/FULLSCALE.md`](./FULLSCALE.md). Full record, per-run time series and
-plots: [`fullscale/RESULTS.md`](./fullscale/RESULTS.md).
+Run against [`FULLSCALE.md`](./FULLSCALE.md). The full record, per-run time series and
+plots were posted on [#1121](https://github.com/FelixKrueger/Bismark/pull/1121) and are not kept in the repo.
 
 **Machine.** 32 cores, 124 GB RAM, 1.1 TB scratch. Container from `spikes/Dockerfile.ab`
 (rust 1.89.0, bowtie2 2.5.0, samtools 1.16.1), release build of the PR branch.
