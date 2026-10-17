@@ -290,7 +290,7 @@ pub fn build_sam_record(
 /// `CHUNK × (2/4 instances) × SamRecord` (~hundreds of MB at 2048 for long-ONT
 /// records, where `raw_line` dominates) — well under the ~31 GB index footprint.
 #[cfg(feature = "rammap-inprocess")]
-const CHUNK: usize = 2048;
+pub(crate) const CHUNK: usize = 2048;
 
 /// A converted-read source presented as a [`SamStream`], backed by an in-process
 /// `rammap::Aligner` (NO subprocess). **#995: maps a CHUNK of reads in PARALLEL per

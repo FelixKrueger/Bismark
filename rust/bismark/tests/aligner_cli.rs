@@ -416,14 +416,21 @@ fn happy_path_resolves_and_prints_config() {
                 ))
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
-                // Phase 2: the C->T temp file is produced for the v1 spine.
-                .and(predicate::str::contains("Created C->T converted"))
+                // #1120: the C->T conversion streams to the aligner by default.
+                .and(predicate::str::contains("Streaming C->T converted"))
+                .and(predicate::str::contains("no temp file written"))
                 // Phase 5: the pipeline ran end-to-end (fake bowtie2 emits unmapped).
                 .and(predicate::str::contains("Mapping summary"))
                 .and(predicate::str::contains("no alignment found:")),
         );
-    // Phase 6: the C->T temp file is DELETED after the run (Perl 1974–1981).
+    // Phase 6: no C->T temp file remains (Perl 1974–1981). When streaming it is
+    // never written, and the FIFO is removed too.
     assert!(!temp.path().join("reads.fq_C_to_T.fastq").is_file());
+    assert_eq!(
+        std::fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "the streaming path must leave the temp dir empty"
+    );
     // Phase 5: the Bismark BAM was written to --output_dir (header-only here,
     // since the fake aligner reports every read unmapped).
     assert!(outdir.path().join("reads_bismark_bt2.bam").is_file());
@@ -434,6 +441,72 @@ fn happy_path_resolves_and_prints_config() {
             .join("reads_bismark_bt2_SE_report.txt")
             .is_file()
     );
+}
+
+/// #1120: an aligner instance that exits cleanly without reading its pipe must
+/// not starve the sibling that shares its converted source. The input exceeds
+/// the ~1 MiB of per-instance slack so a starved sibling would hang.
+///
+/// Few, long reads: the non-reading stub exits before its stdout is read, so its
+/// output must fit in one pipe buffer.
+#[cfg(unix)]
+#[test]
+fn streamed_run_survives_an_instance_that_never_reads_its_input() {
+    const N: usize = 1_500;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // CT index: one unmapped record per read, read from the pipe. GA index: the
+    // same records, printed without opening the pipe at all.
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" ;;
+  *)       awk 'BEGIN {{ for (i = 0; i < {N}; i++) print "r" i "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' ;;
+esac
+"#
+    );
+    write_exec(&bins.path().join("bowtie2"), &script);
+
+    let read = genome.path().join("big.fq");
+    let seq = "ACGT".repeat(150);
+    let qual = "I".repeat(seq.len());
+    let mut fq = String::new();
+    for i in 0..N {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{qual}\n"));
+    }
+    assert!(
+        fq.len() > 3 << 19,
+        "input must exceed the per-instance slack"
+    );
+    fs::write(&read, fq).unwrap();
+
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "({N} sequences, no temp file written)"
+        )));
 }
 
 #[cfg(unix)]
