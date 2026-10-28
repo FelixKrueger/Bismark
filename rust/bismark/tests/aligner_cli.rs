@@ -6693,3 +6693,147 @@ fn five_base_umi_len_requires_illumina_5base() {
             "--five_base_umi_len requires --illumina_5base",
         ));
 }
+
+fn ubam_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/aligner")
+        .join(name)
+}
+
+/// #1135: a positional paired uBAM gets the paired-end options, `-I`/`-X` included.
+#[cfg(unix)]
+#[test]
+fn positional_paired_ubam_accepts_minins_maxins() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-I", "10", "-X", "800"])
+        .arg(ubam_fixture("tg_pe_trimgalore.bam"))
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(
+        outdir
+            .path()
+            .join("tg_pe_trimgalore_1_bismark_bt2_PE_report.txt"),
+    )
+    .unwrap();
+    assert!(
+        report.contains(
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail \
+             --minins 10 --maxins 800"
+        ),
+        "{report}"
+    );
+}
+
+/// #1135: a positional single-end uBAM rejects `-X`.
+#[cfg(unix)]
+#[test]
+fn positional_single_end_ubam_rejects_maxins() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-X", "800"])
+        .arg(ubam_fixture("tg_se_trimgalore.bam"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "-X/--maxins can only be used for paired-end mapping!",
+        ));
+}
+
+/// #1135: a positional paired uBAM is rejected for minimap2 and rammap like `-1`/`-2` input.
+#[test]
+fn positional_paired_ubam_rejects_minimap_aligners() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+
+    for aligner in ["minimap2", "rammap"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg(format!("--{aligner}"))
+            .arg(ubam_fixture("tg_pe_trimgalore.bam"))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "paired-end alignment with --{aligner} is not supported"
+            )));
+    }
+}
+
+/// #1135: `-I`/`-X` reach Bowtie 2 for a positional paired BINSEQ input.
+#[cfg(all(unix, feature = "binseq-input"))]
+#[test]
+fn positional_paired_vbq_accepts_minins_maxins() {
+    use bismark::aligner::binseq::SequencingRecordBuilder;
+    use bismark::aligner::binseq::write::{BinseqWriterBuilder, Format};
+
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let inputs = TempDir::new().unwrap();
+    let vbq = inputs.path().join("reads.vbq");
+    let mut w = BinseqWriterBuilder::new(Format::Vbq)
+        .paired(true)
+        .quality(true)
+        .headers(true)
+        .build(fs::File::create(&vbq).unwrap())
+        .unwrap();
+    let rec = SequencingRecordBuilder::default()
+        .s_header(b"r1")
+        .s_seq(b"ACGTAC")
+        .s_qual(b"FFFFFF")
+        .x_header(b"r1")
+        .x_seq(b"ACGTAC")
+        .x_qual(b"FFFFFF")
+        .build()
+        .unwrap();
+    assert!(w.push(rec).unwrap());
+    w.finish().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-I", "10", "-X", "800"])
+        .arg(&vbq)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
+    assert!(report.contains("--minins 10 --maxins 800"), "{report}");
+}
