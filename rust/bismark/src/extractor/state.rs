@@ -199,16 +199,14 @@ impl ExtractState {
         // regardless of `--report` (Perl always warns it); gated by --quiet.
         logger.final_summary(&self.report, config.allow_discordant);
 
-        // `--allow_discordant` guardrail: a massive orphan rate usually means
-        // the input is not name-grouped (so almost every read looks unpaired).
-        // Warn (a genuine warning, never gated by --quiet) without failing —
-        // opt-in tolerance shouldn't silently degrade a corrupted file.
+        // An elevated orphan rate is advisory, including under --quiet.
         if config.allow_discordant && self.report.records_processed > 0 {
             // > 20% orphans: orphan_reads_called * 5 > records_processed.
             if self.report.orphan_reads_called.saturating_mul(5) > self.report.records_processed {
                 eprintln!(
                     "warning: --allow_discordant: {} of {} templates are orphans (>20%); \
-                     input may not be name-grouped (query-sorted / name-collated)",
+                     mates may be unmapped or absent, or input may not be name-grouped; \
+                     ensure name grouping with samtools collate or samtools sort -n",
                     self.report.orphan_reads_called, self.report.records_processed
                 );
             }
