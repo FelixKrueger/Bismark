@@ -201,8 +201,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // (`bqtools decode`-equivalent). Returns the per-input temp dirs to clean up after
     // the run (the transcode FASTQ is consumed by BOTH the convert step and the
     // methylation-call re-read, so cleanup must follow the pipeline).
-    let alt_input_temp_dirs =
-        resolve_alt_inputs(&mut config, cli, &[&UbamDecoder, &BinseqDecoder])?;
+    let alt_input_temp_dirs = resolve_alt_inputs(&mut config)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -328,9 +327,8 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 /// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
 /// second. The shared resolver [`resolve_alt_inputs`] owns the SE/PE
 /// classification, the per-input temp subdir + cleanup, the SingleEnd→PairedEnd
-/// switch (with PE-options recompute + the paired-aligner reject), and the
-/// fail-loud guards — so every backend behaves identically; a backend only
-/// supplies detection + the transcode.
+/// switch, and the fail-loud guards — so every backend behaves identically; a
+/// backend only supplies detection + the transcode.
 trait InputDecoder {
     /// Does `path` belong to this backend? Backends must be mutually exclusive
     /// and must never match a FASTQ/FASTA file (uBAM = BAM magic byte; BINSEQ =
@@ -406,15 +404,32 @@ impl InputDecoder for BinseqDecoder {
     }
 }
 
+/// The alternative read-input backends, in detection order.
+const ALT_INPUT_DECODERS: &[&dyn InputDecoder] = &[&UbamDecoder, &BinseqDecoder];
+
+/// Whether a single-end `layout` is really paired-end: true when any positional input is
+/// a paired binary input, which [`resolve_alt_inputs`] later splits into mates.
+pub(crate) fn positional_input_is_paired(layout: &ReadLayout) -> Result<bool> {
+    let ReadLayout::SingleEnd { reads } = layout else {
+        return Ok(false);
+    };
+    for r in reads {
+        let path = Path::new(r);
+        if let Some(dec) = ALT_INPUT_DECODERS.iter().find(|d| d.detect(path))
+            && dec.is_paired(path)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Detect alternative binary read inputs (uBAM, BINSEQ, …), transcode them to
 /// temp FASTQ, and rewrite `config.layout` / `config.format` so the byte-frozen
 /// pipeline runs unchanged. Returns the per-input temp subdirs to clean up after
 /// the pipeline. Generalizes the Phase-1 uBAM resolver across backends.
-fn resolve_alt_inputs(
-    config: &mut RunConfig,
-    cli: &cli::Cli,
-    decoders: &[&dyn InputDecoder],
-) -> Result<Vec<PathBuf>> {
+fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
+    let decoders = ALT_INPUT_DECODERS;
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
@@ -499,22 +514,6 @@ fn resolve_alt_inputs(
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
-        // The positional file resolved as SINGLE-END, so `resolve()`'s layout-dependent
-        // guards ran against the SE layout. Re-run the paired-aligner reject (so e.g.
-        // `--minimap2 <pe binary file>` fails loud exactly as `--minimap2 -1 .. -2 ..`)
-        // and recompute the PE aligner options (`--no-mixed --no-discordant …`) via the
-        // SAME builders `resolve()` uses — without them Bowtie 2 emits half-mapped pairs
-        // the PE merge can't score.
-        config::reject_unsupported_paired_aligner(config.aligner, &config.layout)?;
-        let (opts, gaps) = options::build_aligner_options(
-            cli,
-            config.aligner,
-            config.format,
-            true,
-            config.hisat2_multicore_remap,
-        )?;
-        config.aligner_options = opts;
-        config.gap_penalties = gaps;
     } else {
         // Single-end: transcode each binary input; leave any plain FASTQ entries as-is.
         let mut new_reads = reads.clone();
