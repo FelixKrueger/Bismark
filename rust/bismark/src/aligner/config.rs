@@ -468,7 +468,8 @@ pub struct RunConfig {
     /// Score normalization for `calc_mapq`: the `--score_min` parameters, the
     /// `scMin` function form and the ladder choice. The `--score_min` defaults are
     /// aligner-dependent: Bowtie 2-local = `(20.0, 8.0)` (G-form); HISAT2-local and
-    /// end-to-end = `(0.0, -0.2)` (L-form) — see `score_min_params`.
+    /// end-to-end = `(0.0, -0.2)` (L-form; `(0.0, -0.6)` for 5-Base Bowtie 2/HISAT2) — see
+    /// `score_min_params`.
     pub score_model: ScoreModel,
     /// The `--mm2_*` selectors' answer, resolved once — **regardless of aligner**. Only the
     /// minimap-family backends read it. NB it is NOT always `MapOnt` for other aligners:
@@ -792,7 +793,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // run (`lib.rs`). Bowtie 2 `--multicore` (the fork path, Phase 9b) and single-core
     // HISAT2 are unaffected. `--ambig_bam` works under B (one instance, the single-instance
     // path — Perl's Bowtie-2-only multicore ambig temp machinery is never reached).
-    let hisat2_multicore_remap = hisat2_multicore_threads(aligner, cli.multicore);
+    let hisat2_multicore_remap = if cli.illumina_5base {
+        None
+    } else {
+        hisat2_multicore_threads(aligner, cli.multicore)
+    };
     // An explicit `-p M` AND the remapped `--multicore N` both set is ambiguous (both
     // would drive HISAT2's `-p`) → fail loud rather than silently pick one.
     if hisat2_multicore_remap.is_some() && cli.bowtie_threads.is_some() {
@@ -939,7 +944,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
     let (aligner_options, gap_penalties) =
-        options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?;
+        if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
+            options::build_five_base_aligner_options(cli, aligner, format)?
+        } else {
+            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+        };
     // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
     // and the in-process rammap backend cannot drift (#1092). Must stay after
     // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
@@ -1877,6 +1886,46 @@ mod tests {
                     "the index check must not fire on a valid index (extra: {extra:?}); got: {e}"
                 );
             }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn five_base_hisat2_keeps_requested_multicore_without_remap() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, genome, r1, r2) = fasta_only_genome_and_reads();
+        let idx = tmp.path().join("plain");
+        for i in 1..=8 {
+            std::fs::write(tmp.path().join(format!("plain.{i}.ht2")), b"").unwrap();
+        }
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let hisat2 = bin.join("hisat2");
+        std::fs::write(&hisat2, "#!/bin/sh\necho 'hisat2-align-s version 2.2.2'\n").unwrap();
+        std::fs::set_permissions(&hisat2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = |p: &Path| p.to_str().unwrap().to_string();
+        let base = [
+            "--illumina_5base".to_string(),
+            "--hisat2".into(),
+            "--genome".into(),
+            path(&genome),
+            "--five_base_index".into(),
+            path(&idx),
+            "--path_to_hisat2".into(),
+            path(&bin),
+            "-1".into(),
+            path(&r1),
+            "-2".into(),
+            path(&r2),
+            "--multicore".into(),
+            "4".into(),
+        ];
+        for extra in [&[][..], &["-p", "8"][..]] {
+            let mut args: Vec<&str> = base.iter().map(String::as_str).collect();
+            args.extend_from_slice(extra);
+            let config = resolve(&cli_from(&args), "cmd".into()).unwrap();
+            assert_eq!(config.multicore, 4, "{extra:?}");
+            assert_eq!(config.hisat2_multicore_remap, None, "{extra:?}");
         }
     }
 

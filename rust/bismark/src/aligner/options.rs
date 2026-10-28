@@ -27,133 +27,7 @@ pub fn build_aligner_options(
     // for every other path (Bowtie 2, minimap2, single-core HISAT2).
     hisat2_multicore_threads: Option<u32>,
 ) -> Result<(String, GapPenalties)> {
-    let mut opts: Vec<String> = Vec::new();
-
-    // 1. format
-    match format {
-        ReadFormat::FastQ => opts.push("-q".into()),
-        ReadFormat::FastA => opts.push("-f".into()),
-    }
-
-    // 2. phred (mutually exclusive; each requires FASTQ)
-    if cli.phred33 && cli.phred64 {
-        return Err(AlignerError::Validation(
-            "You can only specify one type of quality value at a time! (--phred33 or --phred64)"
-                .into(),
-        ));
-    }
-    if cli.phred33 {
-        require_fastq(format)?;
-        opts.push("--phred33".into());
-    }
-    if cli.phred64 {
-        require_fastq(format)?;
-        opts.push("--phred64".into());
-    }
-
-    // 3. -N (0 or 1)
-    if let Some(n) = cli.seedmms {
-        if n == 0 || n == 1 {
-            opts.push(format!("-N {n}"));
-        } else {
-            return Err(AlignerError::Validation(
-                "Please set the number of multiseed mismatches with '-N <int>' (where <int> can be 0 or 1)".into(),
-            ));
-        }
-    }
-    // 4. -L
-    if let Some(l) = cli.seedlen {
-        opts.push(format!("-L {l}"));
-    }
-    // 5. -D  6. -R
-    if let Some(d) = cli.seed_extension_fails {
-        opts.push(format!("-D {d}"));
-    }
-    if let Some(r) = cli.reseed_repetitive_seeds {
-        opts.push(format!("-R {r}"));
-    }
-
-    // 7. --local / --score-min (Perl 7896-7948). Branches:
-    //  - Bowtie 2 --local: push `--local` + G-form `--score-min G,<i>,<s>` (default G,20,8).
-    //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
-    //    L,0,-0.2), NO `--local`. HISAT2-local uses the SAME L-form as end-to-end (Perl
-    //    7912/7947) — its local-ness is the dropped `--no-softclip` in the HISAT2 tail, NOT
-    //    this option and NOT the MAPQ ladder (it takes the end-to-end one, #1080). Its MAPQ
-    //    scMin is linear, matching this L-form (#1079 D2). minimap2-local is rejected in
-    //    `config::resolve`; the minimap2 clean slate discards this option entirely, though
-    //    `score_min_params` still feeds its coefficients to MAPQ (#1081).
-    if cli.local && aligner == Aligner::Bowtie2 {
-        opts.push("--local".into());
-        let score_min = match &cli.score_min {
-            Some(s) => {
-                if !valid_score_min_g(s) {
-                    return Err(AlignerError::Validation(
-                        "In Bowtie 2 --local mode, the option '--score_min <func>' needs to be in the \
-                         format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
-                         manual for further information"
-                            .into(),
-                    ));
-                }
-                s.clone()
-            }
-            None => "G,20,8".to_string(),
-        };
-        opts.push(format!("--score-min {score_min}"));
-    } else {
-        let score_min = match &cli.score_min {
-            Some(s) => {
-                if !valid_score_min_l(s) {
-                    // HISAT2-local and end-to-end both take the L-form; name the mode so the
-                    // message isn't mislabelled (Perl 7909 vs 7918 — error text, not gated).
-                    let mode = if cli.local {
-                        "HISAT2 --local"
-                    } else {
-                        "end-to-end (default)"
-                    };
-                    return Err(AlignerError::Validation(format!(
-                        "In {mode} mode, the option '--score_min <func>' needs to be in the format \
-                         <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
-                         manual for further information"
-                    )));
-                }
-                s.clone()
-            }
-            None => "L,0,-0.2".to_string(),
-        };
-        opts.push(format!("--score-min {score_min}"));
-    }
-
-    // 8/9. rdg / rfg (validate int,int). Defaults 5,3 are internal scalars only.
-    let mut gp = GapPenalties {
-        deletion_open: 5,
-        deletion_extend: 3,
-        insertion_open: 5,
-        insertion_extend: 3,
-    };
-    if let Some(rdg) = &cli.rdg {
-        let (a, b) = parse_int_pair(rdg).ok_or_else(|| {
-            AlignerError::Validation(
-                "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer>. Please \
-                 consult \"setting up functions\" in the Bowtie 2 manual for further information"
-                    .into(),
-            )
-        })?;
-        gp.deletion_open = a;
-        gp.deletion_extend = b;
-        opts.push(format!("--rdg {rdg}"));
-    }
-    if let Some(rfg) = &cli.rfg {
-        let (a, b) = parse_int_pair(rfg).ok_or_else(|| {
-            AlignerError::Validation(
-                "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer>. Please \
-                 consult \"setting up functions\" in the Bowtie 2 manual for further information"
-                    .into(),
-            )
-        })?;
-        gp.insertion_open = a;
-        gp.insertion_extend = b;
-        opts.push(format!("--rfg {rfg}"));
-    }
+    let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
 
     // 10. -p + --reorder (Bowtie 2 / HISAT2 intra-instance threads, Perl 7993-8007).
     // Explicit `-p` (`cli.bowtie_threads`) takes precedence; otherwise, for HISAT2 the
@@ -236,6 +110,188 @@ pub fn build_aligner_options(
         return Ok((minimap2_options(cli)?, gp));
     }
     Ok((options, gp))
+}
+
+fn default_linear_score(cli: &Cli, aligner: Aligner) -> (&'static str, f64) {
+    if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
+        ("L,0,-0.6", -0.6)
+    } else {
+        ("L,0,-0.2", -0.2)
+    }
+}
+
+fn common_aligner_options(
+    cli: &Cli,
+    aligner: Aligner,
+    format: ReadFormat,
+) -> Result<(Vec<String>, GapPenalties)> {
+    let mut opts: Vec<String> = Vec::new();
+
+    // 1. format
+    match format {
+        ReadFormat::FastQ => opts.push("-q".into()),
+        ReadFormat::FastA => opts.push("-f".into()),
+    }
+
+    // 2. phred (mutually exclusive; each requires FASTQ)
+    if cli.phred33 && cli.phred64 {
+        return Err(AlignerError::Validation(
+            "You can only specify one type of quality value at a time! (--phred33 or --phred64)"
+                .into(),
+        ));
+    }
+    if cli.phred33 {
+        require_fastq(format)?;
+        opts.push("--phred33".into());
+    }
+    if cli.phred64 {
+        require_fastq(format)?;
+        opts.push("--phred64".into());
+    }
+
+    // 3. -N (0 or 1)
+    if let Some(n) = cli.seedmms {
+        if n == 0 || n == 1 {
+            opts.push(format!("-N {n}"));
+        } else {
+            return Err(AlignerError::Validation(
+                "Please set the number of multiseed mismatches with '-N <int>' (where <int> can be 0 or 1)".into(),
+            ));
+        }
+    }
+    // 4. -L
+    if let Some(l) = cli.seedlen {
+        opts.push(format!("-L {l}"));
+    }
+    // 5. -D  6. -R
+    if let Some(d) = cli.seed_extension_fails {
+        opts.push(format!("-D {d}"));
+    }
+    if let Some(r) = cli.reseed_repetitive_seeds {
+        opts.push(format!("-R {r}"));
+    }
+
+    // 7. --local / --score-min (Perl 7896-7948). Branches:
+    //  - Bowtie 2 --local: push `--local` + G-form `--score-min G,<i>,<s>` (default G,20,8).
+    //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
+    //    L,0,-0.2; 5-Base Bowtie 2/HISAT2 L,0,-0.6), NO `--local`. HISAT2-local uses the
+    //    SAME L-form as end-to-end (Perl 7912/7947) — its local-ness is the dropped
+    //    `--no-softclip` in the HISAT2 tail, NOT this option and NOT the MAPQ ladder (it
+    //    takes the end-to-end one, #1080). Its MAPQ scMin is linear, matching this L-form
+    //    (#1079 D2). minimap2-local is rejected in `config::resolve`; the minimap2 clean
+    //    slate discards this option entirely, though `score_min_params` still feeds its
+    //    coefficients to MAPQ (#1081).
+    if cli.local && aligner == Aligner::Bowtie2 {
+        opts.push("--local".into());
+        let score_min = match &cli.score_min {
+            Some(s) => {
+                if !valid_score_min_g(s) {
+                    return Err(AlignerError::Validation(
+                        "In Bowtie 2 --local mode, the option '--score_min <func>' needs to be in the \
+                         format <G,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
+                         manual for further information"
+                            .into(),
+                    ));
+                }
+                s.clone()
+            }
+            None => "G,20,8".to_string(),
+        };
+        opts.push(format!("--score-min {score_min}"));
+    } else {
+        let score_min = match &cli.score_min {
+            Some(s) => {
+                if !valid_score_min_l(s) {
+                    // HISAT2-local and end-to-end both take the L-form; name the mode so the
+                    // message isn't mislabelled (Perl 7909 vs 7918 — error text, not gated).
+                    let mode = if cli.local {
+                        "HISAT2 --local"
+                    } else {
+                        "end-to-end (default)"
+                    };
+                    return Err(AlignerError::Validation(format!(
+                        "In {mode} mode, the option '--score_min <func>' needs to be in the format \
+                         <L,value,value>. Please consult \"setting up functions\" in the Bowtie 2 \
+                         manual for further information"
+                    )));
+                }
+                s.clone()
+            }
+            None => default_linear_score(cli, aligner).0.to_string(),
+        };
+        opts.push(format!("--score-min {score_min}"));
+    }
+
+    // 8/9. rdg / rfg (validate int,int). Defaults 5,3 are internal scalars only.
+    let mut gp = GapPenalties {
+        deletion_open: 5,
+        deletion_extend: 3,
+        insertion_open: 5,
+        insertion_extend: 3,
+    };
+    if let Some(rdg) = &cli.rdg {
+        let (a, b) = parse_int_pair(rdg).ok_or_else(|| {
+            AlignerError::Validation(
+                "The option '--rdg <int1>,<int2>' needs to be in the format <integer,integer>. Please \
+                 consult \"setting up functions\" in the Bowtie 2 manual for further information"
+                    .into(),
+            )
+        })?;
+        gp.deletion_open = a;
+        gp.deletion_extend = b;
+        opts.push(format!("--rdg {rdg}"));
+    }
+    if let Some(rfg) = &cli.rfg {
+        let (a, b) = parse_int_pair(rfg).ok_or_else(|| {
+            AlignerError::Validation(
+                "The option '--rfg <int1>,<int2>' needs to be in the format <integer,integer>. Please \
+                 consult \"setting up functions\" in the Bowtie 2 manual for further information"
+                    .into(),
+            )
+        })?;
+        gp.insertion_open = a;
+        gp.insertion_extend = b;
+        opts.push(format!("--rfg {rfg}"));
+    }
+
+    Ok((opts, gp))
+}
+
+/// Resolve tuning options for paired-end alignment to the unconverted genome.
+pub(crate) fn build_five_base_aligner_options(
+    cli: &Cli,
+    aligner: Aligner,
+    format: ReadFormat,
+) -> Result<(String, GapPenalties)> {
+    let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
+    if cli.bowtie_threads.is_some_and(|p| p < 2) {
+        return Err(AlignerError::Validation(
+            "Please select a value for -p of 2 or more!".into(),
+        ));
+    }
+    if cli.nosplice && aligner != Aligner::Hisat2 {
+        return Err(AlignerError::Validation(
+            "The option --no-spliced-alignment can only be selected in HISAT2 mode!".into(),
+        ));
+    }
+    if cli.known_splices.is_some() {
+        return Err(AlignerError::Validation(
+            "--known-splicesite-infile is not supported with --illumina_5base: 5-Base alignment is unspliced.".into(),
+        ));
+    }
+    if let Some(i) = cli.minins {
+        opts.push(format!("--minins {i}"));
+    }
+    if let Some(x) = cli.maxins {
+        opts.push(format!("--maxins {x}"));
+    }
+    if cli.quiet {
+        opts.push("--quiet".into());
+    }
+    if aligner == Aligner::Hisat2 {
+        opts.push("--no-spliced-alignment".into());
+    }
+    Ok((opts.join(" "), gp))
 }
 
 /// Assemble the minimap2 `aligner_options` from a clean slate (Perl 8358-8413).
@@ -378,9 +434,10 @@ fn require_fastq(format: ReadFormat) -> Result<()> {
 
 /// Parse `--score_min` into the numeric `(intercept, slope)` for `calc_mapq`.
 /// Form + defaults depend on mode AND aligner (Perl 7896-7948):
-/// - end-to-end (any aligner): `L,<i>,<s>`, default `(0.0, -0.2)`.
+/// - end-to-end (any aligner): `L,<i>,<s>`, default `(0.0, -0.2)`; `(0.0, -0.6)` for 5-Base
+///   Bowtie 2/HISAT2.
 /// - **Bowtie 2 `--local`**: `G,<i>,<s>`, default `(20.0, 8.0)` (Perl 7942).
-/// - **HISAT2 `--local`**: `L,<i>,<s>`, default `(0.0, -0.2)` (Perl 7912/7947 — HISAT2 uses
+/// - **HISAT2 `--local`**: `L,<i>,<s>`, same default as end-to-end (Perl 7912/7947 — HISAT2 uses
 ///   the L-form even in local mode; the local-ness is the MAPQ ladder, not the form).
 ///
 /// Splits on the LAST comma (Perl's greedy `^[LG],(.+),(.+)$`). The form is `G` iff
@@ -397,7 +454,11 @@ pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64, ScoreM
     let (prefix, default, form) = if cli.local && aligner == Aligner::Bowtie2 {
         ("G,", (20.0, 8.0), ScoreMinForm::Log)
     } else {
-        ("L,", (0.0, -0.2), ScoreMinForm::Linear)
+        (
+            "L,",
+            (0.0, default_linear_score(cli, aligner).1),
+            ScoreMinForm::Linear,
+        )
     };
     match &cli.score_min {
         None => Ok((default.0, default.1, form)),
@@ -466,6 +527,160 @@ mod tests {
         let mut v = vec!["bismark"];
         v.extend_from_slice(args);
         Cli::parse_from(v)
+    }
+
+    #[test]
+    fn five_base_defaults_and_explicit_defaults() {
+        for (engine, flag) in [
+            (Aligner::Bowtie2, "--bowtie2"),
+            (Aligner::Hisat2, "--hisat2"),
+        ] {
+            let cli = cli_from(&["--illumina_5base", flag]);
+            let (opts, _) =
+                build_five_base_aligner_options(&cli, engine, ReadFormat::FastQ).unwrap();
+            assert_eq!(
+                opts,
+                if engine == Aligner::Bowtie2 {
+                    "-q --score-min L,0,-0.6"
+                } else {
+                    "-q --score-min L,0,-0.6 --no-spliced-alignment"
+                }
+            );
+            assert_eq!(
+                score_min_params(&cli, engine).unwrap(),
+                (0.0, -0.6, ScoreMinForm::Linear)
+            );
+            let cli = cli_from(&["--illumina_5base", flag, "--score_min", "L,0,-0.2"]);
+            let (opts, _) =
+                build_five_base_aligner_options(&cli, engine, ReadFormat::FastQ).unwrap();
+            assert!(opts.contains("--score-min L,0,-0.2"));
+            assert_eq!(
+                score_min_params(&cli, engine).unwrap(),
+                (0.0, -0.2, ScoreMinForm::Linear)
+            );
+        }
+    }
+
+    fn five_base(engine: Aligner, args: &[&str]) -> Result<String> {
+        let flag = if engine == Aligner::Bowtie2 {
+            "--bowtie2"
+        } else {
+            "--hisat2"
+        };
+        let mut v = vec!["--illumina_5base", flag];
+        v.extend_from_slice(args);
+        build_five_base_aligner_options(&cli_from(&v), engine, ReadFormat::FastQ).map(|r| r.0)
+    }
+
+    #[test]
+    fn five_base_forwards_tuning_in_bisulfite_token_order() {
+        let tuning = [
+            "-N",
+            "1",
+            "-L",
+            "10",
+            "-D",
+            "20",
+            "-R",
+            "4",
+            "--rdg",
+            "6,2",
+            "--rfg",
+            "7,3",
+            "-I",
+            "10",
+            "-X",
+            "1000",
+            "--quiet",
+            "--phred64-quals",
+        ];
+        assert_eq!(
+            five_base(Aligner::Bowtie2, &tuning).unwrap(),
+            "-q --phred64 -N 1 -L 10 -D 20 -R 4 --score-min L,0,-0.6 --rdg 6,2 --rfg 7,3 \
+             --minins 10 --maxins 1000 --quiet"
+        );
+        assert_eq!(
+            five_base(Aligner::Hisat2, &tuning).unwrap(),
+            "-q --phred64 -N 1 -L 10 -D 20 -R 4 --score-min L,0,-0.6 --rdg 6,2 --rfg 7,3 \
+             --minins 10 --maxins 1000 --quiet --no-spliced-alignment"
+        );
+        assert_eq!(
+            five_base(Aligner::Bowtie2, &["-I", "10"]).unwrap(),
+            "-q --score-min L,0,-0.6 --minins 10"
+        );
+        assert_eq!(
+            five_base(Aligner::Bowtie2, &["-X", "1000"]).unwrap(),
+            "-q --score-min L,0,-0.6 --maxins 1000"
+        );
+    }
+
+    #[test]
+    fn five_base_local_scoring_is_engine_specific() {
+        assert_eq!(
+            five_base(Aligner::Bowtie2, &["--local"]).unwrap(),
+            "-q --local --score-min G,20,8"
+        );
+        assert_eq!(
+            five_base(Aligner::Bowtie2, &["--local", "--score_min", "G,15,7"]).unwrap(),
+            "-q --local --score-min G,15,7"
+        );
+        assert!(five_base(Aligner::Bowtie2, &["--local", "--score_min", "L,0,-0.2"]).is_err());
+        assert_eq!(
+            five_base(Aligner::Hisat2, &["--local"]).unwrap(),
+            "-q --score-min L,0,-0.6 --no-spliced-alignment"
+        );
+    }
+
+    #[test]
+    fn five_base_omits_bisulfite_policy_and_runtime_threads() {
+        for engine in [Aligner::Bowtie2, Aligner::Hisat2] {
+            let opts = five_base(engine, &["-p", "4"]).unwrap();
+            for tok in opts.split_whitespace() {
+                assert!(
+                    ![
+                        "--ignore-quals",
+                        "--no-mixed",
+                        "--no-discordant",
+                        "--dovetail",
+                        "-p",
+                        "--reorder",
+                    ]
+                    .contains(&tok),
+                    "{engine:?}: {opts}"
+                );
+            }
+        }
+        let opts = five_base(Aligner::Hisat2, &["--no-spliced-alignment"]).unwrap();
+        assert_eq!(opts.matches("--no-spliced-alignment").count(), 1, "{opts}");
+    }
+
+    #[test]
+    fn five_base_tail_rejects_unsupported_requests() {
+        for engine in [Aligner::Bowtie2, Aligner::Hisat2] {
+            for p in ["0", "1"] {
+                let err = five_base(engine, &["-p", p]).unwrap_err().to_string();
+                assert!(err.contains("-p of 2 or more"), "{err}");
+            }
+            let err = five_base(engine, &["--known-splicesite-infile", "s.txt"])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("5-Base alignment is unspliced"), "{err}");
+        }
+        let err = five_base(Aligner::Bowtie2, &["--no-spliced-alignment"])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("only be selected in HISAT2 mode"), "{err}");
+    }
+
+    #[test]
+    fn five_base_minimap2_rejects_p_below_two() {
+        for p in ["0", "1"] {
+            let cli = cli_from(&["--illumina_5base", "-p", p]);
+            let err = build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, true, None)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("-p of 2 or more"), "{err}");
+        }
     }
 
     /// Perl's `Getopt::Long` is case-insensitive by default, so `'n|seedmms=i'` /

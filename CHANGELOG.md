@@ -13,6 +13,7 @@
 
 ### bismark (aligner)
 
+- **Illumina 5-Base now honours Bowtie 2/HISAT2 tuning options and requested threads, and its report identifies the unconverted reference ([#1134](https://github.com/FelixKrueger/Bismark/issues/1134)).**
 - **`-I`/`-X` are accepted for a positional paired-end uBAM or BINSEQ input instead of being rejected as single-end ([#1135](https://github.com/FelixKrueger/Bismark/issues/1135)).** Reported by @zhangzhen.
 - **Multi-threaded 5-Base runs with `--bowtie2`/`--hisat2` no longer lose or mispair read pairs ([#1125](https://github.com/FelixKrueger/Bismark/issues/1125)):** the aligner now runs with `--reorder`, and a FASTQ/alignment mismatch or a CIGAR that does not cover its read stops the run with the offending read named (diagnosed by @ryancey1 in [#1126](https://github.com/FelixKrueger/Bismark/pull/1126)).
 - **`--strandID` now adds `YS:Z:OT|CTOT|CTOB|OB` to paired-end records as Perl Bismark does; it was previously accepted and ignored.**

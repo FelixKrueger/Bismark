@@ -6837,3 +6837,406 @@ fn positional_paired_vbq_accepts_minins_maxins() {
         fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
     assert!(report.contains("--minins 10 --maxins 800"), "{report}");
 }
+
+#[cfg(unix)]
+struct FiveBaseOptionsFixture {
+    dir: TempDir,
+    engine: &'static str,
+}
+
+#[cfg(unix)]
+impl FiveBaseOptionsFixture {
+    fn new(engine: &'static str) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("5base options ")
+            .tempdir()
+            .unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("genome")).unwrap();
+        fs::create_dir(root.join("bin")).unwrap();
+        make_genome_fasta_only(&root.join("genome"));
+        if engine == "bowtie2" {
+            make_stub_bowtie2_index(&root.join("plain index"));
+        } else {
+            for i in 1..=8 {
+                fs::write(root.join(format!("plain index.{i}.ht2")), b"").unwrap();
+            }
+        }
+        for mate in [1, 2] {
+            fs::write(
+                root.join(format!("reads_{mate}.fq")),
+                b"@r1\nATGTAC\n+\nIIIIII\n",
+            )
+            .unwrap();
+        }
+        let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "VERSION"; exit 0;; esac
+printf '%s\n' "$@" > "$BISMARK_TEST_ARGV"
+printf 'alignment\n' >> "$BISMARK_TEST_CALLS"
+r1=""; r2=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && r1="$a"
+  [ "$prev" = "-2" ] && r2="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
+awk -v clip="$BISMARK_TEST_SOFTCLIP" -v r2="$r2" '
+ function rc(s,  i, o, c) {
+   o = "";
+   for (i = length(s); i > 0; i--) {
+     c = substr(s, i, 1);
+     o = o (c == "A" ? "T" : c == "C" ? "G" : c == "G" ? "C" : c == "T" ? "A" : "N");
+   }
+   return o;
+ }
+ NR%4==1 { id=$1; sub(/^@/,"",id); for (k = 0; k < 4; k++) { getline m[k] < r2 } }
+ NR%4==2 {
+   cigar = clip == "1" ? "1S5M" : "6M";
+   tlen = clip == "1" ? 5 : 6;
+   q = $0; gsub(/./, "5", q);
+   print id "\t99\tchr1\t1\t42\t" cigar "\t=\t1\t" tlen "\t" $0 "\t" q "\tAS:i:0";
+   print id "\t147\tchr1\t1\t42\t" cigar "\t=\t1\t-" tlen "\t" rc(m[1]) "\t" q "\tAS:i:0";
+ }' "$r1"
+"#;
+        let banner = if engine == "bowtie2" {
+            "bowtie2-align-s version 2.5.5"
+        } else {
+            "hisat2-align-s version 2.2.2"
+        };
+        write_exec(
+            &root.join("bin").join(engine),
+            &script.replace("VERSION", banner),
+        );
+        Self { dir, engine }
+    }
+
+    fn command(&self) -> Command {
+        let root = self.dir.path();
+        let mut cmd = bin();
+        cmd.arg("--illumina_5base")
+            .arg(format!("--{}", self.engine))
+            .arg("--genome")
+            .arg(root.join("genome"))
+            .arg("--five_base_index")
+            .arg(root.join("plain index"))
+            .arg(format!("--path_to_{}", self.engine))
+            .arg(root.join("bin"))
+            .arg("--output_dir")
+            .arg(root.join("output"))
+            .arg("--temp_dir")
+            .arg(root.join("temp"))
+            .arg("-1")
+            .arg(root.join("reads_1.fq"))
+            .arg("-2")
+            .arg(root.join("reads_2.fq"))
+            .env("BISMARK_TEST_ARGV", root.join("argv"))
+            .env("BISMARK_TEST_CALLS", root.join("calls"));
+        cmd
+    }
+
+    fn argv(&self) -> Vec<String> {
+        fs::read_to_string(self.dir.path().join("argv"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    fn token(&self) -> &str {
+        if self.engine == "bowtie2" {
+            "bt2"
+        } else {
+            "hisat2"
+        }
+    }
+
+    fn check_report(&self, stderr: &[u8]) {
+        let args = self.argv();
+        let end = args.iter().position(|a| a == "-x").unwrap();
+        let opts = args[..end].join(" ");
+        let report = fs::read_to_string(self.dir.path().join(format!(
+            "output/reads_1_bismark_{}_PE_report.txt",
+            self.token()
+        )))
+        .unwrap();
+        assert!(
+            report.contains("against the unconverted genome of"),
+            "{report}"
+        );
+        assert!(
+            report.contains(&format!("with the specified options: {opts}\n")),
+            "{report}"
+        );
+        assert!(String::from_utf8_lossy(stderr).contains(&format!("aligner_options: {opts}\n")));
+        assert_eq!(
+            fs::read_to_string(self.dir.path().join("calls")).unwrap(),
+            "alignment\n"
+        );
+        for (flag, path) in [
+            ("-x", self.dir.path().join("plain index")),
+            ("-1", self.dir.path().join("reads_1.fq")),
+            ("-2", self.dir.path().join("reads_2.fq")),
+        ] {
+            assert!(
+                args.windows(2)
+                    .any(|w| w[0] == flag && w[1] == path.to_str().unwrap()),
+                "{args:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+fn assert_option(args: &[String], name: &str, value: &str) {
+    assert_eq!(args.iter().filter(|a| *a == name).count(), 1, "{args:?}");
+    assert!(
+        args.windows(2).any(|w| w[0] == name && w[1] == value),
+        "{args:?}"
+    );
+}
+
+#[cfg(unix)]
+type OptionCase<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_default_argv_is_exact() {
+    for (engine, expected) in [
+        ("bowtie2", "-q --score-min L,0,-0.6 -p 4 --reorder"),
+        (
+            "hisat2",
+            "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
+        ),
+    ] {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let out = f.command().args(["-p", "4"]).assert().success();
+        let args = f.argv();
+        let end = args.iter().position(|a| a == "-x").unwrap();
+        assert_eq!(args[..end].join(" "), expected, "{engine}");
+        f.check_report(&out.get_output().stderr);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_tuning_reaches_each_aligner_and_report() {
+    let cases: &[OptionCase] = &[
+        (&["-L", "10"], &[("-L", "10")]),
+        (&["-N", "1"], &[("-N", "1")]),
+        (&["-D", "20"], &[("-D", "20")]),
+        (&["--score_min", "L,0,-0.2"], &[("--score-min", "L,0,-0.2")]),
+        (&["-I", "10"], &[("--minins", "10")]),
+        (&["-X", "1000"], &[("--maxins", "1000")]),
+        (
+            &["-I", "10", "-X", "1000"],
+            &[("--minins", "10"), ("--maxins", "1000")],
+        ),
+        (
+            &[
+                "-L",
+                "10",
+                "-N",
+                "1",
+                "-D",
+                "20",
+                "-R",
+                "4",
+                "--rdg",
+                "6,2",
+                "--rfg",
+                "7,3",
+                "--score_min",
+                "L,0,-0.2",
+                "-I",
+                "10",
+                "-X",
+                "1000",
+                "--quiet",
+                "--phred33-quals",
+            ],
+            &[
+                ("-L", "10"),
+                ("-N", "1"),
+                ("-D", "20"),
+                ("-R", "4"),
+                ("--rdg", "6,2"),
+                ("--rfg", "7,3"),
+                ("--score-min", "L,0,-0.2"),
+                ("--minins", "10"),
+                ("--maxins", "1000"),
+            ],
+        ),
+    ];
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, expected) in cases {
+            let f = FiveBaseOptionsFixture::new(engine);
+            let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
+            let args = f.argv();
+            for (flag, value) in *expected {
+                assert_option(&args, flag, value);
+            }
+            if cli.contains(&"--quiet") {
+                assert_eq!(args.iter().filter(|a| *a == "--quiet").count(), 1);
+            }
+            if cli.contains(&"--phred33-quals") {
+                assert_eq!(args.iter().filter(|a| *a == "--phred33").count(), 1);
+            }
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_threads_survive_cli_resolution() {
+    let cases: &[(&[&str], Option<&str>)] = &[
+        (&[], None),
+        (&["--multicore", "1"], None),
+        (&["--multicore", "4"], Some("4")),
+        (&["-p", "8"], Some("8")),
+        (&["--multicore", "4", "-p", "8"], Some("8")),
+    ];
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, expected) in cases {
+            let f = FiveBaseOptionsFixture::new(engine);
+            let out = f.command().args(*cli).assert().success();
+            let args = f.argv();
+            assert_eq!(args.iter().filter(|a| *a == "--reorder").count(), 1);
+            assert_eq!(args.iter().filter(|a| *a == "-p").count(), 1);
+            let cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2)
+                .to_string();
+            assert_option(&args, "-p", expected.unwrap_or(cpus.as_str()));
+            assert!(
+                !String::from_utf8_lossy(&out.get_output().stderr)
+                    .contains("interpreted as a single HISAT2")
+            );
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_local_and_phred64_produce_usable_bam() {
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    for engine in ["bowtie2", "hisat2"] {
+        for score in [
+            None,
+            Some(if engine == "bowtie2" {
+                "G,15,7"
+            } else {
+                "L,0,-0.3"
+            }),
+        ] {
+            let f = FiveBaseOptionsFixture::new(engine);
+            for mate in [1, 2] {
+                fs::write(
+                    f.dir.path().join(format!("reads_{mate}.fq")),
+                    b"@r1\nATGTAC\n+\nhhhhhh\n",
+                )
+                .unwrap();
+            }
+            let mut cmd = f.command();
+            cmd.args(["--local", "--phred64-quals", "-p", "4"])
+                .env("BISMARK_TEST_SOFTCLIP", "1");
+            if let Some(s) = score {
+                cmd.args(["--score_min", s]);
+            }
+            let out = cmd.assert().success();
+            let args = f.argv();
+            assert_option(
+                &args,
+                "--score-min",
+                score.unwrap_or(if engine == "bowtie2" {
+                    "G,20,8"
+                } else {
+                    "L,0,-0.6"
+                }),
+            );
+            assert_eq!(args.iter().any(|a| a == "--local"), engine == "bowtie2");
+            assert!(!args.iter().any(|a| a == "--no-softclip"));
+            assert_eq!(args.iter().filter(|a| *a == "--phred64").count(), 1);
+            let mut reader = bismark::io::BamReader::from_path(
+                &f.dir
+                    .path()
+                    .join(format!("output/reads_1_bismark_{}_pe.bam", f.token())),
+            )
+            .unwrap();
+            let records: Vec<_> = reader.records().map(Result::unwrap).collect();
+            assert_eq!(records.len(), 2);
+            for rec in records {
+                assert_eq!(rec.inner().quality_scores().as_ref(), &[40u8; 6]);
+                let ops: Vec<_> = rec
+                    .inner()
+                    .cigar()
+                    .as_ref()
+                    .iter()
+                    .map(|op| (op.kind(), op.len()))
+                    .collect();
+                assert_eq!(ops, vec![(Kind::SoftClip, 1), (Kind::Match, 5)]);
+            }
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_invalid_tuning_fails_before_output_creation() {
+    let invalid: &[(&[&str], &str)] = &[
+        (&["-N", "2"], "can be 0 or 1"),
+        (&["--rdg", "bad"], "--rdg <int1>,<int2>"),
+        (&["--rfg", "bad"], "--rfg <int1>,<int2>"),
+        (
+            &["--phred33-quals", "--phred64-quals"],
+            "one type of quality value",
+        ),
+        (&["--multicore", "0"], "Core usage needs to be set to 1"),
+        (&["-p", "0"], "-p of 2 or more"),
+        (&["-p", "1"], "-p of 2 or more"),
+        (&["--score_min", "G,20,8"], "<L,value,value>"),
+        (
+            &["--known-splicesite-infile", "SPLICE"],
+            "5-Base alignment is unspliced",
+        ),
+    ];
+    let rejects = |engine, cli: &[&str], message: &str| {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let splice = f.dir.path().join("known.splice");
+        fs::write(&splice, "chr1\t2\t5\t+\n").unwrap();
+        let cli: Vec<&str> = cli
+            .iter()
+            .map(|a| {
+                if *a == "SPLICE" {
+                    splice.to_str().unwrap()
+                } else {
+                    a
+                }
+            })
+            .collect();
+        f.command()
+            .args(&cli)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(message));
+        assert!(!f.dir.path().join("output").exists());
+        assert!(!f.dir.path().join("argv").exists());
+    };
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, message) in invalid {
+            rejects(engine, cli, message);
+        }
+    }
+    rejects(
+        "bowtie2",
+        &["--no-spliced-alignment"],
+        "only be selected in HISAT2 mode",
+    );
+    rejects(
+        "bowtie2",
+        &["--local", "--score_min", "L,0,-0.2"],
+        "<G,value,value>",
+    );
+}
