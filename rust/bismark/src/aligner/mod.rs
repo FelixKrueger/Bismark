@@ -1520,39 +1520,17 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The aligner option string for a 5-Base run. minimap2 (the default) uses the
-/// resolved `-x sr …` options against the genome FASTA. bowtie2/hisat2 align the RAW
-/// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
-/// (the sparse C→T conversions are well within default scoring) — NOT the bisulfite
-/// option string. Used for BOTH the spawn argv and the report's "was run with" line.
-///
-/// Threads: the bisulfite minimap2 path hardcodes `-t 2` (Perl faithfulness, byte-
-/// frozen). The 5-Base path is NOT byte-identical, so there is no reason to throttle
-/// it. The aligner thread count is Bismark's `-p` (threads-to-aligner) knob, falling
-/// back to `--multicore`, then all logical CPUs — applied as minimap2 `-t N` /
-/// bowtie2,hisat2 `-p N`. (`-p` and `--multicore`/`--parallel` are different axes:
-/// `-p` = threads inside one aligner instance, `--multicore` = the fork model; for the
-/// single-instance 5-Base path `-p` is the right knob.)
+/// Effective 5-Base options with single-instance threading and input ordering.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
-    let n = config
-        .bowtie_threads
-        .filter(|&p| p > 0)
-        .or(if config.multicore > 1 {
-            Some(config.multicore)
-        } else {
-            None
-        })
-        .map(|p| p as usize)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|x| x.get())
-                .unwrap_or(2)
-        });
+    let n = five_base_threads(
+        config.bowtie_threads,
+        config.multicore,
+        std::thread::available_parallelism().ok().map(|x| x.get()),
+    );
     match config.aligner {
         // `--reorder`: the driver pairs FASTQ and SAM records by position.
-        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n} --reorder"),
-        Aligner::Hisat2 => {
-            format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n} --reorder")
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            format!("{} -p {n} --reorder", config.aligner_options)
         }
         // minimap2 (default 5-Base engine): reuse the resolved options but lift the
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
@@ -1560,6 +1538,18 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         // base string carries a resolved `-t {p}` (#1074 C2).
         _ => replace_minimap2_threads(&config.aligner_options, n),
     }
+}
+
+/// Explicit `-p`, then `--multicore` above one, then detected CPUs (2 if undetectable).
+fn five_base_threads(
+    bowtie_threads: Option<u32>,
+    multicore: u32,
+    detected: Option<usize>,
+) -> usize {
+    bowtie_threads
+        .or((multicore > 1).then_some(multicore))
+        .map(|p| p as usize)
+        .unwrap_or_else(|| detected.unwrap_or(2))
 }
 
 /// Set the value token after `-t` in a whitespace-separated minimap2 option string,
@@ -1794,7 +1784,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             "_PE_report.txt",
         );
         let mut report = BufWriter::new(File::create(&report_path)?);
-        report::write_report_header(
+        report::write_five_base_report_header(
             &mut report,
             &ReportHeader {
                 sequence_file: read_1,
@@ -7824,21 +7814,40 @@ mod tests {
             },
         );
         c.five_base = true;
+        c.aligner_options = match aligner {
+            Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
+            _ => "-q --score-min L,0,-0.6".into(),
+        };
         c.bowtie_threads = Some(4);
         c
     }
 
     #[test]
     fn five_base_bowtie2_and_hisat2_keep_input_order() {
-        for aligner in [config::Aligner::Bowtie2, config::Aligner::Hisat2] {
-            let opts = five_base_aligner_options(&five_base_stub(aligner));
-            let toks: Vec<&str> = opts.split_whitespace().collect();
-            assert!(toks.contains(&"--reorder"), "{aligner:?}: {opts}");
-            assert!(
-                toks.windows(2).any(|w| w == ["-p", "4"]),
-                "{aligner:?}: {opts}"
+        for (aligner, expected) in [
+            (
+                config::Aligner::Bowtie2,
+                "-q --score-min L,0,-0.6 -p 4 --reorder",
+            ),
+            (
+                config::Aligner::Hisat2,
+                "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
+            ),
+        ] {
+            assert_eq!(
+                five_base_aligner_options(&five_base_stub(aligner)),
+                expected
             );
         }
+    }
+
+    #[test]
+    fn five_base_threads_prefers_p_then_multicore_then_detected_cpus() {
+        assert_eq!(five_base_threads(Some(8), 4, Some(16)), 8);
+        assert_eq!(five_base_threads(None, 4, Some(16)), 4);
+        assert_eq!(five_base_threads(None, 1, Some(16)), 16);
+        assert_eq!(five_base_threads(None, 1, Some(1)), 1);
+        assert_eq!(five_base_threads(None, 1, None), 2);
     }
 
     #[test]
