@@ -7,6 +7,23 @@ Bismark's methylation extractor, `bismark extract` (classic alias: `bismark_meth
 
 The default input format for `bismark extract` is BAM/SAM (or CRAM).
 
+### Input from a non-Bismark aligner
+
+Use `--allow_discordant` to extract methylation from another bisulfite aligner's output carrying Bismark-format `XM` (methylation calls), `XR` (read conversion), and `XG` (genome conversion) tags. The option is off by default. For paired-end input, it accepts discordant and cross-chromosome pairs and mapped reads whose mate is absent or unmapped; secondary and supplementary alignments are skipped and counted. In single-end mode, the option only enables secondary/supplementary filtering.
+
+Paired input must be grouped by read name. Prepare it with `samtools collate` or `samtools sort -n`, and specify `-p` when the input lacks a recognized Bismark program header for automatic library-mode detection:
+
+```sh
+samtools collate -o sample.namecollated.bam sample.bam
+bismark extract -p --allow_discordant sample.namecollated.bam
+```
+
+Filtering to proper pairs is not required. An orphan is a surviving mapped read whose mate is absent or is skipped because it is unmapped. When more than 20% of templates are orphans, extraction completes with a warning, including under `--quiet`; each complete pair and each orphan counts as one template. Missing mates can be legitimate, so this percentage does not prove incorrect ordering. Conversely, a successful run or a low orphan percentage does not validate name grouping. Paired input declared coordinate-sorted is still rejected.
+
+Discordant pairs are processed independently, with each mate routed by its own OT/OB/CTOT/CTOB strand; R2 calls may therefore appear in CTOT or CTOB files. `--comprehensive` combines strand files by context. For same-chromosome Independent pairs, default overlap removal keeps R1's calls and removes R2 calls at positions also called by R1. Concordant pairs retain span-based overlap removal. `--include_overlap` disables overlap removal in both cases.
+
+Orphan R1/R2 identity is taken from the SAM FLAG bits. Bismark swaps those bits for CTOT/CTOB pairs in non-directional output, so filtering away one mate from such a pair can affect the orphan's R1/R2 trimming and M-bias assignment.
+
 ### The methylation extractor output looks like this (tab separated):
 
 1. seq-ID

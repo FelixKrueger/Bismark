@@ -32,7 +32,10 @@ use noodles_sam::alignment::record::data::field::Tag;
 use noodles_sam::alignment::record_buf::data::field::Value;
 use noodles_sam::alignment::record_buf::{Cigar, Sequence};
 use noodles_sam::header::record::value::Map;
+use noodles_sam::header::record::value::map::Header as HeaderMap;
 use noodles_sam::header::record::value::map::ReferenceSequence;
+use noodles_sam::header::record::value::map::header::Version;
+use noodles_sam::header::record::value::map::header::tag::SORT_ORDER;
 use std::num::NonZeroUsize;
 
 // ───────────────────────────── helpers ─────────────────────────────────
@@ -971,37 +974,269 @@ fn parallel_and_serial_agree_across_batch_boundaries() {
     );
 }
 
-/// Input that is not name-grouped makes almost every record an orphan; both drivers stop once the
-/// first 1000 templates are mostly orphans instead of writing inflated output.
+fn sorted_header(order: &[u8]) -> Header {
+    let mut hd = Map::<HeaderMap>::new(Version::new(1, 6));
+    hd.other_fields_mut()
+        .insert(SORT_ORDER, BString::from(order));
+    let mut header = header_two_chr();
+    *header.header_mut() = Some(hd);
+    header
+}
+
+fn orphan_fixture(bam: &Path, templates: usize, orphans: usize, include_unmapped: bool) {
+    let mut records = Vec::new();
+    for i in 0..templates {
+        let name = format!("t{i:06}");
+        let q = name.as_bytes();
+        if i < orphans {
+            let r2 = i % 2 == 1;
+            if r2 && include_unmapped {
+                records.push(Rec::Raw(raw_unmapped(q, 0x1 | 0x40)));
+            }
+            records.push(Rec::Bism(synth(
+                q,
+                if r2 { b"GA" } else { b"CT" },
+                b"CT",
+                b"Z.........",
+                100,
+                0,
+                0x1 | 0x8 | if r2 { 0x80 } else { 0x40 },
+            )));
+            if !r2 && include_unmapped {
+                records.push(Rec::Raw(raw_unmapped(q, 0x1 | 0x80)));
+            }
+        } else {
+            records.push(Rec::Bism(synth(q, b"CT", b"CT", b"Z.........", 100, 0, 99)));
+            records.push(Rec::Bism(synth(
+                q,
+                b"GA",
+                b"CT",
+                b"Z.........",
+                130,
+                0,
+                147,
+            )));
+        }
+    }
+    write_bam(bam, sorted_header(b"queryname"), records);
+}
+
+fn assert_orphan_counts(out: &Path, base: &str, templates: usize, orphans: usize) {
+    let report = read_report(out, base);
+    assert_eq!(
+        report_value(&report, "Orphan reads (mate unmapped) called:"),
+        orphans as u64
+    );
+    assert_eq!(
+        total_calls(&report),
+        (orphans + 2 * (templates - orphans)) as u64
+    );
+    assert!(
+        report.contains(&format!("Processed {templates} lines in total")),
+        "{report}"
+    );
+}
+
+fn assert_driver_parity(bam: &Path, work: &Path, templates: usize, orphans: usize) {
+    let serial = work.join("serial");
+    let parallel = work.join("parallel");
+    extract_pe(bam, &legacy_and_parallel_config(bam, &serial, "1")).unwrap();
+    extract_pe_parallel(bam, &legacy_and_parallel_config(bam, &parallel, "4")).unwrap();
+    let base = bam.file_stem().unwrap().to_str().unwrap();
+    assert_orphan_counts(&serial, base, templates, orphans);
+    assert_orphan_counts(&parallel, base, templates, orphans);
+    assert_eq!(dir_snapshot(&serial), dir_snapshot(&parallel));
+}
+
 #[test]
-fn input_that_is_not_name_grouped_fails_early_in_both_drivers() {
+fn name_grouped_orphan_heavy_input_succeeds_with_exact_counts() {
+    for (templates, orphans) in [
+        (1000, 500),
+        (1000, 501),
+        (999, 999),
+        (1000, 1000),
+        (1001, 1001),
+        (1200, 1200),
+        (4097, 4097),
+    ] {
+        let work = tempfile::tempdir().unwrap();
+        let bam = work.path().join("sample.bam");
+        orphan_fixture(&bam, templates, orphans, true);
+        let mut snapshots = Vec::new();
+        for workers in ["1", "4"] {
+            let out = work.path().join(format!("p{workers}"));
+            let result = run(
+                &bam,
+                &out,
+                true,
+                &["--allow_discordant", "--parallel", workers],
+            )
+            .success();
+            let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+            assert_eq!(
+                stderr.matches("warning: --allow_discordant:").count(),
+                1,
+                "{stderr}"
+            );
+            assert_orphan_counts(&out, "sample", templates, orphans);
+            snapshots.push(dir_snapshot(&out));
+        }
+        assert_eq!(snapshots[0], snapshots[1]);
+        if orphans == 501 || templates == 1200 || templates == 4097 {
+            assert_driver_parity(&bam, work.path(), templates, orphans);
+        }
+    }
+}
+
+#[test]
+fn absent_mates_succeed_and_warn_in_both_drivers() {
     let work = tempfile::tempdir().unwrap();
-    let bam = work.path().join("ungrouped.bam");
-    let recs = (0..1200usize)
-        .map(|i| {
-            let q = format!("r{i}");
+    let bam = work.path().join("absent.bam");
+    orphan_fixture(&bam, 1200, 1200, false);
+    let out = work.path().join("cli");
+    let result = run(&bam, &out, true, &["--allow_discordant"]).success();
+    assert!(
+        String::from_utf8_lossy(&result.get_output().stderr)
+            .contains("1200 of 1200 templates are orphans")
+    );
+    assert_orphan_counts(&out, "absent", 1200, 1200);
+    assert_driver_parity(&bam, work.path(), 1200, 1200);
+    run(&bam, &work.path().join("off"), true, &[])
+        .failure()
+        .stderr(predicates::str::contains("mate mismatch"));
+}
+
+#[test]
+fn orphan_warning_has_strict_threshold_and_survives_quiet() {
+    for (templates, orphans) in [(5, 1), (5, 2), (5, 0), (0, 0)] {
+        let work = tempfile::tempdir().unwrap();
+        let bam = work.path().join("sample.bam");
+        orphan_fixture(&bam, templates, orphans, true);
+        for quiet in [false, true] {
+            let mut opts = vec!["--allow_discordant"];
+            if quiet {
+                opts.push("--quiet");
+            }
+            let out = work.path().join(format!("quiet_{quiet}"));
+            let result = run(&bam, &out, true, &opts).success();
+            let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+            let warnings: Vec<_> = stderr
+                .lines()
+                .filter(|l| l.starts_with("warning: --allow_discordant:"))
+                .collect();
+            if orphans * 5 > templates {
+                assert_eq!(
+                    warnings,
+                    vec![format!(
+                        "warning: --allow_discordant: {orphans} of {templates} templates are orphans (>20%); mates may be unmapped or absent, or input may not be name-grouped; ensure name grouping with samtools collate or samtools sort -n"
+                    )]
+                );
+            } else {
+                assert!(warnings.is_empty(), "{stderr}");
+            }
+            assert_orphan_counts(&out, "sample", templates, orphans);
+        }
+    }
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("se.bam");
+    write_bam(
+        &bam,
+        header_two_chr(),
+        vec![Rec::Bism(synth(
+            b"se",
+            b"CT",
+            b"CT",
+            b"Z.........",
+            100,
+            0,
+            0,
+        ))],
+    );
+    let result = run(
+        &bam,
+        &work.path().join("out"),
+        false,
+        &["--allow_discordant"],
+    )
+    .success();
+    assert!(
+        !String::from_utf8_lossy(&result.get_output().stderr)
+            .contains("warning: --allow_discordant:")
+    );
+}
+
+#[test]
+fn multifile_orphan_warnings_and_reports_are_independent() {
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+    cmd.args([
+        "-p",
+        "--allow_discordant",
+        "--quiet",
+        "--comprehensive",
+        "--output_dir",
+    ])
+    .arg(&out);
+    for (name, templates, orphans) in [("a", 5, 2), ("b", 3, 1), ("c", 3, 0)] {
+        let bam = work.path().join(format!("{name}.bam"));
+        orphan_fixture(&bam, templates, orphans, true);
+        cmd.arg(bam);
+    }
+    let result = cmd.assert().success();
+    let stderr = String::from_utf8_lossy(&result.get_output().stderr);
+    assert_eq!(
+        stderr.matches("warning: --allow_discordant:").count(),
+        2,
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("2 of 5 templates are orphans").count(),
+        1,
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("1 of 3 templates are orphans").count(),
+        1,
+        "{stderr}"
+    );
+    for (name, templates, orphans) in [("a", 5, 2), ("b", 3, 1), ("c", 3, 0)] {
+        assert_orphan_counts(&out, name, templates, orphans);
+    }
+}
+
+#[test]
+fn malformed_retained_primary_still_fails_in_both_drivers() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("malformed.bam");
+    let mut bad = raw_secondary(b"bad", 200, 0);
+    *bad.flags_mut() = Flags::from(0x1 | 0x40);
+    *bad.sequence_mut() = Sequence::from(vec![b'A'; 10]);
+    write_bam(
+        &bam,
+        header_two_chr(),
+        vec![
             Rec::Bism(synth(
-                q.as_bytes(),
+                b"orphan",
                 b"CT",
                 b"CT",
                 b"Z.........",
-                100 + i * 10,
+                100,
                 0,
                 0x1 | 0x40,
-            ))
-        })
-        .collect();
-    write_bam(&bam, header_two_chr(), recs);
-
-    let out = work.path().join("cli");
-    let assert = run(&bam, &out, true, &["--allow_discordant"]).failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("not name-grouped") && stderr.contains("samtools collate"),
-        "{stderr}"
+            )),
+            Rec::Raw(bad),
+        ],
     );
-
-    for (dir, serial) in [("legacy", true), ("parallel", false)] {
+    run(
+        &bam,
+        &work.path().join("cli"),
+        true,
+        &["--allow_discordant"],
+    )
+    .failure()
+    .stderr(predicates::str::contains("missing required Bismark tag"));
+    for (dir, serial) in [("serial", true), ("parallel", false)] {
         let out = work.path().join(dir);
         let cfg = legacy_and_parallel_config(&bam, &out, if serial { "1" } else { "4" });
         let err = if serial {
@@ -1011,9 +1246,142 @@ fn input_that_is_not_name_grouped_fails_early_in_both_drivers() {
         }
         .unwrap_err()
         .to_string();
-        assert!(
-            err.contains("of the first 1000 templates are orphans"),
-            "{dir}: {err}"
+        assert!(err.contains("missing required Bismark tag"), "{dir}: {err}");
+    }
+}
+
+#[test]
+fn allow_discordant_retains_coordinate_sort_rejection() {
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("coordinate.bam");
+    write_bam(
+        &bam,
+        sorted_header(b"coordinate"),
+        vec![
+            Rec::Bism(synth(b"q", b"CT", b"CT", b"Z.........", 100, 0, 99)),
+            Rec::Bism(synth(b"q", b"GA", b"CT", b"Z.........", 130, 0, 147)),
+        ],
+    );
+    for on in [false, true] {
+        run(
+            &bam,
+            &work.path().join(format!("on_{on}")),
+            true,
+            if on { &["--allow_discordant"] } else { &[] },
+        )
+        .failure()
+        .stderr(predicates::str::contains("coordinate-sorted"));
+    }
+}
+
+fn dovetail_parity(input: &Path, work: &Path, trims: &[&[&str]]) {
+    let base = input.file_stem().unwrap().to_str().unwrap();
+    for (i, trim) in trims.iter().enumerate() {
+        let mut worker_snapshots = Vec::new();
+        for workers in ["1", "4"] {
+            let off = work.join(format!("{i}_p{workers}_off"));
+            let on = work.join(format!("{i}_p{workers}_on"));
+            let mut opts = vec!["--no_header", "--parallel", workers];
+            opts.extend_from_slice(trim);
+            run_default(input, &off, &opts).success();
+            opts.push("--allow_discordant");
+            run_default(input, &on, &opts).success();
+            let report = read_report(&on, base);
+            for label in [
+                "Cross-chromosome pairs called independently:",
+                "Same-chromosome discordant pairs called independently:",
+                "Orphan reads (mate unmapped) called:",
+            ] {
+                assert_eq!(report_value(&report, label), 0, "{label}");
+            }
+            assert!(total_calls(&report) > 0, "{report}");
+            let mut a = dir_snapshot(&off);
+            let mut b = dir_snapshot(&on);
+            assert!(
+                a.iter()
+                    .any(|(n, v)| n.starts_with("CpG_") && !v.is_empty())
+            );
+            assert!(a.keys().any(|n| n.ends_with("M-bias.txt")));
+            let report_name = format!("{base}_splitting_report.txt");
+            let ra = a.remove(&report_name).unwrap();
+            let rb = b.remove(&report_name).unwrap();
+            let suffix = rb
+                .strip_prefix(ra.as_slice())
+                .expect("report prefix unchanged");
+            assert!(
+                String::from_utf8_lossy(suffix)
+                    .contains("Discordant read handling (--allow_discordant)")
+            );
+            assert_eq!(a, b, "flag parity {base}/{i}/p{workers}");
+            worker_snapshots.push(dir_snapshot(&on));
+        }
+        assert_eq!(
+            worker_snapshots[0], worker_snapshots[1],
+            "worker parity {base}/{i}"
         );
     }
+}
+
+#[test]
+fn dovetail_strands_cigars_and_trimming_preserve_flag_and_worker_parity() {
+    let trims: [&[&str]; 5] = [
+        &[],
+        &["--include_overlap"],
+        &["--ignore", "1", "--ignore_r2", "2"],
+        &["--ignore_3prime", "2", "--ignore_3prime_r2", "1"],
+        &[
+            "--ignore",
+            "1",
+            "--ignore_r2",
+            "2",
+            "--ignore_3prime",
+            "2",
+            "--ignore_3prime_r2",
+            "1",
+        ],
+    ];
+    for (strand, xr1, xr2, xg, f1, f2, forward) in [
+        ("OT", "CT", "GA", "CT", 99, 147, true),
+        ("OB", "CT", "GA", "GA", 83, 163, false),
+        ("CTOT", "GA", "CT", "CT", 147, 99, false),
+        ("CTOB", "GA", "CT", "GA", 163, 83, true),
+    ] {
+        for (ci, cigar) in ["10M", "4M1I3M1D2M", "1S4M1I4M"].iter().enumerate() {
+            let work = tempfile::tempdir().unwrap();
+            let sam = work.path().join(format!("{strand}_{ci}.sam"));
+            let (p1, p2) = if forward { (103, 100) } else { (100, 103) };
+            let mut text = "@HD\tVN:1.6\tSO:queryname\n@SQ\tSN:chr1\tLN:1000000\n".to_string();
+            for (flags, pos, xr) in [(f1, p1, xr1), (f2, p2, xr2)] {
+                text.push_str(&format!("q\t{flags}\tchr1\t{pos}\t60\t{cigar}\t=\t0\t0\tCCCCCCCCCC\tIIIIIIIIII\tXM:Z:ZzXxHhZzXx\tXR:Z:{xr}\tXG:Z:{xg}\n"));
+            }
+            fs::write(&sam, text).unwrap();
+            dovetail_parity(&sam, work.path(), &trims);
+        }
+    }
+}
+
+#[test]
+fn bismark_emitted_dovetail_preserves_extraction_output() {
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("dovetail.sam");
+    fs::write(
+        &input,
+        include_bytes!("data/extractor/dovetail_pe_1115.sam"),
+    )
+    .unwrap();
+    let trims: [&[&str]; 3] = [
+        &[],
+        &["--include_overlap"],
+        &[
+            "--ignore",
+            "1",
+            "--ignore_r2",
+            "2",
+            "--ignore_3prime",
+            "2",
+            "--ignore_3prime_r2",
+            "1",
+        ],
+    ];
+    dovetail_parity(&input, work.path(), &trims);
 }
