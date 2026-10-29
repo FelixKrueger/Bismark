@@ -458,6 +458,22 @@ impl AlignerStream {
     pub fn failure(&mut self) -> Option<AlignerError> {
         exited_unsuccessfully(&mut self.child, self.aligner)
     }
+
+    /// [`failure`](Self::failure), waiting for the child once its output has ended.
+    pub fn exit_failure(&mut self) -> Option<AlignerError> {
+        if self.current.is_none() {
+            let _ = self.child.wait();
+        }
+        self.failure()
+    }
+
+    /// The 1-based primary record the merge stopped at, if it did not consume the stream.
+    pub fn stopped_at(&self) -> Option<u64> {
+        self.current
+            .as_ref()
+            .is_some_and(is_primary)
+            .then_some(self.records)
+    }
 }
 
 impl Drop for AlignerStream {
@@ -829,6 +845,19 @@ impl PairedAlignerStream {
     /// merge stops on a symptom.
     pub fn failure(&mut self) -> Option<AlignerError> {
         exited_unsuccessfully(&mut self.child, self.aligner)
+    }
+
+    /// [`failure`](Self::failure), waiting for the child once its output has ended.
+    pub fn exit_failure(&mut self) -> Option<AlignerError> {
+        if self.current.is_none() {
+            let _ = self.child.wait();
+        }
+        self.failure()
+    }
+
+    /// The 1-based pair the merge stopped at, if it did not consume the stream.
+    pub fn stopped_at(&self) -> Option<u64> {
+        self.current.is_some().then_some(self.records)
     }
 }
 
@@ -1638,6 +1667,31 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stopped_at_names_the_first_unconsumed_primary_record() {
+        let body = "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            b\\t0\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n'";
+        let (_d, mut s) = spawn_fake(body);
+        assert_eq!(s.stopped_at(), Some(1));
+        s.advance().unwrap();
+        assert_eq!(s.stopped_at(), Some(2));
+        s.advance().unwrap();
+        assert_eq!(s.stopped_at(), None);
+        s.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopped_at_ignores_a_secondary_record_left_over() {
+        let body = "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            a\\t256\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n'";
+        let (_d, mut s) = spawn_fake(body);
+        s.advance().unwrap();
+        assert_eq!(s.stopped_at(), None);
+        s.finish().unwrap();
+    }
+
     // ---- paired-end pair construction + stream (Phase 7) --------------------
 
     fn pe_line(qname: &str, flag: u16, pos: u32) -> String {
@@ -1720,6 +1774,19 @@ mod tests {
         assert_eq!(b.read1.pos, 40);
         s.advance_pair().unwrap();
         assert!(s.current_pair().is_none()); // EOF
+        s.finish().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pe_stopped_at_names_the_first_unconsumed_pair() {
+        let body = "printf '@HD\\tVN:1.0\\n\
+            a/1\\t99\\tchr1_CT_converted\\t10\\t40\\t4M\\t=\\t20\\t14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n\
+            a/2\\t147\\tchr1_CT_converted\\t20\\t40\\t4M\\t=\\t10\\t-14\\tACGT\\tIIII\\tAS:i:0\\tMD:Z:4\\n'";
+        let (_d, mut s) = spawn_fake_pe(body);
+        assert_eq!(s.stopped_at(), Some(1));
+        s.advance_pair().unwrap();
+        assert_eq!(s.stopped_at(), None);
         s.finish().unwrap();
     }
 

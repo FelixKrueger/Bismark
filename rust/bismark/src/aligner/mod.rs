@@ -309,13 +309,57 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    let result = pipeline(&config);
+    let result = reject_crlf_inputs(&config.layout).and_then(|()| pipeline(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
     for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
+}
+
+/// Fail on a read input with Windows (CRLF) line endings.
+fn reject_crlf_inputs(layout: &ReadLayout) -> Result<()> {
+    let (first, second): (&[String], &[String]) = match layout {
+        ReadLayout::SingleEnd { reads } => (reads, &[]),
+        ReadLayout::PairedEnd { mates1, mates2 } => (mates1, mates2),
+    };
+    for file in first.iter().chain(second) {
+        let mut line = Vec::new();
+        convert::open_reader(Path::new(file))
+            .and_then(|r| Ok(std::io::Read::take(r, 64 * 1024).read_until(b'\n', &mut line)?))
+            .map_err(|e| AlignerError::Validation(format!("{file}: {e}")))?;
+        if line.ends_with(b"\r\n") {
+            return Err(AlignerError::Validation(format!(
+                "{file} has Windows (CRLF) line endings; convert it first (e.g. with dos2unix)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// After the merge: the error of an instance that failed, else of one whose read names
+/// stopped matching the input, given each instance's `(failure, stopped_at)`.
+fn check_merged(
+    instances: impl IntoIterator<Item = (Option<AlignerError>, Option<u64>)>,
+    input: &str,
+    paired: bool,
+) -> Result<()> {
+    let mut stopped = None;
+    for (failure, at) in instances {
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        stopped = stopped.or(at);
+    }
+    match stopped {
+        None => Ok(()),
+        Some(k) => Err(AlignerError::Validation(format!(
+            "the aligner reading {input} returned read names that stop matching the input at {} \
+             {k}; if the input has Windows (CRLF) line endings, convert it (e.g. with dos2unix)",
+            if paired { "pair" } else { "read" }
+        ))),
+    }
 }
 
 /// #1025 Phase 1: resolve unaligned-BAM (uBAM) read inputs into temp FASTQ files.
@@ -1344,6 +1388,13 @@ fn process_se_chunk(
         pbat,
         sinks,
         counters,
+    )?;
+    check_merged(
+        streams
+            .iter_mut()
+            .map(|s| (s.exit_failure(), s.stopped_at())),
+        &read_file,
+        false,
     )?;
     for s in streams {
         s.finish()?;
@@ -5250,6 +5301,14 @@ fn process_pe_chunk(
         sinks,
         counters,
     )?;
+    check_merged(
+        streams
+            .iter_mut()
+            .flatten()
+            .map(|s| (s.exit_failure(), s.stopped_at())),
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
+    )?;
     for s in streams.into_iter().flatten() {
         s.finish()?;
     }
@@ -7567,6 +7626,31 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reject_crlf_inputs_passes_empty_and_lf_files_and_names_a_crlf_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
+        std::fs::write(path("empty.fq"), b"").unwrap();
+        let gz = GzEncoder::new(Vec::new(), Compression::default())
+            .finish()
+            .unwrap();
+        std::fs::write(path("empty.fq.gz"), gz).unwrap();
+        std::fs::write(path("lf.fq"), b"@r\nAC\n+\nII\n").unwrap();
+        std::fs::write(path("crlf.fq"), b"@r\r\nAC\r\n+\r\nII\r\n").unwrap();
+        let se = |names: &[&str]| ReadLayout::SingleEnd {
+            reads: names.iter().map(|n| path(n)).collect(),
+        };
+        reject_crlf_inputs(&se(&["empty.fq", "empty.fq.gz", "lf.fq"])).unwrap();
+        let e = reject_crlf_inputs(&se(&["lf.fq", "crlf.fq"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with(&path("crlf.fq")), "{e}");
+        let e = reject_crlf_inputs(&se(&["missing.fq"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with(&path("missing.fq")), "{e}");
+    }
 
     // ---- #1092 in-process rammap preset wiring (feature-gated, hermetic) ----
 

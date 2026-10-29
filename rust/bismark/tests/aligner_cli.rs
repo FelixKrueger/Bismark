@@ -630,52 +630,25 @@ awk 'NR == 1 { ok = /^@r[0-9]+\/2\/2$/ } END { exit !ok }' "$m2"
     }
 }
 
-/// Read IDs that stop matching the aligner's, here because of CRLF line
-/// endings, fail a streamed run with the likely causes, also when the input
-/// outgrows the pipes.
+/// Read names that stop matching the input fail a streamed run with the likely
+/// causes, also when the input outgrows the pipes.
 #[cfg(unix)]
 #[test]
-fn a_crlf_input_fails_the_streamed_run_by_name() {
+fn a_streamed_run_whose_read_names_stop_matching_fails() {
     let genome = TempDir::new().unwrap();
     make_genome(genome.path());
     let bins = TempDir::new().unwrap();
-    // Like Bowtie 2, the stub drops the `\r` from each read name.
-    let script = r#"#!/bin/sh
-case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
-inp=""; prev=""
-for a in "$@"; do
-  [ "$prev" = "-U" ] && inp="$a"
-  prev="$a"
-done
-printf '@HD\tVN:1.0\n'
-awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\r$/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
-"#;
-    write_exec(&bins.path().join("bowtie2"), script);
-    let read = genome.path().join("crlf.fq");
-    let seq = "ACGT".repeat(25);
+    write_exec(
+        &bins.path().join("bowtie2"),
+        &renaming_stub("-U", "", false),
+    );
+    let read = genome.path().join("reads.fq");
     for n in [50, 30_000] {
-        let mut fq = String::new();
-        for i in 0..n {
-            fq.push_str(&format!(
-                "@r{i}\r\n{seq}\r\n+\r\n{}\r\n",
-                "I".repeat(seq.len())
-            ));
-        }
-        fs::write(&read, fq).unwrap();
-
+        fs::write(&read, fastq(n, "\n")).unwrap();
         let temp = TempDir::new().unwrap();
         let outdir = TempDir::new().unwrap();
-        bin()
-            .arg("--genome")
-            .arg(genome.path())
-            .arg("--path_to_bowtie2")
-            .arg(bins.path())
-            .arg("--temp_dir")
-            .arg(temp.path())
-            .arg("--output_dir")
-            .arg(outdir.path())
+        bismark(genome.path(), bins.path(), temp.path(), outdir.path())
             .arg(&read)
-            .timeout(std::time::Duration::from_secs(120))
             .assert()
             .failure()
             .stderr(predicate::str::contains(format!(
@@ -683,6 +656,205 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\r$/,"",id); print id "\t4\t*\t0\t0\
             )))
             .stderr(predicate::str::contains("dos2unix"));
     }
+}
+
+/// `n` FastQ records `@r{i}` with line ending `eol`.
+fn fastq(n: usize, eol: &str) -> String {
+    let seq = "ACGT".repeat(25);
+    let qual = "I".repeat(seq.len());
+    (0..n)
+        .map(|i| format!("@r{i}{eol}{seq}{eol}+{eol}{qual}{eol}"))
+        .collect()
+}
+
+/// A Bismark run against `genome` with the fake aligners in `bins`.
+fn bismark(genome: &Path, bins: &Path, temp: &Path, outdir: &Path) -> Command {
+    let mut cmd = bin();
+    cmd.arg("--genome")
+        .arg(genome)
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp)
+        .arg("--output_dir")
+        .arg(outdir)
+        .timeout(std::time::Duration::from_secs(30));
+    cmd
+}
+
+/// A fake Bowtie 2 that returns every read of its `flag` input renamed `r…` to `x…`
+/// (with `mate` tags), then exits, or with `hold` never exits on its own.
+fn renaming_stub(flag: &str, mate: &str, hold: bool) -> String {
+    let end = if hold {
+        "exec sleep 60 2>/dev/null"
+    } else {
+        "exit 0"
+    };
+    let print = if mate.is_empty() {
+        r#"print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI""#.to_string()
+    } else {
+        r#"print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI""#
+            .to_string()
+    };
+    format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "{flag}" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {{ id=$1; sub(/^@r/,"x",id); sub(/\/1\/1$/,"",id); {print} }}' "$inp"
+{end}
+"#
+    )
+}
+
+/// A read input with CRLF line endings stops the run before any aligner runs.
+#[cfg(unix)]
+#[test]
+fn a_crlf_input_is_rejected_at_start_up() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let marker = bins.path().join("aligned");
+    write_exec(
+        &bins.path().join("bowtie2"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in *--version*) echo \"fake-bowtie2 version 2.5.5\"; exit 0;; esac\n\
+             touch '{}'\nexit 1\n",
+            marker.display()
+        ),
+    );
+    let dir = genome.path();
+    let crlf = dir.join("crlf.fq");
+    fs::write(&crlf, fastq(20, "\r\n")).unwrap();
+    let crlf_gz = dir.join("crlf.fq.gz");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut gz, fastq(20, "\r\n").as_bytes()).unwrap();
+    fs::write(&crlf_gz, gz.finish().unwrap()).unwrap();
+    let crlf_fa = dir.join("crlf.fa");
+    fs::write(&crlf_fa, ">r0\r\nACGTACGTAC\r\n>r1\r\nACGTACGTAC\r\n").unwrap();
+    let illumina = dir.join("illumina.fq");
+    fs::write(
+        &illumina,
+        "@M001:1:FC:1:1101:1:1 1:N:0:1\r\nACGTACGTAC\r\n+\r\nIIIIIIIIII\r\n",
+    )
+    .unwrap();
+    let lf = dir.join("lf_1.fq");
+    fs::write(&lf, fastq(20, "\n")).unwrap();
+    let crlf_2 = dir.join("crlf_2.fq");
+    fs::write(&crlf_2, fastq(20, "\r\n")).unwrap();
+
+    let cases: [(&[&str], &Path); 6] = [
+        (&[crlf.to_str().unwrap()], &crlf),
+        (&[crlf_gz.to_str().unwrap()], &crlf_gz),
+        (&["-f", crlf_fa.to_str().unwrap()], &crlf_fa),
+        (&["--icpc", illumina.to_str().unwrap()], &illumina),
+        (
+            &["-1", lf.to_str().unwrap(), "-2", crlf_2.to_str().unwrap()],
+            &crlf_2,
+        ),
+        (&["--multicore", "2", crlf.to_str().unwrap()], &crlf),
+    ];
+    for (args, named) in cases {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bismark(genome.path(), bins.path(), temp.path(), outdir.path())
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "{} has Windows (CRLF) line endings",
+                named.display()
+            )))
+            .stderr(predicate::str::contains("dos2unix"));
+        assert!(!marker.exists(), "an aligner ran for {args:?}");
+    }
+}
+
+/// Read names that stop matching the input fail a files-mode run as soon as the
+/// merge ends, without waiting for the aligner.
+#[cfg(unix)]
+#[test]
+fn a_files_mode_run_whose_read_names_stop_matching_fails() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let se_bins = TempDir::new().unwrap();
+    write_exec(
+        &se_bins.path().join("bowtie2"),
+        &renaming_stub("-U", "", true),
+    );
+    let pe_bins = TempDir::new().unwrap();
+    write_exec(
+        &pe_bins.path().join("bowtie2"),
+        &renaming_stub("-1", "pe", true),
+    );
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, fastq(30_000, "\n")).unwrap();
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, fastq(50, "\n")).unwrap();
+    fs::write(&r2, fastq(50, "\n")).unwrap();
+
+    let multicore_note = format!("(in --multicore chunk 0 of 2 of {})", reads.display());
+    let cases: [(&Path, Vec<&std::ffi::OsStr>, &str); 3] = [
+        (
+            se_bins.path(),
+            vec![reads.as_os_str()],
+            "stop matching the input at read 1;",
+        ),
+        (
+            pe_bins.path(),
+            vec!["-1".as_ref(), r1.as_os_str(), "-2".as_ref(), r2.as_os_str()],
+            "stop matching the input at pair 1;",
+        ),
+        (
+            se_bins.path(),
+            vec!["--multicore".as_ref(), "2".as_ref(), reads.as_os_str()],
+            &multicore_note,
+        ),
+    ];
+    for (bins, args, expected) in cases {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bismark(genome.path(), bins, temp.path(), outdir.path())
+            .arg("--no_stream_converted")
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected))
+            .stderr(predicate::str::contains("dos2unix"));
+    }
+}
+
+/// An aligner that fails, here a second after closing its output, is reported ahead
+/// of another instance's name mismatch.
+#[cfg(unix)]
+#[test]
+fn an_aligner_error_wins_over_a_name_mismatch() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let rename = renaming_stub("-U", "", true);
+    let script = rename.replacen(
+        "inp=\"\"",
+        "case \"$*\" in *BS_GA*) exec >&-; sleep 1; exit 1;; esac\ninp=\"\"",
+        1,
+    );
+    write_exec(&bins.path().join("bowtie2"), &script);
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, fastq(50, "\n")).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bismark(genome.path(), bins.path(), temp.path(), outdir.path())
+        .arg("--no_stream_converted")
+        .arg(&reads)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exited unsuccessfully"))
+        .stderr(predicate::str::contains("stop matching").not());
 }
 
 /// A truncated gzip input reports the input error, streamed or not.
