@@ -623,6 +623,11 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
+/// `e`, naming the `--multicore` chunk of `input` it came from.
+fn in_chunk(e: AlignerError, i: usize, n: u32, input: &str) -> AlignerError {
+    AlignerError::Validation(format!("{e} (in --multicore chunk {i} of {n} of {input})"))
+}
+
 /// Collect chunk results (already in chunk order) into a `Vec`, returning the
 /// **lowest-chunk-index** error (deterministic; B-O3). `std::thread::scope` has
 /// already joined every worker by the time this runs.
@@ -675,9 +680,11 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
         let results: Vec<Result<SeChunkOutcome>> = std::thread::scope(|s| {
             let handles: Vec<_> = subsets
                 .iter()
-                .map(|subset| {
+                .enumerate()
+                .map(|(i, subset)| {
                     s.spawn(move || {
                         se_chunk_job(cfg_ref, genome_ref, refid_ref, header_ref, subset, opts_ref)
+                            .map_err(|e| in_chunk(e, i, n, read_file))
                     })
                 })
                 .collect();
@@ -824,14 +831,18 @@ pub(crate) fn run_pe_multicore(
             orig_skip,
             orig_upto,
         )?;
+        let inputs = format!("{read_1} and {read_2}");
 
         let results: Vec<Result<PeChunkOutcome>> = std::thread::scope(|s| {
             let handles: Vec<_> = subsets_1
                 .iter()
                 .zip(&subsets_2)
-                .map(|(s1, s2)| {
+                .enumerate()
+                .map(|(i, (s1, s2))| {
+                    let inputs = &inputs;
                     s.spawn(move || {
                         pe_chunk_job(cfg_ref, genome_ref, refid_ref, header_ref, s1, s2, opts_ref)
+                            .map_err(|e| in_chunk(e, i, n, inputs))
                     })
                 })
                 .collect();

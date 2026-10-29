@@ -36,6 +36,8 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 ##### Input:
 
+A FastQ or FastA input with Windows (CRLF) line endings stops the run at start-up; convert such a file first (e.g. with `dos2unix`). A run whose aligner returns read names that stop matching the input's also stops with an error.
+
 - `--se <list>` / `--single_end <list>`
 
   Sets single-end mapping mode explicitly giving a list of file names as <list>. The filenames may be provided as a comma [`,`] or colon [`:`]-separated list.
@@ -190,7 +192,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
   While a run streams, its named pipes sit in `--temp_dir` (one `*.fifo.*` entry per aligner input) and are removed when it finishes. A run that is killed can leave them behind; they hold no data and are safe to delete.
 
-  An aligner wrapper (`--path_to_bowtie2` or `--path_to_minimap2`) that reads part of the input before the aligner does cannot be streamed: Bismark stops with an error naming `--no_stream_converted`, which runs it with files. A wrapper that leaves a background process holding the input open without reading it fails the same way, but the run can wait until that process exits. A streamed run also stops when the aligner's read names stop matching the input's, for example on a FastQ with Windows (CRLF) line endings; convert such a file first (e.g. with `dos2unix`).
+  An aligner wrapper (`--path_to_bowtie2` or `--path_to_minimap2`) that reads part of the input before the aligner does cannot be streamed: Bismark stops with an error naming `--no_stream_converted`, which runs it with files. A wrapper that leaves a background process holding the input open without reading it fails the same way, but the run can wait until that process exits.
 
 - `--sam`
 
