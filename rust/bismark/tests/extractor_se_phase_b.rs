@@ -793,6 +793,7 @@ fn splitting_report_emits_per_context_counts() {
         calls_chg_unmeth: 0,
         calls_chh_meth: 0,
         calls_chh_unmeth: 400,
+        ..Default::default()
     };
     // Phase C.2 (#864): added `is_paired: bool` argument (SE here).
     write_splitting_report(&report_path, &input_path, &config, false, &report).unwrap();

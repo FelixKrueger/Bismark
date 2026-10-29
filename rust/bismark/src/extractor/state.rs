@@ -197,7 +197,20 @@ impl ExtractState {
         // Console final methylation summary (#882) — mirror of the
         // splitting-report numbers, Perl `warn`'d at :2480-:2521. Emitted
         // regardless of `--report` (Perl always warns it); gated by --quiet.
-        logger.final_summary(&self.report);
+        logger.final_summary(&self.report, config.allow_discordant);
+
+        // An elevated orphan rate is advisory, including under --quiet.
+        if config.allow_discordant && self.report.records_processed > 0 {
+            // > 20% orphans: orphan_reads_called * 5 > records_processed.
+            if self.report.orphan_reads_called.saturating_mul(5) > self.report.records_processed {
+                eprintln!(
+                    "warning: --allow_discordant: {} of {} templates are orphans (>20%); \
+                     mates may be unmapped or absent, or input may not be name-grouped; \
+                     ensure name grouping with samtools collate or samtools sort -n",
+                    self.report.orphan_reads_called, self.report.records_processed
+                );
+            }
+        }
         if !config.mbias_off {
             let mbias_path = mbias_txt_path(&config.output_dir, &self.input_path);
             write_mbias_txt(&mbias_path, &self.mbias, self.is_paired)?;
@@ -317,6 +330,7 @@ mod tests {
             parallel: 1,
             quiet: false,
             verbose: false,
+            allow_discordant: false,
         }
     }
 

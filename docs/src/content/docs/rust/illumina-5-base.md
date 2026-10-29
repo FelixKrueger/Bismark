@@ -44,7 +44,10 @@ Because it is concordance-gated rather than byte-identical, every 5-Base path is
 
 Directional, paired-end, against the unconverted genome. minimap2 (`-x sr`) against the
 genome FASTA is the default engine; bowtie2 or hisat2 work against a NORMAL (unconverted)
-index supplied with `--five_base_index`.
+index supplied with `--five_base_index`. minimap2 is the default because it indexes the
+genome FASTA at run time, so no index has to be built first; choose `--bowtie2` or
+`--hisat2` when you need their tuning options (for example for short fragments) or want
+to match the aligner of your bisulfite runs.
 
 `--genome` needs only to contain the genome FASTA — the reference the methylation calls are
 made against. There is no `bismark_genome_preparation` step for 5-Base, because no path here
@@ -62,6 +65,32 @@ bismark --illumina_5base --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
+
+### Bowtie 2 and HISAT2 tuning
+
+Both engines accept `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `--score_min`,
+`-I`/`--minins`, and `-X`/`--maxins` in 5-Base mode. Quality-encoding flags
+(`--phred33-quals` or `--phred64-quals`) and `--quiet` are also passed through. The default
+linear score threshold is `L,0,-0.6`; the engine's default maximum insert is 500 bp.
+For short fragments, for example:
+
+```sh
+bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
+        --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz \
+        -L 10 -N 1 -I 10 -X 1000 --score_min L,0,-0.2
+```
+
+Bowtie 2 `--local` enables local alignment and defaults to `--score_min G,20,8`;
+an explicit threshold must use the `G` form. HISAT2 already permits soft clipping
+in 5-Base mode, including with Bismark's `--local`, and uses the `L` form; it
+receives no Bowtie 2 `--local` flag. HISAT2 alignment stays unspliced, so
+`--known-splicesite-infile` is rejected in this mode.
+
+For either engine, `-p N` sets threads in the single aligner instance. Otherwise,
+`--multicore N` supplies the thread count when N is greater than one; with neither
+setting (or `--multicore 1`), Bismark uses the available logical CPUs. In 5-Base
+mode an explicit `-p` takes precedence over `--multicore`; ordinary bisulfite
+HISAT2 keeps its existing conflict rule. Input ordering is always preserved.
 
 The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extractor,
 `bismark2bedGraph`, `coverage2cytosine`, and the reports consume it unchanged.

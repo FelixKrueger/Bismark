@@ -548,7 +548,8 @@ pub struct RunConfig {
     /// Score normalization for `calc_mapq`: the `--score_min` parameters, the
     /// `scMin` function form and the ladder choice. The `--score_min` defaults are
     /// aligner-dependent: Bowtie 2-local = `(20.0, 8.0)` (G-form); HISAT2-local and
-    /// end-to-end = `(0.0, -0.2)` (L-form) — see `score_min_params`.
+    /// end-to-end = `(0.0, -0.2)` (L-form; `(0.0, -0.6)` for 5-Base Bowtie 2/HISAT2) — see
+    /// `score_min_params`.
     pub score_model: ScoreModel,
     /// The `--mm2_*` selectors' answer, resolved once — **regardless of aligner**. Only the
     /// minimap-family backends read it. NB it is NOT always `MapOnt` for other aligners:
@@ -678,8 +679,7 @@ fn inprocess_rammap_threads(
     n
 }
 
-/// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
-/// Reject a paired-end layout with an aligner that has no PE support / no
+/// Reject paired-end input with an aligner that has no PE support / no
 /// byte-identity oracle (minimap2, rammap — minimap-like, SE-only).
 ///
 /// PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
@@ -689,13 +689,8 @@ fn inprocess_rammap_threads(
 /// has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
 /// trustworthy oracle to byte-match. minimap2 AND rammap are SE-only. The error
 /// names the actual engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
-///
-/// Shared by [`resolve`] (native `-1/-2`) AND the uBAM SingleEnd→PairedEnd switch
-/// (`lib::resolve_ubam_inputs`), so this layout-dependent guard cannot drift
-/// between the two entry points — a positional paired uBAM is rejected for
-/// minimap2/rammap exactly as `-1/-2` would be.
-pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) -> Result<()> {
-    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+pub fn reject_unsupported_paired_aligner(aligner: Aligner, paired: bool) -> Result<()> {
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && paired {
         return Err(AlignerError::Unsupported(format!(
             "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
              paired-end path is unfinished/experimental and has no trustworthy byte-identity \
@@ -757,6 +752,7 @@ fn discover_genome_for_run(
     }
 }
 
+/// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
@@ -877,7 +873,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // run (`lib.rs`). Bowtie 2 `--multicore` (the fork path, Phase 9b) and single-core
     // HISAT2 are unaffected. `--ambig_bam` works under B (one instance, the single-instance
     // path — Perl's Bowtie-2-only multicore ambig temp machinery is never reached).
-    let hisat2_multicore_remap = hisat2_multicore_threads(aligner, cli.multicore);
+    let hisat2_multicore_remap = if cli.illumina_5base {
+        None
+    } else {
+        hisat2_multicore_threads(aligner, cli.multicore)
+    };
     // An explicit `-p M` AND the remapped `--multicore N` both set is ambiguous (both
     // would drive HISAT2's `-p`) → fail loud rather than silently pick one.
     if hisat2_multicore_remap.is_some() && cli.bowtie_threads.is_some() {
@@ -980,15 +980,17 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // the Perl minimap2 paired-end path is unfinished WIP with no trustworthy byte-identity
     // oracle. 5-Base PE (#787) is its OWN path (run_pe_five_base) — unconverted minimap2 PE,
     // concordance-gated, NOT the rejected bisulfite minimap2 PE — so it is exempt.
+    // A positional paired uBAM/BINSEQ is still a SingleEnd layout here (#1135).
+    let paired = layout.is_paired() || crate::aligner::positional_input_is_paired(&layout)?;
     if !cli.illumina_5base {
-        reject_unsupported_paired_aligner(aligner, &layout)?;
+        reject_unsupported_paired_aligner(aligner, paired)?;
     }
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
     // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
     // silently fall back to the faithful path — that would mask which strands the
     // combined search omits). PLAN §3.1 + phase 5.
-    reject_combined_index_unsupported(cli, aligner, library, &layout)?;
+    reject_combined_index_unsupported(cli, aligner, library, paired)?;
 
     let genome = discover_genome_for_run(cli.illumina_5base, aligner, &genome_arg)?;
     // --combined_index requires the combined index to be present (built by
@@ -1021,13 +1023,12 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::Rammap => cli.path_to_rammap.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
-    let (aligner_options, gap_penalties) = options::build_aligner_options(
-        cli,
-        aligner,
-        format,
-        layout.is_paired(),
-        hisat2_multicore_remap,
-    )?;
+    let (aligner_options, gap_penalties) =
+        if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
+            options::build_five_base_aligner_options(cli, aligner, format)?
+        } else {
+            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+        };
     // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
     // and the in-process rammap backend cannot drift (#1092). Must stay after
     // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
@@ -1152,7 +1153,7 @@ fn reject_combined_index_unsupported(
     cli: &Cli,
     aligner: Aligner,
     library: LibraryType,
-    layout: &ReadLayout,
+    paired: bool,
 ) -> Result<()> {
     // --combined_index_single_pass (model (b), the single-pass tagged exec model) is
     // ONLY meaningful for the non-directional combined path (the sole mode that
@@ -1180,10 +1181,7 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 6: PE non-directional combined now supports this low-RAM exec model
-        // (the `layout.is_paired()` reject that used to live here is lifted — both SE and
-        // PE non-dir single-pass are valid targets). It stays Bowtie 2-only (next guard);
-        // PE-HISAT2 + this flag is therefore rejected by the aligner guard below.
+        // SE and PE non-directional are both valid; Bowtie 2 only (next guard).
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_single_pass requires Bowtie 2: it is the Bowtie-2-specific \
@@ -1231,13 +1229,7 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 6: PE non-directional combined supports this faithful sequential
-        // low-RAM exec model (the `layout.is_paired()` reject is lifted — SE + PE both
-        // valid). v2.x Phase 7: HISAT2 supports it too (the sequential model is faithful +
-        // aligner-agnostic — it spawns whichever `config.aligner` resolves and just runs
-        // the two passes serially). minimap2 stays rejected (next guard + the global
-        // minimap2 reject below). (--combined_index_single_pass stays Bowtie-2-only — its
-        // own guard above; the tag-RNG mechanism is Bowtie-2-specific.)
+        // SE and PE non-directional are both valid; Bowtie 2 and HISAT2 only (next guard).
         if !matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
             return Err(AlignerError::Unsupported(format!(
                 "--combined_index_sequential requires Bowtie 2 or HISAT2: it is the faithful \
@@ -1319,8 +1311,8 @@ fn reject_combined_index_unsupported(
     // keeps **minimap2** PE combined rejected (the Minimap2-only reject above only covers
     // SE fall-through; a single both-strands minimap2 pass cannot do the 4-strand dispatch,
     // and PE-minimap2 has no trustworthy oracle). minimap2 PE is also double-rejected at the
-    // global `aligner == Minimap2 && layout.is_paired()` guard above.
-    if layout.is_paired()
+    // global `reject_unsupported_paired_aligner` guard above.
+    if paired
         && !(matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2)
             && matches!(
                 library,
@@ -2004,6 +1996,46 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn five_base_hisat2_keeps_requested_multicore_without_remap() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, genome, r1, r2) = fasta_only_genome_and_reads();
+        let idx = tmp.path().join("plain");
+        for i in 1..=8 {
+            std::fs::write(tmp.path().join(format!("plain.{i}.ht2")), b"").unwrap();
+        }
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let hisat2 = bin.join("hisat2");
+        std::fs::write(&hisat2, "#!/bin/sh\necho 'hisat2-align-s version 2.2.2'\n").unwrap();
+        std::fs::set_permissions(&hisat2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = |p: &Path| p.to_str().unwrap().to_string();
+        let base = [
+            "--illumina_5base".to_string(),
+            "--hisat2".into(),
+            "--genome".into(),
+            path(&genome),
+            "--five_base_index".into(),
+            path(&idx),
+            "--path_to_hisat2".into(),
+            path(&bin),
+            "-1".into(),
+            path(&r1),
+            "-2".into(),
+            path(&r2),
+            "--multicore".into(),
+            "4".into(),
+        ];
+        for extra in [&[][..], &["-p", "8"][..]] {
+            let mut args: Vec<&str> = base.iter().map(String::as_str).collect();
+            args.extend_from_slice(extra);
+            let config = resolve(&cli_from(&args), "cmd".into()).unwrap();
+            assert_eq!(config.multicore, 4, "{extra:?}");
+            assert_eq!(config.hisat2_multicore_remap, None, "{extra:?}");
+        }
+    }
+
     /// A converted index would invert every call with no error at any stage, so it is rejected by
     /// name — including via a `..` path, which is why the comparison canonicalises.
     #[test]
@@ -2218,28 +2250,19 @@ mod tests {
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
     }
 
-    /// #1025: the shared paired-aligner guard — minimap2/rammap PE rejected,
-    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed. This is the
-    /// guard `lib::resolve_ubam_inputs` re-runs after the uBAM SE→PE switch so a
-    /// positional `--minimap2 <pe.bam>` fails loud exactly like `--minimap2 -1/-2`.
+    /// #1025: the paired-aligner guard — minimap2/rammap PE rejected,
+    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed.
     #[test]
     fn reject_unsupported_paired_aligner_guard() {
-        let pe = ReadLayout::PairedEnd {
-            mates1: vec!["a_1.fq".into()],
-            mates2: vec!["a_2.fq".into()],
-        };
-        let se = ReadLayout::SingleEnd {
-            reads: vec!["a.fq".into()],
-        };
         // minimap2/rammap + PE → rejected.
-        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &pe).is_err());
-        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &pe).is_err());
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, true).is_err());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, true).is_err());
         // Bowtie 2/HISAT2 + PE → allowed.
-        assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, &pe).is_ok());
-        assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, &pe).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, true).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, true).is_ok());
         // minimap2/rammap + SE → allowed (SE is their supported mode).
-        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &se).is_ok());
-        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &se).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, false).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, false).is_ok());
     }
 
     /// Phase 3 (T2): `--rammap` selects [`Aligner::Rammap`].
@@ -2671,16 +2694,11 @@ mod tests {
 
     // ---- --combined_index (v2) scope guard (Phase 2; §3.1) -----------------
 
-    fn se() -> ReadLayout {
-        ReadLayout::SingleEnd {
-            reads: vec!["r.fq".into()],
-        }
+    fn se() -> bool {
+        false
     }
-    fn pe() -> ReadLayout {
-        ReadLayout::PairedEnd {
-            mates1: vec!["r1.fq".into()],
-            mates2: vec!["r2.fq".into()],
-        }
+    fn pe() -> bool {
+        true
     }
 
     /// SE directional Bowtie 2 is the one supported combination → guard passes.
@@ -2692,7 +2710,7 @@ mod tests {
                 &cli,
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2708,7 +2726,7 @@ mod tests {
             &cli,
             Aligner::Rammap,
             LibraryType::Directional,
-            &se(),
+            se(),
         )
         .unwrap_err();
         let m = err.to_string();
@@ -2729,7 +2747,7 @@ mod tests {
                 &cli_from(&["--combined_index"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2739,7 +2757,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--non_directional"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2750,7 +2768,7 @@ mod tests {
     fn combined_index_guard_inert_when_flag_absent() {
         let cli = cli_from(&[]);
         assert!(
-            reject_combined_index_unsupported(&cli, Aligner::Hisat2, LibraryType::Pbat, &pe())
+            reject_combined_index_unsupported(&cli, Aligner::Hisat2, LibraryType::Pbat, pe())
                 .is_ok()
         );
     }
@@ -2764,7 +2782,7 @@ mod tests {
                 &cli_from(&["--combined_index"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2773,7 +2791,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--non_directional"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2782,7 +2800,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2802,7 +2820,7 @@ mod tests {
             ),
         ] {
             assert!(
-                reject_combined_index_unsupported(&cli_from(&args), Aligner::Hisat2, lib, &se())
+                reject_combined_index_unsupported(&cli_from(&args), Aligner::Hisat2, lib, se())
                     .is_ok(),
                 "HISAT2 SE combined should be accepted: {args:?}"
             );
@@ -2819,7 +2837,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2"]),
                 Aligner::Hisat2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2828,7 +2846,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--minimap2"]),
                 Aligner::Minimap2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2839,7 +2857,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2849,7 +2867,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2", "--pbat"]),
                 Aligner::Hisat2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2862,7 +2880,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2", "--non_directional"]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2872,7 +2890,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--minimap2"]),
                 Aligner::Minimap2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2882,7 +2900,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--multicore", "4"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2903,7 +2921,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2914,7 +2932,7 @@ mod tests {
                 &cli_from(&["--non_directional", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2925,7 +2943,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2934,7 +2952,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2949,7 +2967,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2960,7 +2978,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2975,7 +2993,7 @@ mod tests {
                 ]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2990,7 +3008,7 @@ mod tests {
                 ]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -3013,7 +3031,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -3024,7 +3042,7 @@ mod tests {
                 &cli_from(&["--non_directional", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3035,7 +3053,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3044,7 +3062,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3060,7 +3078,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3075,7 +3093,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -3091,7 +3109,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3101,13 +3119,13 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_err()
         );
         // v2.x Phase 7: HISAT2 non-dir sequential is now ACCEPTED — SE and PE (the
         // sequential model is faithful + aligner-agnostic).
-        for layout in [se(), pe()] {
+        for paired in [se(), pe()] {
             assert!(
                 reject_combined_index_unsupported(
                     &cli_from(&[
@@ -3117,7 +3135,7 @@ mod tests {
                     ]),
                     Aligner::Hisat2,
                     LibraryType::NonDirectional,
-                    &layout
+                    paired
                 )
                 .is_ok()
             );
@@ -3132,7 +3150,7 @@ mod tests {
                 ]),
                 Aligner::Minimap2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -3143,7 +3161,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_sequential"]),
                 Aligner::Hisat2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -3152,7 +3170,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Hisat2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_err()
         );
