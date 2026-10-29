@@ -60,6 +60,7 @@ pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+pub mod stream;
 pub mod ubam;
 
 use std::collections::HashMap;
@@ -75,7 +76,7 @@ use flate2::write::GzEncoder;
 use crate::io::BamWriter;
 
 use crate::aligner::align::{
-    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
+    AlignerStream, Emitted, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
     PairedSamStream, SamRecord, SamStream,
 };
 use crate::aligner::aux_out::AuxKind;
@@ -213,9 +214,30 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
+    // Streaming needs a `--temp_dir` that can hold a named pipe (an I/O probe).
+    if config.stream_converted.enabled && !stream::temp_dir_supports_fifo(&config.output.temp_dir) {
+        config.stream_converted = config::StreamConverted {
+            enabled: false,
+            reason: Some(format!(
+                "a named pipe could not be created in the temp dir {} (no mkfifo on PATH, or a \
+                 filesystem that does not support FIFOs)",
+                temp_dir_label(&config.output.temp_dir)
+            )),
+        };
+    }
+    // Announce any automatic fallback to files. An explicit `--no_stream_converted`
+    // carries no reason and prints nothing.
+    if let Some(reason) = &config.stream_converted.reason {
+        eprintln!(
+            "Note: the converted reads are being written to {} as files rather than streamed \
+             to the aligner, because {reason}.",
+            temp_dir_label(&config.output.temp_dir)
+        );
+    }
     if config.strand_id && matches!(config.layout, config::ReadLayout::SingleEnd { .. }) {
         eprintln!("Note: --strandID only applies to paired-end output; it has no effect here.");
     }
+
     // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
     // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
     // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
@@ -1134,14 +1156,26 @@ fn convert_se_files(
     let path = Path::new(read_file);
     let td = &config.output.temp_dir;
     let fasta = matches!(config.format, ReadFormat::FastA);
-    Ok(match config.library {
-        LibraryType::Directional => vec![convert_se_ct(fasta, path, td, opts)?],
-        LibraryType::Pbat => vec![convert_se_ga(fasta, path, td, opts)?],
-        LibraryType::NonDirectional => vec![
-            convert_se_ct(fasta, path, td, opts)?, // file 0 = C→T
-            convert_se_ga(fasta, path, td, opts)?, // file 1 = G→A
-        ],
-    })
+    se_conv_kinds(config.library)
+        .iter()
+        .map(|&kind| match kind {
+            convert::ConvKind::Ct => convert_se_ct(fasta, path, td, opts),
+            convert::ConvKind::Ga => convert_se_ga(fasta, path, td, opts),
+        })
+        .collect()
+}
+
+/// The per-mode SE converted set, in the order [`se_instance_plan`]'s file index
+/// keys off: directional `[C→T]`, pbat `[G→A]`, non-directional `[C→T, G→A]`.
+/// Shared by the file path ([`convert_se_files`]) and the streaming path so they
+/// agree on that order.
+fn se_conv_kinds(library: LibraryType) -> &'static [convert::ConvKind] {
+    use convert::ConvKind::{Ct, Ga};
+    match library {
+        LibraryType::Directional => &[Ct],
+        LibraryType::Pbat => &[Ga],
+        LibraryType::NonDirectional => &[Ct, Ga],
+    }
 }
 
 /// The per-mode SE instance plan (Perl `@fhs` templates `reset_counters_and_fhs`
@@ -1165,6 +1199,25 @@ fn se_instance_plan(library: LibraryType) -> Vec<(Orientation, IndexChoice, usiz
         LibraryType::NonDirectional => {
             vec![(Norc, Ct, 0), (Nofw, Ga, 0), (Nofw, Ct, 1), (Norc, Ga, 1)]
         }
+    }
+}
+
+/// How to name `--temp_dir` in a diagnostic: it defaults to the empty path
+/// (meaning "beside the output"), which would otherwise print as nothing.
+fn temp_dir_label(temp_dir: &Path) -> String {
+    if temp_dir.as_os_str().is_empty() {
+        "the current directory".to_string()
+    } else {
+        temp_dir.display().to_string()
+    }
+}
+
+/// The conversion banner label for a substitution kind; the streaming path's
+/// equivalent of [`conv_label`], which needs a file name.
+fn conv_label_for(kind: convert::ConvKind) -> &'static str {
+    match kind {
+        convert::ConvKind::Ct => "C->T",
+        convert::ConvKind::Ga => "G->A",
     }
 }
 
@@ -1198,6 +1251,15 @@ fn process_se_chunk(
 ) -> Result<Vec<convert::ConvertedReads>> {
     let bt2 = &config.detected_aligner.path;
     let read_file = input.to_string_lossy();
+    // The in-process rammap backend takes the converted reads in memory, not a FIFO.
+    #[cfg(feature = "rammap-inprocess")]
+    if use_se_inprocess_rammap(config) && config.stream_converted.enabled {
+        return process_se_chunk_inprocess(config, genome, refid, input, opts, sinks, counters);
+    }
+    // Stream the converted reads into the aligner when the run supports it.
+    if config.stream_converted.enabled {
+        return process_se_chunk_streamed(config, genome, refid, input, opts, sinks, counters);
+    }
     // Phase 2/8: convert the per-mode temp file(s). Both/all instances read this set.
     let converted = convert_se_files(config, &read_file, opts)?;
     for cr in &converted {
@@ -1219,10 +1281,26 @@ fn process_se_chunk(
     // short-circuit routes the in-process rammap path here for ANY `--multicore N`). Only
     // FastA falls through to the subprocess path (the stream is FastQ-only; see
     // `use_se_inprocess_rammap` + the never-silent notice in `run`).
+
+    // The in-process rammap backend over converted files, reached only with
+    // `--no_stream_converted`.
     #[cfg(feature = "rammap-inprocess")]
     if use_se_inprocess_rammap(config) {
         let pbat = matches!(config.library, LibraryType::Pbat);
-        let mut streams = build_se_inprocess_streams(config, &converted)?;
+        let mut readers: Vec<Option<Box<dyn BufRead>>> = se_instance_plan(config.library)
+            .into_iter()
+            .map(|(_o, _i, file_idx)| {
+                let path = &converted[file_idx].path;
+                let f = File::open(path)?;
+                let r: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
+                    Box::new(BufReader::new(MultiGzDecoder::new(f)))
+                } else {
+                    Box::new(BufReader::new(f))
+                };
+                Ok(Some(r))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut streams = build_se_inprocess_streams(config, &mut readers)?;
         drive_merge(
             input,
             &mut streams,
@@ -1273,6 +1351,237 @@ fn process_se_chunk(
     Ok(converted)
 }
 
+/// [`process_se_chunk`], with the converted reads streamed through FIFOs instead
+/// of written to `--temp_dir`.
+///
+/// Same plan, argv shape and merge; only the aligner's input paths change. One
+/// conversion pass per converted stream, fanned out to the instances that read it.
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[allow(clippy::too_many_arguments)]
+fn process_se_chunk_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = se_instance_plan(config.library);
+
+    // One source per converted stream, in `se_conv_kinds` order so the plan's
+    // file index means the same thing here as on the file path.
+    let kinds = se_conv_kinds(config.library);
+    let sources: Vec<stream::ConvSource> = kinds
+        .iter()
+        .map(|&kind| stream::ConvSource {
+            input: input.to_path_buf(),
+            kind,
+            id_suffix: b"", // single-end: no /1/1 or /2/2 tag
+        })
+        .collect();
+    let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
+
+    let streamed = stream::StreamedConversion::start(
+        &config.output.temp_dir,
+        fasta,
+        opts,
+        &sources,
+        &demands,
+    )?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Streaming {} converted version of {} to {} aligner instance(s)",
+            conv_label_for(source.kind),
+            input.display(),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    // Every child is reaped inside this call, before `streamed` can be dropped.
+    let returned = match run_se_instances_streamed(
+        config, genome, refid, input, &plan, &streamed, sinks, counters,
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
+
+    // Every instance is drained and reaped.
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, false)?)
+    {
+        eprintln!(
+            "Streamed {} converted version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            input.display(),
+        );
+    }
+    Ok(Vec::new())
+}
+
+/// Spawn, merge and reap the single-end aligner instances of a streamed chunk.
+///
+/// Every child is spawned before any is primed: a writer blocks in its open until
+/// its child opens the pipe, and the instances share one bounded conversion pass,
+/// so priming child 0 before child 1 exists would deadlock. All children are
+/// reaped (or killed, on error) before this returns.
+///
+/// Returns what each instance emitted, as `(consumer, emitted)`.
+#[allow(clippy::too_many_arguments)]
+fn run_se_instances_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    plan: &[(Orientation, IndexChoice, usize)],
+    streamed: &stream::StreamedConversion,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<(usize, Emitted)>> {
+    let bt2 = &config.detected_aligner.path;
+    let mut unprimed = Vec::with_capacity(plan.len());
+    for (consumer, &(orientation, index_choice, _)) in plan.iter().enumerate() {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        unprimed.push(AlignerStream::spawn_unprimed(
+            config.aligner,
+            bt2,
+            &config.aligner_options,
+            orientation,
+            index_basename,
+            streamed.path(consumer),
+        )?);
+    }
+    // Every pipe needs its reader before any child is read, or a dead child stalls
+    // the shared pass. One FIFO per instance, so consumer index == child index.
+    streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
+
+    let mut streams = Vec::with_capacity(unprimed.len());
+    for u in unprimed {
+        streams.push(u.prime()?);
+    }
+
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    if let Err(e) = drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    ) {
+        // An instance that died starves the merge, which then fails on the
+        // symptom; report the instance itself.
+        return Err(streams
+            .iter_mut()
+            .find_map(|s| s.failure())
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+    }
+    Ok(finish_concurrently(streams, AlignerStream::finish)
+        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+        .into_iter()
+        .enumerate()
+        .collect())
+}
+
+/// Reap every instance at once: they share one conversion pass, so an instance
+/// left unread stalls the others.
+fn finish_concurrently<S: Send>(
+    streams: Vec<S>,
+    finish: fn(S) -> Result<Emitted>,
+) -> Result<Vec<Emitted>> {
+    std::thread::scope(|scope| {
+        let reapers: Vec<_> = streams
+            .into_iter()
+            .map(|s| scope.spawn(move || finish(s)))
+            .collect();
+        reapers
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
+}
+
+/// [`process_se_chunk`] for the in-process rammap backend, with the converted
+/// reads handed over in memory.
+///
+/// This backend aligns inside the Bismark process, so a temp file or FIFO would be
+/// a pointless round trip. One reader per instance, fed by one conversion pass per
+/// source as on the FIFO path. The conversion loop is the shared one, so the bytes
+/// parsed here are the bytes the file path would write.
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[cfg(feature = "rammap-inprocess")]
+#[allow(clippy::too_many_arguments)]
+fn process_se_chunk_inprocess(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = se_instance_plan(config.library);
+    let kinds = se_conv_kinds(config.library);
+    let sources: Vec<stream::ConvSource> = kinds
+        .iter()
+        .map(|&kind| stream::ConvSource {
+            input: input.to_path_buf(),
+            kind,
+            id_suffix: b"", // single-end: no /1/1 or /2/2 tag
+        })
+        .collect();
+    let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
+
+    let (readers, conversion) = stream::InMemoryConversion::start(fasta, opts, &sources, &demands)?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Converting {} in memory for {} in-process instance(s) (no temp file written)",
+            conv_label_for(source.kind),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    let mut boxed: Vec<Option<Box<dyn BufRead>>> = readers
+        .into_iter()
+        .map(|r| Some(Box::new(BufReader::new(r)) as Box<dyn BufRead>))
+        .collect();
+    let mut streams = build_se_inprocess_streams(config, &mut boxed)?;
+
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    )?;
+    // Drop the streams (and their readers) before joining, or a converter blocked
+    // on an undrained reader would never finish.
+    drop(streams);
+
+    for (source, count) in sources.iter().zip(conversion.finish()?) {
+        eprintln!(
+            "Converted {} version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            input.display(),
+        );
+    }
+    Ok(Vec::new())
+}
+
 /// Whether the SE in-process rammap path drives this run (epic 06152026; #995; rev2 Alt-1).
 ///
 /// Unconditional + `cfg!`-gated (NOT `#[cfg]`-gated) on purpose, so it (a) returns
@@ -1307,7 +1616,7 @@ fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
 /// is `!subprocess_opt_out` — in-process is the DEFAULT, subprocess is the `--rammap_subprocess`
 /// opt-out. No `multicore` term (#995: the in-process path is N-threaded; fork-worker safety
 /// is via the `pipeline()` short-circuit + the `aligner == Rammap` conjunct).
-fn inprocess_rammap_selected(
+pub(crate) fn inprocess_rammap_selected(
     aligner: Aligner,
     subprocess_opt_out: bool,
     format: ReadFormat,
@@ -1346,7 +1655,7 @@ fn rammap_preset(p: Mm2Preset) -> ::rammap::Preset {
 #[cfg(feature = "rammap-inprocess")]
 fn build_se_inprocess_streams(
     config: &RunConfig,
-    converted: &[convert::ConvertedReads],
+    readers: &mut [Option<Box<dyn BufRead>>],
 ) -> Result<Vec<crate::aligner::inprocess::InProcessAlignerStream<Box<dyn BufRead>>>> {
     use std::sync::Arc;
 
@@ -1405,7 +1714,9 @@ fn build_se_inprocess_streams(
     );
 
     let mut streams = Vec::with_capacity(plan.len());
-    for (_orientation, index_choice, file_idx) in plan {
+    // One reader per instance, not per source: directional SE has both instances
+    // reading the same source, and a reader can be consumed only once.
+    for (consumer, (_orientation, index_choice, _file_idx)) in plan.into_iter().enumerate() {
         let aligner = match index_choice {
             IndexChoice::Ct => Arc::clone(
                 ct.as_ref()
@@ -1416,14 +1727,16 @@ fn build_se_inprocess_streams(
                     .expect("GA index loaded because the plan references it"),
             ),
         };
-        // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
-        let path = &converted[file_idx].path;
-        let f = File::open(path)?;
-        let reader: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(f)))
-        } else {
-            Box::new(BufReader::new(f))
-        };
+        // The converted reads for this instance (in memory, or from a temp file
+        // with `--no_stream_converted`).
+        let reader = readers
+            .get_mut(consumer)
+            .and_then(Option::take)
+            .ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "internal: no converted reader for in-process instance {consumer}"
+                ))
+            })?;
         streams.push(crate::aligner::inprocess::InProcessAlignerStream::new(
             aligner,
             reader,
@@ -4813,6 +5126,29 @@ fn pe_instance_plan(
     }
 }
 
+/// The distinct `(mate, kind)` conversions a PE plan needs, in first-seen order:
+/// 2 for directional/pbat (each shared by both instances), 4 for non-directional.
+/// Shared by the file and streaming paths.
+fn pe_conv_sources(
+    plan: &[(
+        usize,
+        Orientation,
+        IndexChoice,
+        convert::ConvKind,
+        convert::ConvKind,
+    )],
+) -> Vec<(u8, convert::ConvKind)> {
+    let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
+    for &(_slot, _orient, _idx, k1, k2) in plan {
+        for mk in [(1u8, k1), (2u8, k2)] {
+            if !needed.contains(&mk) {
+                needed.push(mk);
+            }
+        }
+    }
+    needed
+}
+
 /// Look up the converted temp file for a planned `(mate, kind)` (every planned
 /// pair is converted exactly once into `converted`).
 fn pe_lookup(
@@ -4846,6 +5182,12 @@ fn process_pe_chunk(
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<Vec<((u8, convert::ConvKind), convert::ConvertedReads)>> {
+    // Stream the converted reads into the aligner when the run supports it.
+    if config.stream_converted.enabled {
+        return process_pe_chunk_streamed(
+            config, genome, refid, read_1, read_2, opts, sinks, counters,
+        );
+    }
     let bt2 = &config.detected_aligner.path;
     let fasta = matches!(config.format, ReadFormat::FastA);
     let plan = pe_instance_plan(config.library);
@@ -4853,14 +5195,7 @@ fn process_pe_chunk(
     // Convert each distinct (mate, kind) the plan needs EXACTLY ONCE — Perl makes 2
     // files for directional/pbat (shared by both instances) and 4 for non-dir (each
     // pair shared by two slots). Preserve first-seen order.
-    let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
-    for &(_slot, _orient, _idx, k1, k2) in &plan {
-        for mk in [(1u8, k1), (2u8, k2)] {
-            if !needed.contains(&mk) {
-                needed.push(mk);
-            }
-        }
-    }
+    let needed = pe_conv_sources(&plan);
     let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
     for &(mate, kind) in &needed {
         let input = if mate == 1 { read_1 } else { read_2 };
@@ -4919,6 +5254,178 @@ fn process_pe_chunk(
         s.finish()?;
     }
     Ok(converted)
+}
+
+/// One [`pe_instance_plan`] entry: slot, orientation, index, mate-1 and mate-2
+/// conversion.
+type PePlanEntry = (
+    usize,
+    Orientation,
+    IndexChoice,
+    convert::ConvKind,
+    convert::ConvKind,
+);
+
+/// Spawn, merge and reap the paired-end aligner instances of a streamed chunk;
+/// the PE sibling of [`run_se_instances_streamed`], returning pairs per instance.
+#[allow(clippy::too_many_arguments)]
+fn run_pe_instances_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    plan: &[PePlanEntry],
+    streamed: &stream::StreamedConversion,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<(usize, Emitted)>> {
+    let bt2 = &config.detected_aligner.path;
+    // Place each primed stream at its Bismark slot so the merge scan order holds.
+    let mut unprimed = Vec::with_capacity(plan.len());
+    for (i, &(slot, orientation, index_choice, _k1, _k2)) in plan.iter().enumerate() {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        unprimed.push((
+            slot,
+            PairedAlignerStream::spawn_unprimed(
+                config.aligner,
+                bt2,
+                &config.aligner_options,
+                orientation,
+                index_basename,
+                streamed.path(2 * i),
+                streamed.path(2 * i + 1),
+            )?,
+        ));
+    }
+    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
+    // `-2` = consumer 2i+1), both mapping back to child i.
+    streamed.await_readers(|consumer| unprimed[consumer / 2].1.try_wait())?;
+
+    let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
+    for (slot, u) in unprimed {
+        streams[slot] = Some(u.prime()?);
+    }
+
+    // See `process_pe_chunk` for why the TLEN sign comes from `config.dovetail`
+    // and not from a scan of `aligner_options`.
+    let dovetail = config.dovetail;
+    if let Err(e) = drive_merge_pe(
+        read_1,
+        read_2,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    ) {
+        // Report a dead instance rather than the merge's symptom of it.
+        return Err(streams
+            .iter_mut()
+            .flatten()
+            .find_map(|s| s.failure())
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+    }
+    // Instance i reads pipes 2i (`-1`) and 2i+1 (`-2`) and sits at its plan slot.
+    let in_plan_order = plan
+        .iter()
+        .map(|e| streams[e.0].take().expect("every plan slot is primed"))
+        .collect();
+    Ok(
+        finish_concurrently(in_plan_order, PairedAlignerStream::finish)
+            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, n)| [(2 * i, n), (2 * i + 1, n)])
+            .collect(),
+    )
+}
+
+/// [`process_pe_chunk`], with the converted reads streamed through FIFOs instead
+/// of written to `--temp_dir`.
+///
+/// Two FIFOs per instance (`-1` and `-2`), one conversion pass per distinct
+/// `(mate, kind)`: four pipes and two passes for directional/pbat, eight and four
+/// for non-directional. Children are spawned before any is primed, as in
+/// [`process_se_chunk_streamed`].
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<((u8, convert::ConvKind), convert::ConvertedReads)>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = pe_instance_plan(config.library);
+    let needed = pe_conv_sources(&plan);
+
+    let mut sources = Vec::with_capacity(needed.len());
+    for &(mate, kind) in &needed {
+        sources.push(stream::ConvSource {
+            input: if mate == 1 { read_1 } else { read_2 }.to_path_buf(),
+            kind,
+            id_suffix: convert::pe_id_suffix(mate)?,
+        });
+    }
+    // Consumer order is `slot`-major, mate-minor: instance i reads pipes 2i (`-1`)
+    // and 2i+1 (`-2`).
+    let index_of = |mate: u8, kind: convert::ConvKind| {
+        needed
+            .iter()
+            .position(|&(m, k)| m == mate && k == kind)
+            .expect("pe_conv_sources covers every planned (mate, kind)")
+    };
+    let demands: Vec<usize> = plan
+        .iter()
+        .flat_map(|&(_slot, _orient, _idx, k1, k2)| [index_of(1, k1), index_of(2, k2)])
+        .collect();
+
+    let streamed = stream::StreamedConversion::start(
+        &config.output.temp_dir,
+        fasta,
+        opts,
+        &sources,
+        &demands,
+    )?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Streaming {} converted version of {} to {} aligner instance(s)",
+            conv_label_for(source.kind),
+            source.input.display(),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    // Every child is reaped inside this call, before `streamed` can be dropped.
+    let returned = match run_pe_instances_streamed(
+        config, genome, refid, read_1, read_2, &plan, &streamed, sinks, counters,
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
+
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, true)?)
+    {
+        eprintln!(
+            "Streamed {} converted version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            source.input.display(),
+        );
+    }
+    Ok(Vec::new())
 }
 
 /// PE pipeline (single-core / `--parallel 1`, all library types) (Perl
@@ -7143,12 +7650,13 @@ mod tests {
         writeln!(fq, "\n+\n{}", "I".repeat(read.len())).unwrap();
         drop(fq);
 
-        let converted = vec![convert::ConvertedReads {
+        // A single converted file, read once per instance.
+        let converted = convert::ConvertedReads {
             name: "conv_C_to_T.fastq".into(),
             path: fq_path,
             count: 1,
             seqid_tab_count: 0,
-        }];
+        };
 
         let score_for = |preset: Mm2Preset| -> i64 {
             let config = run_config_stub(
@@ -7161,7 +7669,15 @@ mod tests {
                     reads: vec!["conv.fastq".into()],
                 },
             );
-            let streams = build_se_inprocess_streams(&config, &converted).unwrap();
+            // One reader per instance (directional SE = 2), both over the same
+            // converted file.
+            let mut readers: Vec<Option<Box<dyn BufRead>>> = (0..2)
+                .map(|_| {
+                    let f = File::open(&converted.path).unwrap();
+                    Some(Box::new(BufReader::new(f)) as Box<dyn BufRead>)
+                })
+                .collect();
+            let streams = build_se_inprocess_streams(&config, &mut readers).unwrap();
             // EVERY stream, not just the first: directional SE loads BOTH indexes (CT for
             // the OT instance, GA for CTOB), so a preset reaching only one of them would
             // bias the merge's best-instance choice while a `streams[0]`-only assertion

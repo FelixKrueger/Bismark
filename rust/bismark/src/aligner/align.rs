@@ -44,6 +44,25 @@ impl Orientation {
     }
 }
 
+/// What an aligner child emitted, as counted by `finish`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Emitted {
+    /// Primary records (pairs, for paired-end) in all.
+    pub records: u64,
+    /// Of those, the ones the caller never advanced past.
+    pub unconsumed: u64,
+}
+
+/// Neither secondary nor supplementary: one per read.
+fn is_primary(r: &SamRecord) -> bool {
+    is_primary_flag(r.flag)
+}
+
+/// [`is_primary`] for a bare FLAG.
+fn is_primary_flag(flag: u16) -> bool {
+    flag & 0x900 == 0
+}
+
 /// A parsed SAM alignment line (the fields Phase 4's scoring needs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SamRecord {
@@ -204,6 +223,8 @@ pub struct AlignerStream {
     current: Option<SamRecord>,
     line_buf: String,
     finished: bool,
+    /// Primary records read so far (minimap2 adds supplementary ones).
+    records: u64,
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2"). Mirrors [`PairedAlignerStream`]'s field — the SE
     /// sibling lagged until the v2.x combined-index sequential path drove HISAT2 SE
@@ -294,6 +315,42 @@ fn build_pe_argv(
     }
 }
 
+/// A spawned-but-unread [`AlignerStream`].
+///
+/// A newtype so an unprimed stream cannot be used as a live one: before priming,
+/// `current` is `None`, which reads as EOF. [`prime`](Self::prime) is the only
+/// way to get the [`AlignerStream`].
+pub struct UnprimedAlignerStream(AlignerStream);
+
+impl UnprimedAlignerStream {
+    /// Has this child already exited, and with what status? Non-blocking.
+    ///
+    /// Distinguishes a child that is still starting from one that died without
+    /// opening its FIFO, which would otherwise leave its writer blocked forever.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.0.child.try_wait()?)
+    }
+
+    /// Read past the `@` header to the first alignment record (the second half of
+    /// [`AlignerStream::spawn`]). Blocks until the aligner produces output.
+    pub fn prime(mut self) -> Result<AlignerStream> {
+        let mut line = String::new();
+        self.0.current = loop {
+            line.clear();
+            let n = self.0.reader.read_line(&mut line)?;
+            if n == 0 {
+                break None; // header-only / empty stream
+            }
+            if line.starts_with('@') {
+                continue;
+            }
+            break Some(SamRecord::parse(&line)?);
+        };
+        self.0.records = u64::from(self.0.current.as_ref().is_some_and(is_primary));
+        Ok(self.0)
+    }
+}
+
 impl AlignerStream {
     /// Spawn one aligner instance (Bowtie 2 / HISAT2 / minimap2) and read up to the
     /// first alignment record. The argv shape is per-aligner ([`build_se_argv`]).
@@ -307,6 +364,24 @@ impl AlignerStream {
         index: &Path,
         input: &Path,
     ) -> Result<Self> {
+        Self::spawn_unprimed(aligner, bin, options, orient, index, input)?.prime()
+    }
+
+    /// Spawn the child without reading anything from it (the first half of
+    /// [`AlignerStream::spawn`]).
+    ///
+    /// On the streaming path, the first record only arrives once the converter's
+    /// writers are past their blocking FIFO opens, and several children share one
+    /// conversion pass. So every child must be spawned before any is primed, or
+    /// the run deadlocks.
+    pub fn spawn_unprimed(
+        aligner: Aligner,
+        bin: &Path,
+        options: &str,
+        orient: Orientation,
+        index: &Path,
+        input: &Path,
+    ) -> Result<UnprimedAlignerStream> {
         let mut cmd = Command::new(bin);
         cmd.args(build_se_argv(aligner, options, orient, index, input))
             .stdout(Stdio::piped())
@@ -322,30 +397,16 @@ impl AlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let mut reader = BufReader::new(stdout);
 
-        // Skip `@` header lines; the first non-`@` line is the first record.
-        let mut line = String::new();
-        let current = loop {
-            line.clear();
-            let n = reader.read_line(&mut line)?;
-            if n == 0 {
-                break None; // header-only / empty stream
-            }
-            if line.starts_with('@') {
-                continue;
-            }
-            break Some(SamRecord::parse(&line)?);
-        };
-
-        Ok(AlignerStream {
+        Ok(UnprimedAlignerStream(AlignerStream {
             child,
-            reader,
-            current,
+            reader: BufReader::new(stdout),
+            current: None,
             line_buf: String::new(),
             finished: false,
+            records: 0,
             aligner,
-        })
+        }))
     }
 
     /// Peek the current record without consuming it (`None` at EOF).
@@ -362,6 +423,7 @@ impl AlignerStream {
         } else {
             Some(SamRecord::parse(&self.line_buf)?)
         };
+        self.records += u64::from(self.current.as_ref().is_some_and(is_primary));
         Ok(())
     }
 
@@ -369,12 +431,20 @@ impl AlignerStream {
     /// Draining first avoids deadlocking the child on a full stdout pipe when
     /// the caller stopped early (Phase-4 early-stop). Non-zero exit → error
     /// (an intentional fail-closed deviation from Perl's fail-open pipe close).
-    pub fn finish(mut self) -> Result<()> {
-        std::io::copy(&mut self.reader, &mut std::io::sink())?;
+    pub fn finish(mut self) -> Result<Emitted> {
+        let drained = drain_lines(&mut self.reader, |line| {
+            line.split(|&b| b == b'\t')
+                .nth(1)
+                .and_then(|f| std::str::from_utf8(f).ok()?.parse::<u16>().ok())
+                .is_none_or(is_primary_flag)
+        })?;
         let status = self.child.wait()?;
         self.finished = true;
         if status.success() {
-            Ok(())
+            Ok(Emitted {
+                records: self.records + drained,
+                unconsumed: u64::from(self.current.as_ref().is_some_and(is_primary)) + drained,
+            })
         } else {
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
@@ -382,15 +452,65 @@ impl AlignerStream {
             )))
         }
     }
+    /// The error for this child if it has already exited unsuccessfully.
+    /// Non-blocking; for reporting the instance that actually failed when the
+    /// merge stops on a symptom.
+    pub fn failure(&mut self) -> Option<AlignerError> {
+        exited_unsuccessfully(&mut self.child, self.aligner)
+    }
 }
 
 impl Drop for AlignerStream {
     fn drop(&mut self) {
-        // If not finished cleanly, kill THEN wait — kill alone leaves a zombie.
         if !self.finished {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            kill_and_reap(&mut self.child);
         }
+    }
+}
+
+/// Read `reader` to its end, returning how many lines `counts` accepts.
+fn drain_lines(reader: &mut impl BufRead, mut counts: impl FnMut(&[u8]) -> bool) -> Result<u64> {
+    let mut line = Vec::new();
+    let mut n = 0;
+    while reader.read_until(b'\n', &mut line)? > 0 {
+        n += u64::from(counts(&line));
+        line.clear();
+    }
+    Ok(n)
+}
+
+/// Kill an aligner child that did not finish, and reap it.
+///
+/// `bowtie2` and `hisat2` are wrapper scripts that run the real binary
+/// (`bowtie2-align-s`, `hisat2-align-s`) as their own child, so the wrapper's
+/// children are killed first; killing only the wrapper would orphan the aligner.
+/// Best-effort: without `pkill` only the direct child is killed. A child that
+/// was already reaped is left alone, since its pid may now belong to someone
+/// else. Wait after the kill, or it is left a zombie.
+fn kill_and_reap(child: &mut std::process::Child) {
+    if let Ok(None) = child.try_wait() {
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-P", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// The error for a child that has already exited unsuccessfully, if it has.
+/// Non-blocking.
+fn exited_unsuccessfully(
+    child: &mut std::process::Child,
+    aligner: Aligner,
+) -> Option<AlignerError> {
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => Some(AlignerError::Validation(format!(
+            "{} exited unsuccessfully ({status})",
+            aligner.name()
+        ))),
+        _ => None,
     }
 }
 
@@ -557,9 +677,49 @@ pub struct PairedAlignerStream {
     reader: BufReader<ChildStdout>,
     current: Option<SamPair>,
     finished: bool,
+    /// Pairs read so far.
+    records: u64,
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2").
     aligner: Aligner,
+}
+
+/// A spawned-but-unread [`PairedAlignerStream`]; the PE sibling of
+/// [`UnprimedAlignerStream`].
+pub struct UnprimedPairedAlignerStream(PairedAlignerStream);
+
+impl UnprimedPairedAlignerStream {
+    /// Has this child already exited, and with what status? Non-blocking.
+    ///
+    /// Distinguishes a child that is still starting from one that died without
+    /// opening its FIFO, which would otherwise leave its writer blocked forever.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.0.child.try_wait()?)
+    }
+
+    /// Read past the `@` header to the first alignment *pair* (Perl 6477–6488).
+    pub fn prime(mut self) -> Result<PairedAlignerStream> {
+        let mut line1 = String::new();
+        loop {
+            line1.clear();
+            let n = self.0.reader.read_line(&mut line1)?;
+            if n == 0 {
+                return Ok(self.0); // header-only / empty stream → no pairs
+            }
+            if !line1.starts_with('@') {
+                break;
+            }
+        }
+        let mut line2 = String::new();
+        let n2 = self.0.reader.read_line(&mut line2)?;
+        self.0.current = if n2 == 0 {
+            None // a lone trailing line is not a complete pair (Perl 6491)
+        } else {
+            Some(SamPair::from_lines(&line1, &line2)?)
+        };
+        self.0.records = u64::from(self.0.current.is_some());
+        Ok(self.0)
+    }
 }
 
 impl PairedAlignerStream {
@@ -577,6 +737,21 @@ impl PairedAlignerStream {
         input1: &Path,
         input2: &Path,
     ) -> Result<Self> {
+        Self::spawn_unprimed(aligner, bin, options, orient, index, input1, input2)?.prime()
+    }
+
+    /// Spawn the child without reading anything from it; the PE analog of
+    /// [`AlignerStream::spawn_unprimed`], split out for the same reason.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_unprimed(
+        aligner: Aligner,
+        bin: &Path,
+        options: &str,
+        orient: Orientation,
+        index: &Path,
+        input1: &Path,
+        input2: &Path,
+    ) -> Result<UnprimedPairedAlignerStream> {
         // Orientation flag: the faithful directional/pbat/non-dir PE slots pass
         // `Norc`/`Nofw` (`flag()` → `Some`); the v2.x combined-index PE pass uses
         // `Orientation::Both` (`flag()` → `None`) so ONE pass searches both sub-genomes.
@@ -597,43 +772,15 @@ impl PairedAlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let mut reader = BufReader::new(stdout);
 
-        // Skip `@` header lines; the first non-`@` line is the first record of
-        // the first pair (Perl 6477–6488).
-        let mut line1 = String::new();
-        loop {
-            line1.clear();
-            let n = reader.read_line(&mut line1)?;
-            if n == 0 {
-                // header-only / empty stream → no pairs
-                return Ok(PairedAlignerStream {
-                    child,
-                    reader,
-                    current: None,
-                    finished: false,
-                    aligner,
-                });
-            }
-            if !line1.starts_with('@') {
-                break;
-            }
-        }
-        let mut line2 = String::new();
-        let n2 = reader.read_line(&mut line2)?;
-        let current = if n2 == 0 {
-            None // a lone trailing line is not a complete pair (Perl 6491)
-        } else {
-            Some(SamPair::from_lines(&line1, &line2)?)
-        };
-
-        Ok(PairedAlignerStream {
+        Ok(UnprimedPairedAlignerStream(PairedAlignerStream {
             child,
-            reader,
-            current,
+            reader: BufReader::new(stdout),
+            current: None,
             finished: false,
+            records: 0,
             aligner,
-        })
+        }))
     }
 
     /// Peek the current pair without consuming it (`None` at EOF).
@@ -656,16 +803,20 @@ impl PairedAlignerStream {
         } else {
             Some(SamPair::from_lines(&line1, &line2)?)
         };
+        self.records += u64::from(self.current.is_some());
         Ok(())
     }
 
     /// Drain remaining stdout, reap the child, check exit status (as [`AlignerStream::finish`]).
-    pub fn finish(mut self) -> Result<()> {
-        std::io::copy(&mut self.reader, &mut std::io::sink())?;
+    pub fn finish(mut self) -> Result<Emitted> {
+        let drained = drain_lines(&mut self.reader, |_| true)? / 2;
         let status = self.child.wait()?;
         self.finished = true;
         if status.success() {
-            Ok(())
+            Ok(Emitted {
+                records: self.records + drained,
+                unconsumed: u64::from(self.current.is_some()) + drained,
+            })
         } else {
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
@@ -673,13 +824,18 @@ impl PairedAlignerStream {
             )))
         }
     }
+    /// The error for this child if it has already exited unsuccessfully.
+    /// Non-blocking; for reporting the instance that actually failed when the
+    /// merge stops on a symptom.
+    pub fn failure(&mut self) -> Option<AlignerError> {
+        exited_unsuccessfully(&mut self.child, self.aligner)
+    }
 }
 
 impl Drop for PairedAlignerStream {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            kill_and_reap(&mut self.child);
         }
     }
 }
@@ -1356,6 +1512,40 @@ mod tests {
         s.finish().unwrap();
     }
 
+    /// Dropping an unfinished stream must also kill what the wrapper started:
+    /// `bowtie2` runs `bowtie2-align-s` as its own child.
+    #[cfg(unix)]
+    #[test]
+    fn drop_kills_the_wrappers_child_too() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pidfile = dir.path().join("grandchild.pid");
+        let body = format!(
+            "sleep 300 & echo $! > {}\nprintf 'a\\t4\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\t*\\tI\\n'\nwait",
+            pidfile.display()
+        );
+        let (_d, s) = spawn_fake(&body);
+        let pid = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .to_string();
+        drop(s);
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", &pid])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        for _ in 0..100 {
+            if !alive() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the wrapper's child (pid {pid}) survived the drop");
+    }
+
     #[cfg(unix)]
     #[test]
     fn all_header_stream_has_no_records() {
@@ -1426,6 +1616,26 @@ mod tests {
         let (_d, s) = spawn_fake(body);
         assert_eq!(s.current().unwrap().qname, "r0");
         s.finish().unwrap(); // drains remaining stdout, then reaps — no hang
+    }
+
+    /// Secondary and supplementary records count neither as read nor as left over.
+    #[cfg(unix)]
+    #[test]
+    fn finish_counts_primary_records_only() {
+        let body = "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            a\\t2048\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            b\\t256\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            c\\t4\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            c\\t2048\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n'";
+        let (_d, mut s) = spawn_fake(body);
+        s.advance().unwrap();
+        assert_eq!(
+            s.finish().unwrap(),
+            Emitted {
+                records: 2,
+                unconsumed: 1
+            }
+        );
     }
 
     // ---- paired-end pair construction + stream (Phase 7) --------------------

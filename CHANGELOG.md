@@ -13,6 +13,7 @@
 
 ### bismark (aligner)
 
+- **The converted reads are now streamed to the aligner through named pipes instead of written to `--temp_dir` ([#1120](https://github.com/FelixKrueger/Bismark/issues/1120))**, with byte-identical output; `--no_stream_converted` restores the files, and runs that cannot stream (`--hisat2`, `--combined_index`, `--rammap_subprocess`, or a `--temp_dir` without FIFO support) fall back to files and say why.
 - **Illumina 5-Base now honours Bowtie 2/HISAT2 tuning options and requested threads, and its report identifies the unconverted reference ([#1134](https://github.com/FelixKrueger/Bismark/issues/1134)).**
 - **`-I`/`-X` are accepted for a positional paired-end uBAM or BINSEQ input instead of being rejected as single-end ([#1135](https://github.com/FelixKrueger/Bismark/issues/1135)).** Reported by @zhangzhen.
 - **Multi-threaded 5-Base runs with `--bowtie2`/`--hisat2` no longer lose or mispair read pairs ([#1125](https://github.com/FelixKrueger/Bismark/issues/1125)):** the aligner now runs with `--reorder`, and a FASTQ/alignment mismatch or a CIGAR that does not cover its read stops the run with the offending read named (diagnosed by @ryancey1 in [#1126](https://github.com/FelixKrueger/Bismark/pull/1126)).
