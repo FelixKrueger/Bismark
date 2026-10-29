@@ -1,4 +1,4 @@
-//! `#1120`: streaming the converted reads to the aligner through FIFOs.
+//! Streaming the converted reads to the aligner through FIFOs.
 //!
 //! Tier 1 (always runs, no fixtures) checks the routing matrix: a backend or
 //! alignment model that cannot take a pipe must fall back to files and say why.

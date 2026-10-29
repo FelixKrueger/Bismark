@@ -1,4 +1,4 @@
-//! Streaming the converted reads to the aligner through FIFOs (#1120).
+//! Streaming the converted reads to the aligner through FIFOs.
 //!
 //! The converted reads (`_C_to_T` / `_G_to_A`) have exactly one consumer, the
 //! aligner (the methylation caller re-reads the original FastQ), so they can be
@@ -8,9 +8,8 @@
 //! in-memory variant used by the in-process rammap backend. The routing decision
 //! lives in [`super::config`].
 //!
-//! Pipes are made with `mkfifo(1)` rather than `libc::mkfifo`, which avoids a
-//! direct `libc` dependency and keeps the fallback to files (taken when `mkfifo`
-//! is missing or fails) a live code path.
+//! Pipes are made with `mkfifo(1)`, which keeps the fallback to files (taken when
+//! `mkfifo` is missing or fails) a live code path.
 //!
 //! HISAT2 rejects a FIFO (exit 255; it stats the input while sniffing the
 //! format), so it keeps the file path.
@@ -19,10 +18,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
+use crate::aligner::align::Emitted;
 use crate::aligner::convert::{self, ConvKind, ConvertOptions, temp_dir_prefix};
 use crate::aligner::error::{AlignerError, Result};
 
@@ -143,65 +144,6 @@ pub(crate) fn next_fifo_set() -> u64 {
     NEXT_FIFO_SET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Remove FIFOs a killed Bismark run left in `temp_dir`.
-///
-/// A run stopped by a signal never drops its [`FifoSet`], so its pipes stay
-/// behind. Each name carries the creating pid ([`fifo_name`], and the start-up
-/// probe's `bismark_fifo_probe.<pid>.<n>`), so a pipe whose pid is no longer
-/// running is removed. Only named pipes matching those patterns are touched, and
-/// a pid that is running, whoever owns it, is left alone. Best-effort.
-#[cfg(unix)]
-pub fn sweep_stale_fifos(temp_dir: &Path) {
-    use std::os::unix::fs::FileTypeExt;
-    let Ok(entries) = std::fs::read_dir(temp_dir) else {
-        return;
-    };
-    let me = std::process::id();
-    for entry in entries.flatten() {
-        let is_fifo = entry.file_type().is_ok_and(|t| t.is_fifo());
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(fifo_owner_pid) else {
-            continue;
-        };
-        if is_fifo && pid != me && !pid_is_running(pid) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub fn sweep_stale_fifos(_temp_dir: &Path) {}
-
-/// The pid embedded in a name made by [`fifo_name`] or the start-up probe.
-fn fifo_owner_pid(name: &str) -> Option<u32> {
-    if let Some(rest) = name.strip_prefix("bismark_fifo_probe.") {
-        return rest.split('.').next()?.parse().ok();
-    }
-    // `<stem>.s<slot>.<pid>.<set>.fifo[.<ext>]`
-    let parts: Vec<&str> = name.split('.').collect();
-    let f = parts.iter().rposition(|&p| p == "fifo")?;
-    if f < 3 {
-        return None;
-    }
-    let (slot, pid, set) = (parts[f - 3], parts[f - 2], parts[f - 1]);
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !(slot.strip_prefix('s').is_some_and(digits) && digits(set)) {
-        return None;
-    }
-    pid.parse().ok()
-}
-
-/// Is `pid` a live process? `ps -p` answers for any owner; if `ps` cannot be run
-/// the answer is "yes", so nothing is removed.
-fn pid_is_running(pid: u32) -> bool {
-    Command::new("ps")
-        .args(["-p", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_or(true, |s| s.success())
-}
-
 /// Can `temp_dir` host a named pipe at all?
 ///
 /// Answered by creating and unlinking one, since there is no portable capability
@@ -217,14 +159,10 @@ pub fn temp_dir_supports_fifo(temp_dir: &Path) -> bool {
 }
 
 // ===========================================================================
-// The streaming conversion itself: one conversion pass per source, fanned out
-// over a bounded channel to one writer thread per consuming aligner instance.
+// One conversion pass per source, fanned out to one writer per aligner instance.
 //
 //   R1.fq.gz ─> convert C→T ─┬─> [bounded chan] ─> writer ─> fifo_s0_m1 ─> bowtie2 --norc
 //                            └─> [bounded chan] ─> writer ─> fifo_s3_m1 ─> bowtie2 --nofw
-//
-// CPU is one pass per source, as on the file path. Memory is bounded by the
-// channel depth. The input is read once.
 // ===========================================================================
 
 /// How much converted output accumulates before it is handed to the writers.
@@ -282,10 +220,14 @@ mod writer_state {
     pub const OPENED: u8 = 1;
     /// The open itself failed; nobody will ever be its reader.
     pub const OPEN_FAILED: u8 = 2;
-    /// Its reader left early; blocked in a second open-for-write so a late
-    /// reader gets EOF. Still needs releasing at teardown.
+    /// Past its data; serving late readers EOF. Still needs releasing at teardown.
     pub const REOPENING: u8 = 3;
+    /// The writer thread has returned.
+    pub const DONE: u8 = 4;
 }
+
+/// How long teardown waits for the writers once every aligner is reaped.
+const TEARDOWN_LIMIT: Duration = Duration::from_secs(10);
 
 /// One converted read stream to produce: an input file, a substitution, and the
 /// paired-end read-number tag (`b""` for single-end).
@@ -311,17 +253,31 @@ struct FanOut {
     buf: Vec<u8>,
     lines_per_block: Option<usize>,
     lines: usize,
+    /// Lines written in all.
+    lines_total: u64,
+    lines_per_record: u64,
+    /// Records of blank lines only, which the aligners skip.
+    blank_records: u64,
+    record_blank: bool,
     /// Set once a consumer has gone away mid-stream.
     lost_consumer: bool,
 }
 
 impl FanOut {
-    fn new(senders: Vec<SyncSender<Arc<[u8]>>>, lines_per_block: Option<usize>) -> Self {
+    fn new(
+        senders: Vec<SyncSender<Arc<[u8]>>>,
+        lines_per_block: Option<usize>,
+        lines_per_record: u64,
+    ) -> Self {
         FanOut {
             senders,
             buf: Vec::with_capacity(BLOCK_BYTES + 4096),
             lines_per_block,
             lines: 0,
+            lines_total: 0,
+            lines_per_record,
+            blank_records: 0,
+            record_blank: true,
             lost_consumer: false,
         }
     }
@@ -333,10 +289,7 @@ impl FanOut {
             Vec::with_capacity(BLOCK_BYTES + 4096),
         ));
         self.lines = 0;
-        // A closed receiver means that consumer stopped reading (its aligner
-        // died). Keep feeding the others whole records: cutting them off mid-record
-        // would make a healthy sibling fail and hide the dead one's exit status.
-        // The loss is reported once the pass ends.
+        // A consumer that stopped reading is dropped; the others keep getting whole records.
         let before = self.senders.len();
         self.senders
             .retain(|tx| tx.send(Arc::clone(&block)).is_ok());
@@ -353,17 +306,30 @@ impl FanOut {
 fn consumer_lost() -> std::io::Error {
     std::io::Error::new(
         std::io::ErrorKind::BrokenPipe,
-        "an aligner instance stopped reading its converted reads",
+        format!("an aligner instance stopped reading its converted reads; {WRAPPER_HINT}"),
     )
 }
 
 impl Write for FanOut {
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
         self.buf.extend_from_slice(data);
+        let before = self.lines_total;
+        for &b in data {
+            if b != b'\n' {
+                self.record_blank = false;
+                continue;
+            }
+            self.lines_total += 1;
+            if self.lines_total.is_multiple_of(self.lines_per_record) {
+                self.blank_records += u64::from(self.record_blank);
+                self.record_blank = true;
+            }
+        }
+        let lines = (self.lines_total - before) as usize;
         let full = match self.lines_per_block {
             None => self.buf.len() >= BLOCK_BYTES,
             Some(max) => {
-                self.lines += data.iter().filter(|&&b| b == b'\n').count();
+                self.lines += lines;
                 self.lines >= max
             }
         };
@@ -385,8 +351,8 @@ impl Write for FanOut {
 /// files, plus the threads filling them.
 ///
 /// Construct with [`start`](Self::start), hand [`path`](Self::path) to each
-/// aligner instance, then call [`finish`](Self::finish) once the merge has
-/// drained every instance.
+/// aligner instance, then call [`finish_checked`](Self::finish_checked) once the merge has
+/// drained every instance, or [`input_failure`](Self::input_failure) on an error.
 ///
 /// Opening a FIFO for write blocks until a reader opens it, so `start` leaves
 /// every writer thread parked in `open`. The caller must spawn all aligner
@@ -397,12 +363,22 @@ pub(crate) struct StreamedConversion {
     /// One FIFO path per consumer, in the caller's demand order.
     paths: Vec<PathBuf>,
     /// One converter thread per source; yields that source's record count.
-    converters: Vec<JoinHandle<Result<u64>>>,
+    converters: Vec<Converter>,
     /// One writer thread per consumer.
     writers: Vec<JoinHandle<Result<()>>>,
     /// Per consumer: one of [`writer_state`], published by that writer. Read by
     /// both the reader handshake and the teardown.
     opened: Vec<Arc<AtomicU8>>,
+    /// Set at teardown: the writers stop serving late readers.
+    closing: Arc<AtomicBool>,
+    /// Per consumer: a drain holds its read end (see [`release`]).
+    released: Vec<AtomicBool>,
+    /// Per consumer: the index of the source it reads.
+    demands: Vec<usize>,
+    /// Per source: the input file it converts.
+    inputs: Vec<PathBuf>,
+    /// How long [`finish_checked`](Self::finish_checked) waits for the writers.
+    teardown_limit: Duration,
     /// Declared last so the pipes are unlinked *after* the thread handles are
     /// dropped (Rust drops fields in declaration order).
     _fifos: FifoSet,
@@ -414,7 +390,7 @@ impl StreamedConversion {
     /// `demands[c]` is the index into `sources` that consumer `c` reads; the
     /// returned [`path`](Self::path)`(c)` is the FIFO to put in that instance's
     /// argv. Every source must have at least one consumer, so
-    /// [`finish`](Self::finish)'s counts stay aligned with `sources`.
+    /// [`finish_checked`](Self::finish_checked)'s counts stay aligned with `sources`.
     ///
     /// `--gzip` is ignored: there is no file to shrink, so the pipe carries plain
     /// bytes and its name has no `.gz`.
@@ -457,11 +433,15 @@ impl StreamedConversion {
         // until the matching aligner child opens the pipe for read.
         let mut writers = Vec::with_capacity(demands.len());
         let mut opened = Vec::with_capacity(demands.len());
+        let closing = Arc::new(AtomicBool::new(false));
         for (consumer, rx) in receivers.into_iter().enumerate() {
             let path = paths[consumer].clone();
             let state = Arc::new(AtomicU8::new(writer_state::PARKED));
             opened.push(Arc::clone(&state));
-            writers.push(std::thread::spawn(move || writer_thread(path, rx, state)));
+            let closing = Arc::clone(&closing);
+            writers.push(std::thread::spawn(move || {
+                writer_thread(path, rx, state, &closing)
+            }));
         }
 
         Ok(StreamedConversion {
@@ -469,6 +449,11 @@ impl StreamedConversion {
             converters,
             writers,
             opened,
+            closing,
+            released: demands.iter().map(|_| AtomicBool::new(false)).collect(),
+            demands: demands.to_vec(),
+            inputs: sources.iter().map(|s| s.input.clone()).collect(),
+            teardown_limit: TEARDOWN_LIMIT,
             _fifos: fifos,
         })
     }
@@ -476,6 +461,13 @@ impl StreamedConversion {
     /// The FIFO for aligner instance `consumer` (its `-U` / `-1` / `-2` path).
     pub(crate) fn path(&self, consumer: usize) -> &Path {
         &self.paths[consumer]
+    }
+
+    /// Whether any input is a `.gz` file.
+    pub(crate) fn gzipped(&self) -> bool {
+        self.inputs
+            .iter()
+            .any(|p| p.to_string_lossy().ends_with(".gz"))
     }
 
     /// Block until every consumer has opened its pipe, or until one of them has
@@ -491,7 +483,7 @@ impl StreamedConversion {
     /// deadline, since loading a large index can take minutes.
     ///
     /// Only a non-zero exit before opening is an error. A child that exits cleanly
-    /// without reading has its writer released at once and the run continues.
+    /// without reading has its writer released at once, so its siblings are not starved.
     pub(crate) fn await_readers<F>(&self, mut child_status: F) -> Result<()>
     where
         F: FnMut(usize) -> Result<Option<std::process::ExitStatus>>,
@@ -519,12 +511,9 @@ impl StreamedConversion {
                                 self.paths[c].display()
                             )));
                         }
-                        // Exited cleanly without reading. Release its writer now,
-                        // or its channel fills and stalls the siblings. The child
-                        // is gone, so nobody else can be reading this pipe.
-                        if !self.writers[c].is_finished() {
-                            release(&self.paths[c]);
-                        }
+                        // Exited cleanly without reading: release its writer, or
+                        // its full channel stalls the siblings.
+                        self.release_once(c);
                     }
                 }
             }
@@ -536,14 +525,40 @@ impl StreamedConversion {
         Ok(())
     }
 
+    /// [`finish_checked`](Self::finish_checked) with no record counts to check.
+    #[cfg(test)]
+    pub(crate) fn finish(self) -> Result<Vec<u64>> {
+        self.finish_checked(&[], false)
+    }
+
     /// Join every writer and converter, returning the per-source record count in
     /// `sources` order (the `(N sequences)` the file path reports on its banner).
     ///
+    /// Checks what each instance emitted, given as `(consumer, emitted)`. Bowtie 2
+    /// and minimap2 emit a record for every read, aligned or not, so fewer records
+    /// than were sent mean a short stream; records the merge never consumed mean
+    /// their read IDs stopped matching the input's.
+    ///
     /// Call this only after the merge has drained every aligner instance; joining
     /// earlier would wait for consumers that are not reading. On an error path,
-    /// drop the value instead (see the [`Drop`] impl).
-    pub(crate) fn finish(mut self) -> Result<Vec<u64>> {
-        self.drain_unopened();
+    /// call [`input_failure`](Self::input_failure) instead.
+    pub(crate) fn finish_checked(
+        mut self,
+        returned: &[(usize, Emitted)],
+        paired: bool,
+    ) -> Result<Vec<u64>> {
+        self.closing.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + self.teardown_limit;
+        while let Some(c) = self.writers.iter().position(|w| !w.is_finished()) {
+            if Instant::now() >= deadline {
+                return Err(AlignerError::Validation(format!(
+                    "{} is still held open by a process that does not read it; {WRAPPER_HINT}",
+                    self.paths[c].display()
+                )));
+            }
+            self.drain_unopened();
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let mut first_err = None;
         for h in std::mem::take(&mut self.writers) {
             if let Err(e) = join(h) {
@@ -551,85 +566,171 @@ impl StreamedConversion {
             }
         }
         let mut counts = Vec::with_capacity(self.converters.len());
-        for h in std::mem::take(&mut self.converters) {
-            match join(h) {
+        for c in std::mem::take(&mut self.converters) {
+            match join(c.handle) {
                 Ok(n) => counts.push(n),
                 Err(e) => {
                     first_err.get_or_insert(e);
                 }
             }
         }
-        match first_err {
-            Some(e) => Err(e),
-            None => Ok(counts),
+        if let Some(e) = first_err {
+            return Err(e);
         }
+        let input = |c: usize| self.inputs[self.demands[c]].display();
+        let unit = if paired { "pair" } else { "read" };
+        for &(consumer, e) in returned {
+            let sent = counts[self.demands[consumer]].sent;
+            // A paired-end instance reads consumers 2i (`-1`) and 2i+1 (`-2`).
+            let path = if paired {
+                format!("{} and {}", input(consumer & !1), input(consumer | 1))
+            } else {
+                input(consumer).to_string()
+            };
+            if e.unconsumed > 0 {
+                return Err(AlignerError::Validation(format!(
+                    "the aligner reading {path} returned read names that stop matching the \
+                     input at {unit} {} of {sent}; if the input has Windows (CRLF) line \
+                     endings, convert it (e.g. with dos2unix); {WRAPPER_HINT}",
+                    e.records - e.unconsumed + 1
+                )));
+            }
+            if e.records < sent {
+                return Err(AlignerError::Validation(format!(
+                    "the aligner reading {path} returned {} of {sent} {unit}s; {WRAPPER_HINT}",
+                    e.records
+                )));
+            }
+        }
+        Ok(counts.into_iter().map(|n| n.count).collect())
+    }
+
+    /// The error-path teardown: the input error of a conversion pass that failed on
+    /// its input while every one of its consumers was still reading.
+    pub(crate) fn input_failure(mut self) -> Option<AlignerError> {
+        std::mem::take(&mut self.converters)
+            .into_iter()
+            .filter(|c| c.failed.load(Ordering::SeqCst))
+            .find_map(|c| join(c.handle).err())
     }
 }
 
 impl StreamedConversion {
-    /// Unpark any writer whose aligner never opened its pipe, by opening it here
-    /// and discarding what comes out.
+    /// Release every writer that is parked or serving late readers, by reading and
+    /// discarding its pipe.
     ///
-    /// An aligner that exits without reading its input leaves its writer blocked
-    /// in open-for-write, and joining that writer would hang the run.
-    ///
-    /// Reading the pipe here is safe because every aligner child has been reaped
-    /// by the time this runs, so no live aligner can lose bytes to it. The
-    /// streaming drivers (`run_se_instances_streamed` / `run_pe_instances_streamed`)
-    /// spawn, merge and reap or kill every child before returning, on success and
-    /// on error, so this holds both in [`finish`](Self::finish) and in
-    /// [`Drop`].
-    ///
-    /// The `open` cannot block: it is reached only while the writer is (or is
-    /// about to be) parked in open-for-write, and opposing opens release each
-    /// other.
-    fn drain_unopened(&mut self) {
-        for ((state, path), writer) in self.opened.iter().zip(&self.paths).zip(&self.writers) {
-            // Release only a writer still parked in open; one past it ends on its
-            // own. A writer that has already returned (even by panicking before
-            // publishing its state) will never open its end, so opening here
-            // would block forever.
-            let parked = matches!(
-                state.load(Ordering::Acquire),
+    /// Only once every aligner child is reaped, so no live aligner loses bytes; the
+    /// streaming drivers reap every child before [`finish_checked`](Self::finish_checked) or [`Drop`].
+    fn drain_unopened(&self) {
+        for c in 0..self.opened.len() {
+            // A writer past its open ends on its own.
+            if matches!(
+                self.opened[c].load(Ordering::SeqCst),
                 writer_state::PARKED | writer_state::REOPENING
-            );
-            if !parked || writer.is_finished() {
-                continue;
+            ) {
+                self.release_once(c);
             }
-            release(path);
+        }
+    }
+
+    /// [`release`] consumer `c`'s pipe, unless it already is or its writer is done.
+    fn release_once(&self, c: usize) {
+        if !self.released[c].load(Ordering::SeqCst)
+            && self.opened[c].load(Ordering::SeqCst) != writer_state::DONE
+            && release(&self.paths[c], &self.opened[c])
+        {
+            self.released[c].store(true, Ordering::SeqCst);
         }
     }
 }
 
-/// Open `path` for read and discard everything written to it, on a detached
-/// thread, so its writer can run to completion. Only for a pipe whose aligner
-/// has exited.
-fn release(path: &Path) {
-    if let Ok(mut f) = std::fs::File::open(path) {
-        std::thread::spawn(move || {
-            let _ = std::io::copy(&mut f, &mut std::io::sink());
-        });
+/// Read and discard `path` on a detached thread until its writer is done, so the
+/// writer can neither park nor hit `EPIPE`. Only for a pipe whose aligner has exited.
+///
+/// Returns whether the pipe could be opened.
+fn release(path: &Path, state: &Arc<AtomicU8>) -> bool {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    // A non-blocking open never waits for a writer that has already gone.
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+    else {
+        return false;
+    };
+    // Blocking reads wait for data while a writer is there and return 0 at once when none is.
+    // If the flag cannot be cleared, the drain below still works by polling.
+    let _ = set_blocking(&f);
+    let state = Arc::clone(state);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let idle = match f.read(&mut buf) {
+                Ok(n) => n == 0,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => false,
+                // The fd is still non-blocking and has no data yet.
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => true,
+                Err(_) => break,
+            };
+            // No writer, or none yet: stop only once the writer is done.
+            if idle {
+                if state.load(Ordering::SeqCst) == writer_state::DONE {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    });
+    true
+}
+
+/// Clear `O_NONBLOCK` on `f`.
+fn set_blocking(f: &std::fs::File) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let fd = f.as_raw_fd();
+    // SAFETY: `fd` is owned by `f`, which outlives both calls.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    Ok(())
 }
 
 impl Drop for StreamedConversion {
     fn drop(&mut self) {
-        // The error path. Every aligner child has already been reaped by the
-        // streaming driver, so release any parked writer (see `drain_unopened`)
-        // and detach the threads rather than join them, so a failing chunk cannot
-        // hang. Each released thread ends on its own, which matters because
-        // `--multicore N` keeps sibling chunks running after a chunk error.
-        //
-        // After `finish()`, `writers` is empty and there is nothing to release.
-        // `_fifos` drops after this, so the release runs before the unlink.
+        // The error path: release the writers for up to a second, then detach them.
+        // `_fifos` drops after this, so the unlink comes last.
         if !self.writers.is_empty() {
-            self.drain_unopened();
+            self.closing.store(true, Ordering::SeqCst);
+            for _ in 0..200 {
+                self.drain_unopened();
+                if self.writers.iter().all(|w| w.is_finished()) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
         }
     }
 }
 
-/// One receiver per consumer, plus one converter handle per source.
-type Converters = (Vec<Receiver<Arc<[u8]>>>, Vec<JoinHandle<Result<u64>>>);
+/// One receiver per consumer, plus one converter per source.
+type Converters = (Vec<Receiver<Arc<[u8]>>>, Vec<Converter>);
+
+/// One conversion pass.
+struct Converter {
+    handle: JoinHandle<Result<SourceCounts>>,
+    /// Set on an input error, before the consumers see their input end.
+    failed: Arc<AtomicBool>,
+}
+
+/// What one conversion pass reports.
+struct SourceCounts {
+    /// Input records, as the file path's banner counts them.
+    count: u64,
+    /// Records sent to each consumer (fewer when `--mm2_maximum_length` drops some).
+    sent: u64,
+}
 
 /// Start one converter thread per source, fanning each out to the consumers that
 /// demand it, and hand back one receiver per consumer. Shared by
@@ -647,14 +748,13 @@ fn spawn_converters(
     let mut receivers = Vec::with_capacity(demands.len());
     let mut senders_by_source: Vec<Vec<SyncSender<Arc<[u8]>>>> = vec![Vec::new(); sources.len()];
     for (consumer, &src) in demands.iter().enumerate() {
-        let s = sources.get(src).ok_or_else(|| {
+        sources.get(src).ok_or_else(|| {
             AlignerError::Validation(format!(
                 "internal: consumer {consumer} demands converted source {src}, but only {} were \
                  planned",
                 sources.len()
             ))
         })?;
-        let _ = s;
         let (tx, rx) = sync_channel::<Arc<[u8]>>(shape.depth);
         senders_by_source[src].push(tx);
         receivers.push(rx);
@@ -670,9 +770,14 @@ fn spawn_converters(
         }
         let (input, kind, id_suffix) = (s.input.clone(), s.kind, s.id_suffix);
         let opts = opts.clone();
-        converters.push(std::thread::spawn(move || {
-            converter_thread(input, fasta, opts, kind, id_suffix, senders, shape)
-        }));
+        let failed = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&failed);
+        converters.push(Converter {
+            handle: std::thread::spawn(move || {
+                converter_thread(input, fasta, opts, kind, id_suffix, senders, shape, &flag)
+            }),
+            failed,
+        });
     }
     Ok((receivers, converters))
 }
@@ -714,7 +819,7 @@ impl std::io::Read for ChannelReader {
 /// file path's, so the bytes are unchanged.
 #[cfg(feature = "rammap-inprocess")]
 pub(crate) struct InMemoryConversion {
-    converters: Vec<JoinHandle<Result<u64>>>,
+    converters: Vec<Converter>,
 }
 
 #[cfg(feature = "rammap-inprocess")]
@@ -745,9 +850,9 @@ impl InMemoryConversion {
     pub(crate) fn finish(self) -> Result<Vec<u64>> {
         let mut first_err = None;
         let mut counts = Vec::with_capacity(self.converters.len());
-        for h in self.converters {
-            match join(h) {
-                Ok(n) => counts.push(n),
+        for c in self.converters {
+            match join(c.handle) {
+                Ok(n) => counts.push(n.count),
                 Err(e) => {
                     first_err.get_or_insert(e);
                 }
@@ -773,7 +878,13 @@ fn join<T>(h: JoinHandle<Result<T>>) -> Result<T> {
 /// Fill one FIFO from its channel.
 ///
 /// The `open` blocks until the aligner child opens the pipe for read.
-fn writer_thread(path: PathBuf, rx: Receiver<Arc<[u8]>>, state: Arc<AtomicU8>) -> Result<()> {
+fn writer_thread(
+    path: PathBuf,
+    rx: Receiver<Arc<[u8]>>,
+    state: Arc<AtomicU8>,
+    closing: &AtomicBool,
+) -> Result<()> {
+    let _done = DoneOnDrop(Arc::clone(&state));
     let fifo = std::fs::OpenOptions::new().write(true).open(&path);
     // Publish that the blocking open has returned, success or failure, before
     // anything else, so no observer sees this writer as parked once it is not.
@@ -783,46 +894,76 @@ fn writer_thread(path: PathBuf, rx: Receiver<Arc<[u8]>>, state: Arc<AtomicU8>) -
         } else {
             writer_state::OPEN_FAILED
         },
-        Ordering::Release,
+        Ordering::SeqCst,
     );
     let mut fifo = fifo?;
-    while let Ok(block) = rx.recv() {
-        if let Err(e) = fifo.write_all(&block) {
-            // The reader went away mid-stream. Stop taking blocks so the
-            // converter errors instead of stalling, then give any late reader an
-            // empty stream: a wrapper may sniff the input and close it before the
-            // real aligner opens the path, which with no writer would block.
-            drop(rx);
-            drop(fifo);
-            reopen_and_close(&path, &state);
-            // A broken pipe is reported by the aligner's own exit status (the
-            // stream's `finish`) or the converter's error, not here.
-            return match e.kind() {
-                std::io::ErrorKind::BrokenPipe => Ok(()),
-                _ => Err(e.into()),
-            };
-        }
-    }
-    fifo.flush()?;
-    Ok(())
+    let written = rx
+        .iter()
+        .try_for_each(|block| fifo.write_all(&block))
+        .and_then(|()| fifo.flush());
+    state.store(writer_state::REOPENING, Ordering::SeqCst);
+    // Stop taking blocks, so the converter errors instead of stalling.
+    drop(rx);
+    drop(fifo);
+    serve_late_readers(&path, closing);
+    written.map_err(|e| match e.kind() {
+        std::io::ErrorKind::BrokenPipe => AlignerError::Validation(format!(
+            "an aligner instance stopped reading {} before its end; {WRAPPER_HINT}",
+            path.display()
+        )),
+        _ => e.into(),
+    })
 }
 
-/// Open `path` for write once more and close it straight away, so a reader that
-/// opens it later sees EOF rather than blocking.
+/// Marks the writer [`writer_state::DONE`] however it returns, panics included.
+struct DoneOnDrop(Arc<AtomicU8>);
+
+impl Drop for DoneOnDrop {
+    fn drop(&mut self) {
+        self.0.store(writer_state::DONE, Ordering::SeqCst);
+    }
+}
+
+/// How to run an aligner wrapper that reads its input before the aligner does.
+const WRAPPER_HINT: &str = "if an aligner wrapper (or another process) reads the input before \
+                            the aligner does, use --no_stream_converted";
+
+/// `e` with `--no_stream_converted` (and, for gzipped input, a `gzip -t` check) unless
+/// `e` already names the flag.
+pub(crate) fn with_wrapper_hint(e: AlignerError, gzipped: bool) -> AlignerError {
+    let msg = e.to_string();
+    if msg.contains("--no_stream_converted") {
+        return e;
+    }
+    let check = if gzipped {
+        " Check the gzipped input with `gzip -t`."
+    } else {
+        ""
+    };
+    AlignerError::Validation(format!("{msg} (streamed run; {WRAPPER_HINT}).{check}"))
+}
+
+/// Give every reader that opens `path` from now on EOF rather than a blocked
+/// open (a wrapper may open it before the aligner does), until `closing` is set.
 ///
-/// Marked [`writer_state::REOPENING`] while it waits, so the teardown
-/// (`drain_unopened`) releases it if no late reader ever comes.
-fn reopen_and_close(path: &Path, state: &AtomicU8) {
-    state.store(writer_state::REOPENING, Ordering::Release);
-    let reopened = std::fs::OpenOptions::new().write(true).open(path);
-    state.store(writer_state::OPENED, Ordering::Release);
-    drop(reopened);
+/// The writer stays [`writer_state::REOPENING`], so the teardown
+/// (`drain_unopened`) releases the open it is blocked in.
+fn serve_late_readers(path: &Path, closing: &AtomicBool) {
+    while !closing.load(Ordering::SeqCst) {
+        let Ok(reopened) = std::fs::OpenOptions::new().write(true).open(path) else {
+            return;
+        };
+        drop(reopened);
+        // Without a pause, a reader that keeps the pipe open makes this spin.
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Run one conversion pass, fanning it out to every consumer of that source.
 ///
 /// Uses [`convert::convert_fastq_into`] / [`convert::convert_fasta_into`], the
 /// same loops the file path runs.
+#[allow(clippy::too_many_arguments)]
 fn converter_thread(
     input: PathBuf,
     fasta: bool,
@@ -831,22 +972,36 @@ fn converter_thread(
     id_suffix: &'static [u8],
     senders: Vec<SyncSender<Arc<[u8]>>>,
     shape: Shape,
-) -> Result<u64> {
-    let mut reader = convert::open_reader(&input)?;
-    let mut out = FanOut::new(senders, shape.lines_per_block);
-    let (count, _seqid_tabs) = if fasta {
-        convert::convert_fasta_into(&mut *reader, &opts, kind, id_suffix, &mut out)?
-    } else {
-        convert::convert_fastq_into(&mut *reader, &opts, kind, id_suffix, &mut out)?
+    failed: &AtomicBool,
+) -> Result<SourceCounts> {
+    let lines_per_record = if fasta { 2 } else { 4 };
+    let mut out = FanOut::new(senders, shape.lines_per_block, lines_per_record);
+    let converted = convert::open_reader(&input).and_then(|mut reader| {
+        let (count, _seqid_tabs) = if fasta {
+            convert::convert_fasta_into(&mut *reader, &opts, kind, id_suffix, &mut out)?
+        } else {
+            convert::convert_fastq_into(&mut *reader, &opts, kind, id_suffix, &mut out)?
+        };
+        out.flush()?;
+        Ok(count)
+    });
+    let count = match converted {
+        Ok(count) => count,
+        Err(e) => {
+            if !out.lost_consumer {
+                failed.store(true, Ordering::SeqCst);
+            }
+            return Err(e);
+        }
     };
-    out.flush()?;
     let lost = out.lost_consumer;
+    let sent = out.lines_total / lines_per_record - out.blank_records;
     // Dropping the senders ends the writers' input, so the aligner sees EOF.
     drop(out);
     if lost {
         return Err(consumer_lost().into());
     }
-    Ok(count)
+    Ok(SourceCounts { count, sent })
 }
 
 #[cfg(test)]
@@ -894,41 +1049,6 @@ mod tests {
         ];
         assert!(FifoSet::create(tmp.path(), &names).is_err());
         assert!(!tmp.path().join(&names[0]).exists());
-    }
-
-    #[test]
-    fn fifo_owner_pid_reads_both_name_shapes() {
-        assert_eq!(fifo_owner_pid("r_C_to_T.s3.4242.7.fifo.fastq"), Some(4242));
-        assert_eq!(fifo_owner_pid("r_C_to_T.s0.17.0.fifo"), Some(17));
-        assert_eq!(fifo_owner_pid("bismark_fifo_probe.99.3"), Some(99));
-        assert_eq!(fifo_owner_pid("reads.fastq"), None);
-        assert_eq!(fifo_owner_pid("my.fifo"), None);
-        assert_eq!(fifo_owner_pid("x.sA.1.2.fifo"), None);
-    }
-
-    /// A pipe left by a run that no longer exists is removed; one belonging to a
-    /// live process, and anything that is not a pipe, is kept.
-    #[cfg(unix)]
-    #[test]
-    fn sweep_removes_only_stale_pipes() {
-        let tmp = TempDir::new().unwrap();
-        // A pid that cannot be running: above the kernel's pid limit.
-        let dead = fifo_name("r_C_to_T.fastq", 0, 0)
-            .replace(&format!(".{}.", std::process::id()), ".4294967.");
-        let live = fifo_name("r_C_to_T.fastq", 1, 0);
-        let _set = FifoSet::create(tmp.path(), std::slice::from_ref(&live)).unwrap();
-        mkfifo(&tmp.path().join(&dead)).unwrap();
-        let plain = tmp.path().join("r.s0.4294967.0.fifo.fastq.txt");
-        std::fs::write(&plain, b"").unwrap();
-        let plain_named_like_a_fifo = tmp.path().join("q.s0.4294967.0.fifo.fastq");
-        std::fs::write(&plain_named_like_a_fifo, b"").unwrap();
-
-        sweep_stale_fifos(tmp.path());
-
-        assert!(!tmp.path().join(&dead).exists(), "stale pipe must go");
-        assert!(tmp.path().join(&live).exists(), "our own pipe must stay");
-        assert!(plain.exists());
-        assert!(plain_named_like_a_fifo.exists(), "only pipes are removed");
     }
 
     #[test]
@@ -1384,11 +1504,10 @@ mod tests {
         assert!(finished.is_err(), "the lost consumer is still reported");
     }
 
-    /// A reader that opens the pipe and closes it early (a wrapper sniffing the
-    /// input) must not leave the real aligner blocked in `open` when it comes for
-    /// the same path: it gets EOF, and the run fails rather than hangs.
+    /// A wrapper that sniffs the pipe and closes it does not leave the real
+    /// aligner blocked in `open`, and the run fails with the fix in its message.
     #[test]
-    fn a_late_reader_after_an_early_close_gets_eof() {
+    fn a_late_reader_after_an_early_close_is_not_blocked() {
         let tmp = TempDir::new().unwrap();
         let input = write_fixture(tmp.path());
         let o = opts();
@@ -1400,23 +1519,255 @@ mod tests {
         let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0]).unwrap();
         let path = streamed.path(0).to_path_buf();
 
-        let result = within(60, move || {
+        let finished = within(60, move || {
             use std::io::Read;
             let mut sniff = [0u8; 16];
             let mut f = std::fs::File::open(&path).unwrap();
             f.read_exact(&mut sniff).unwrap();
             drop(f);
-            while streamed.opened[0].load(Ordering::Acquire) != writer_state::REOPENING {
+            while streamed.opened[0].load(Ordering::SeqCst) < writer_state::REOPENING {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            let late = std::fs::read(&path).unwrap();
-            (late.len(), streamed.finish())
+            std::fs::read(&path).unwrap();
+            streamed.finish()
         });
-        assert_eq!(result.0, 0, "the late reader sees an empty stream");
+        let err = finished.unwrap_err().to_string();
+        assert!(err.contains("--no_stream_converted"), "{err}");
+    }
+
+    /// An input that fits in the pipe buffer: a reader that opens the path after
+    /// the writer is done gets EOF instead of blocking.
+    #[test]
+    fn a_late_reader_of_a_small_input_is_not_blocked() {
+        let tmp = TempDir::new().unwrap();
+        let input = tmp.path().join("small.fastq");
+        std::fs::write(&input, b"@r1\nACGT\n+\nIIII\n").unwrap();
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0]).unwrap();
+        let path = streamed.path(0).to_path_buf();
+
+        let (first, late, finished) = within(60, move || {
+            let first = std::fs::read(&path).unwrap();
+            let late = std::fs::read(&path).unwrap();
+            (first, late, streamed.finish())
+        });
+        assert_eq!(first, b"@r1\nATGT\n+\nIIII\n");
+        assert!(late.is_empty());
+        assert_eq!(finished.unwrap(), vec![1]);
+    }
+
+    /// A record of blank lines only is counted whatever the converter's writes.
+    #[test]
+    fn fan_out_counts_blank_records_across_writes() {
+        let (tx, _rx) = std::sync::mpsc::sync_channel(16);
+        let mut out = FanOut::new(vec![tx], None, 4);
+        out.write_all(b"@a\nAC\n+\nII\n\n\n\n\n@b\nAC\n+\nII\n")
+            .unwrap();
+        for part in [&b"\n\n"[..], b"\n", b"\n@c\nA", b"C\n+\nII\n"] {
+            out.write_all(part).unwrap();
+        }
+        assert_eq!((out.lines_total, out.blank_records), (20, 2));
+
+        let (tx, _rx) = std::sync::mpsc::sync_channel(16);
+        let mut out = FanOut::new(vec![tx], None, 2);
+        out.write_all(b">a\nAC\n\n\n>b\nAC\n").unwrap();
+        assert_eq!((out.lines_total, out.blank_records), (6, 1));
+    }
+
+    /// A paired-end short stream names both mates and counts pairs.
+    #[test]
+    fn finish_checked_names_both_mates_of_a_short_pair_stream() {
+        let tmp = TempDir::new().unwrap();
+        let mut sources = Vec::new();
+        for (name, kind) in [("r_1.fastq", ConvKind::Ct), ("r_2.fastq", ConvKind::Ga)] {
+            let input = tmp.path().join(name);
+            std::fs::write(&input, b"@r1\nACGT\n+\nIIII\n@r2\nACGT\n+\nIIII\n").unwrap();
+            sources.push(ConvSource {
+                input,
+                kind,
+                id_suffix: b"",
+            });
+        }
+        let streamed =
+            StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0, 1]).unwrap();
+        let paths = [
+            streamed.path(0).to_path_buf(),
+            streamed.path(1).to_path_buf(),
+        ];
+        let short = Emitted {
+            records: 1,
+            unconsumed: 0,
+        };
+        let err = within(60, move || {
+            let readers: Vec<_> = paths
+                .into_iter()
+                .map(|p| std::thread::spawn(move || std::fs::read(p).unwrap()))
+                .collect();
+            readers.into_iter().for_each(|r| drop(r.join()));
+            streamed.finish_checked(&[(0, short), (1, short)], true)
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("r_1.fastq and "), "{err}");
+        assert!(err.contains("r_2.fastq returned 1 of 2 pairs"), "{err}");
+    }
+
+    /// An instance that returns fewer records than it was sent, or records the
+    /// merge never consumed, fails the run; a blank record is not sent.
+    #[test]
+    fn finish_checked_fails_an_instance_that_returned_too_few_records() {
+        let tmp = TempDir::new().unwrap();
+        let input = tmp.path().join("two.fastq");
+        std::fs::write(&input, b"@r1\nACGT\n+\nIIII\n\n\n\n\n@r2\nACGT\n+\nIIII\n").unwrap();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let run = |records: u64, unconsumed: u64| {
+            let streamed =
+                StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0]).unwrap();
+            let p = streamed.path(0).to_path_buf();
+            let emitted = Emitted {
+                records,
+                unconsumed,
+            };
+            within(60, move || {
+                std::fs::read(p).unwrap();
+                streamed.finish_checked(&[(0, emitted)], false)
+            })
+        };
+        let err = run(1, 0).unwrap_err().to_string();
+        assert!(err.contains("returned 1 of 2 reads"), "{err}");
+        assert!(err.contains("--no_stream_converted"), "{err}");
+        let err = run(2, 1).unwrap_err().to_string();
         assert!(
-            result.1.is_err(),
-            "a consumer that stopped reading fails the run"
+            err.contains("stop matching the input at read 2 of 2"),
+            "{err}"
         );
+        assert!(err.contains("dos2unix"), "{err}");
+        assert_eq!(run(2, 0).unwrap(), vec![3]);
+    }
+
+    /// A pipe held open by something that never reads it fails the teardown once
+    /// the limit passes, naming the pipe and the fix.
+    #[test]
+    fn finish_checked_fails_a_pipe_held_open_without_reading() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let mut streamed =
+            StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0]).unwrap();
+        // The writer must block on a full pipe for the holder to keep it open.
+        assert!(std::fs::metadata(&sources[0].input).unwrap().len() > 1 << 20);
+        streamed.teardown_limit = Duration::from_millis(200);
+        let path = streamed.path(0).to_path_buf();
+        let err = within(60, move || {
+            let holder = std::fs::File::open(&path).unwrap();
+            while streamed.opened[0].load(Ordering::SeqCst) == writer_state::PARKED {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let err = streamed.finish().unwrap_err().to_string();
+            drop(holder);
+            err
+        });
+        assert!(err.contains("is still held open"), "{err}");
+        assert!(err.contains("--no_stream_converted"), "{err}");
+    }
+
+    #[test]
+    fn with_wrapper_hint_adds_the_fix_once() {
+        let failed = || AlignerError::Validation("Bowtie 2 failed".into());
+        let hinted = with_wrapper_hint(failed(), false);
+        let msg = hinted.to_string();
+        assert!(
+            msg.contains("Bowtie 2 failed (streamed run; if an aligner wrapper"),
+            "{msg}"
+        );
+        assert!(!msg.contains("gzip -t"), "{msg}");
+        assert_eq!(with_wrapper_hint(hinted, true).to_string(), msg);
+        let gz = with_wrapper_hint(failed(), true).to_string();
+        assert!(
+            gz.ends_with("--no_stream_converted). Check the gzipped input with `gzip -t`."),
+            "{gz}"
+        );
+    }
+
+    /// A gzipped FastQ cut short partway through its stream.
+    fn write_truncated_gz(dir: &Path) -> PathBuf {
+        let mut fq = Vec::new();
+        for i in 0..50_000 {
+            fq.extend_from_slice(
+                format!("@r{i}\nACGTACGTACGTACGTACGT\n+\nIIIIIIIIIIIIIIIIIIII\n").as_bytes(),
+            );
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
+        gz.write_all(&fq).unwrap();
+        let gz = gz.finish().unwrap();
+        let path = dir.join("cut.fq.gz");
+        std::fs::write(&path, &gz[..gz.len() * 3 / 4]).unwrap();
+        path
+    }
+
+    #[test]
+    fn input_failure_reports_an_input_error_once_the_pipes_are_read() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_truncated_gz(tmp.path());
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed =
+            StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0, 0]).unwrap();
+        assert!(streamed.gzipped());
+        let paths = [
+            streamed.path(0).to_path_buf(),
+            streamed.path(1).to_path_buf(),
+        ];
+        let msg = within(30, move || {
+            let readers: Vec<_> = paths
+                .into_iter()
+                .map(|p| std::thread::spawn(move || std::fs::read(p).unwrap()))
+                .collect();
+            readers.into_iter().for_each(|r| drop(r.join()));
+            streamed.input_failure().map(|e| e.to_string())
+        })
+        .expect("the input error is reported");
+        assert!(msg.contains("end of file"), "{msg}");
+    }
+
+    #[test]
+    fn input_failure_ignores_an_input_error_after_a_lost_consumer() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_truncated_gz(tmp.path());
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed =
+            StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0, 0]).unwrap();
+        let [lost, kept] = [
+            streamed.path(0).to_path_buf(),
+            streamed.path(1).to_path_buf(),
+        ];
+        let failure = within(30, move || {
+            let mut b = [0u8; 10];
+            let _ = std::io::Read::read(&mut std::fs::File::open(lost).unwrap(), &mut b);
+            std::fs::read(kept).unwrap();
+            streamed.input_failure().map(|e| e.to_string())
+        });
+        assert!(failure.is_none(), "{failure:?}");
     }
 
     /// Paired-end shape: two sources (one per mate), two consumers each, one

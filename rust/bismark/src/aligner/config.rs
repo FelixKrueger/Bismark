@@ -397,7 +397,7 @@ pub struct ReadProcessing {
 }
 
 /// Whether the converted reads are streamed to the aligner through FIFOs instead
-/// of written to `--temp_dir` as files (#1120), and if not, why not.
+/// of written to `--temp_dir` as files, and if not, why not.
 ///
 /// Streaming is the default and removes the `_C_to_T` / `_G_to_A` temp files from
 /// the disk footprint. Output is byte-identical either way: the converted bytes
@@ -479,7 +479,7 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
-    /// `[#1120]` Whether the converted reads are streamed through FIFOs rather
+    /// Whether the converted reads are streamed through FIFOs rather
     /// than written to `--temp_dir`. Resolved by [`resolve_stream_converted`],
     /// then narrowed in `run` by the `--temp_dir` FIFO probe.
     pub stream_converted: StreamConverted,

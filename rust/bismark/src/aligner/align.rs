@@ -44,6 +44,25 @@ impl Orientation {
     }
 }
 
+/// What an aligner child emitted, as counted by `finish`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Emitted {
+    /// Primary records (pairs, for paired-end) in all.
+    pub records: u64,
+    /// Of those, the ones the caller never advanced past.
+    pub unconsumed: u64,
+}
+
+/// Neither secondary nor supplementary: one per read.
+fn is_primary(r: &SamRecord) -> bool {
+    is_primary_flag(r.flag)
+}
+
+/// [`is_primary`] for a bare FLAG.
+fn is_primary_flag(flag: u16) -> bool {
+    flag & 0x900 == 0
+}
+
 /// A parsed SAM alignment line (the fields Phase 4's scoring needs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SamRecord {
@@ -204,6 +223,8 @@ pub struct AlignerStream {
     current: Option<SamRecord>,
     line_buf: String,
     finished: bool,
+    /// Primary records read so far (minimap2 adds supplementary ones).
+    records: u64,
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2"). Mirrors [`PairedAlignerStream`]'s field — the SE
     /// sibling lagged until the v2.x combined-index sequential path drove HISAT2 SE
@@ -294,7 +315,7 @@ fn build_pe_argv(
     }
 }
 
-/// A spawned-but-unread [`AlignerStream`] (#1120).
+/// A spawned-but-unread [`AlignerStream`].
 ///
 /// A newtype so an unprimed stream cannot be used as a live one: before priming,
 /// `current` is `None`, which reads as EOF. [`prime`](Self::prime) is the only
@@ -325,6 +346,7 @@ impl UnprimedAlignerStream {
             }
             break Some(SamRecord::parse(&line)?);
         };
+        self.0.records = u64::from(self.0.current.as_ref().is_some_and(is_primary));
         Ok(self.0)
     }
 }
@@ -382,6 +404,7 @@ impl AlignerStream {
             current: None,
             line_buf: String::new(),
             finished: false,
+            records: 0,
             aligner,
         }))
     }
@@ -400,6 +423,7 @@ impl AlignerStream {
         } else {
             Some(SamRecord::parse(&self.line_buf)?)
         };
+        self.records += u64::from(self.current.as_ref().is_some_and(is_primary));
         Ok(())
     }
 
@@ -407,12 +431,20 @@ impl AlignerStream {
     /// Draining first avoids deadlocking the child on a full stdout pipe when
     /// the caller stopped early (Phase-4 early-stop). Non-zero exit → error
     /// (an intentional fail-closed deviation from Perl's fail-open pipe close).
-    pub fn finish(mut self) -> Result<()> {
-        std::io::copy(&mut self.reader, &mut std::io::sink())?;
+    pub fn finish(mut self) -> Result<Emitted> {
+        let drained = drain_lines(&mut self.reader, |line| {
+            line.split(|&b| b == b'\t')
+                .nth(1)
+                .and_then(|f| std::str::from_utf8(f).ok()?.parse::<u16>().ok())
+                .is_none_or(is_primary_flag)
+        })?;
         let status = self.child.wait()?;
         self.finished = true;
         if status.success() {
-            Ok(())
+            Ok(Emitted {
+                records: self.records + drained,
+                unconsumed: u64::from(self.current.as_ref().is_some_and(is_primary)) + drained,
+            })
         } else {
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
@@ -434,6 +466,17 @@ impl Drop for AlignerStream {
             kill_and_reap(&mut self.child);
         }
     }
+}
+
+/// Read `reader` to its end, returning how many lines `counts` accepts.
+fn drain_lines(reader: &mut impl BufRead, mut counts: impl FnMut(&[u8]) -> bool) -> Result<u64> {
+    let mut line = Vec::new();
+    let mut n = 0;
+    while reader.read_until(b'\n', &mut line)? > 0 {
+        n += u64::from(counts(&line));
+        line.clear();
+    }
+    Ok(n)
 }
 
 /// Kill an aligner child that did not finish, and reap it.
@@ -634,6 +677,8 @@ pub struct PairedAlignerStream {
     reader: BufReader<ChildStdout>,
     current: Option<SamPair>,
     finished: bool,
+    /// Pairs read so far.
+    records: u64,
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2").
     aligner: Aligner,
@@ -672,6 +717,7 @@ impl UnprimedPairedAlignerStream {
         } else {
             Some(SamPair::from_lines(&line1, &line2)?)
         };
+        self.0.records = u64::from(self.0.current.is_some());
         Ok(self.0)
     }
 }
@@ -732,6 +778,7 @@ impl PairedAlignerStream {
             reader: BufReader::new(stdout),
             current: None,
             finished: false,
+            records: 0,
             aligner,
         }))
     }
@@ -756,16 +803,20 @@ impl PairedAlignerStream {
         } else {
             Some(SamPair::from_lines(&line1, &line2)?)
         };
+        self.records += u64::from(self.current.is_some());
         Ok(())
     }
 
     /// Drain remaining stdout, reap the child, check exit status (as [`AlignerStream::finish`]).
-    pub fn finish(mut self) -> Result<()> {
-        std::io::copy(&mut self.reader, &mut std::io::sink())?;
+    pub fn finish(mut self) -> Result<Emitted> {
+        let drained = drain_lines(&mut self.reader, |_| true)? / 2;
         let status = self.child.wait()?;
         self.finished = true;
         if status.success() {
-            Ok(())
+            Ok(Emitted {
+                records: self.records + drained,
+                unconsumed: u64::from(self.current.is_some()) + drained,
+            })
         } else {
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
@@ -1565,6 +1616,26 @@ mod tests {
         let (_d, s) = spawn_fake(body);
         assert_eq!(s.current().unwrap().qname, "r0");
         s.finish().unwrap(); // drains remaining stdout, then reaps — no hang
+    }
+
+    /// Secondary and supplementary records count neither as read nor as left over.
+    #[cfg(unix)]
+    #[test]
+    fn finish_counts_primary_records_only() {
+        let body = "printf 'a\\t0\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            a\\t2048\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            b\\t256\\tc_CT_converted\\t1\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            c\\t4\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tACGT\\tIIII\\n\
+            c\\t2048\\tc_CT_converted\\t5\\t40\\t4M\\t*\\t0\\t0\\tACGT\\tIIII\\n'";
+        let (_d, mut s) = spawn_fake(body);
+        s.advance().unwrap();
+        assert_eq!(
+            s.finish().unwrap(),
+            Emitted {
+                records: 2,
+                unconsumed: 1
+            }
+        );
     }
 
     // ---- paired-end pair construction + stream (Phase 7) --------------------

@@ -76,7 +76,7 @@ use flate2::write::GzEncoder;
 use crate::io::BamWriter;
 
 use crate::aligner::align::{
-    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
+    AlignerStream, Emitted, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
     PairedSamStream, SamRecord, SamStream,
 };
 use crate::aligner::aux_out::AuxKind;
@@ -214,11 +214,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
-    // #1120: streaming also needs a `--temp_dir` that can hold a named pipe. That
-    // is an I/O probe, so it lives here rather than in `resolve`.
-    if config.stream_converted.enabled {
-        stream::sweep_stale_fifos(&config.output.temp_dir);
-    }
+    // Streaming needs a `--temp_dir` that can hold a named pipe (an I/O probe).
     if config.stream_converted.enabled && !stream::temp_dir_supports_fifo(&config.output.temp_dir) {
         config.stream_converted = config::StreamConverted {
             enabled: false,
@@ -1255,8 +1251,7 @@ fn process_se_chunk(
 ) -> Result<Vec<convert::ConvertedReads>> {
     let bt2 = &config.detected_aligner.path;
     let read_file = input.to_string_lossy();
-    // #1120: the in-process rammap backend takes the converted reads in memory.
-    // Checked before the FIFO path, which would add a needless pipe.
+    // The in-process rammap backend takes the converted reads in memory, not a FIFO.
     #[cfg(feature = "rammap-inprocess")]
     if use_se_inprocess_rammap(config) && config.stream_converted.enabled {
         return process_se_chunk_inprocess(config, genome, refid, input, opts, sinks, counters);
@@ -1357,7 +1352,7 @@ fn process_se_chunk(
 }
 
 /// [`process_se_chunk`], with the converted reads streamed through FIFOs instead
-/// of written to `--temp_dir` (#1120).
+/// of written to `--temp_dir`.
 ///
 /// Same plan, argv shape and merge; only the aligner's input paths change. One
 /// conversion pass per converted stream, fanned out to the instances that read it.
@@ -1406,12 +1401,18 @@ fn process_se_chunk_streamed(
     }
 
     // Every child is reaped inside this call, before `streamed` can be dropped.
-    run_se_instances_streamed(
+    let returned = match run_se_instances_streamed(
         config, genome, refid, input, &plan, &streamed, sinks, counters,
-    )?;
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
 
-    // Every instance is drained and reaped, so the join cannot block.
-    for (source, count) in sources.iter().zip(streamed.finish()?) {
+    // Every instance is drained and reaped.
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, false)?)
+    {
         eprintln!(
             "Streamed {} converted version of {} ({count} sequences, no temp file written)",
             conv_label_for(source.kind),
@@ -1427,6 +1428,8 @@ fn process_se_chunk_streamed(
 /// its child opens the pipe, and the instances share one bounded conversion pass,
 /// so priming child 0 before child 1 exists would deadlock. All children are
 /// reaped (or killed, on error) before this returns.
+///
+/// Returns what each instance emitted, as `(consumer, emitted)`.
 #[allow(clippy::too_many_arguments)]
 fn run_se_instances_streamed(
     config: &RunConfig,
@@ -1437,7 +1440,7 @@ fn run_se_instances_streamed(
     streamed: &stream::StreamedConversion,
     sinks: &mut Sinks,
     counters: &mut Counters,
-) -> Result<()> {
+) -> Result<Vec<(usize, Emitted)>> {
     let bt2 = &config.detected_aligner.path;
     let mut unprimed = Vec::with_capacity(plan.len());
     for (consumer, &(orientation, index_choice, _)) in plan.iter().enumerate() {
@@ -1454,9 +1457,8 @@ fn run_se_instances_streamed(
             streamed.path(consumer),
         )?);
     }
-    // Every pipe must find its reader before any child is read: a child that died
-    // during start-up would otherwise block its writer and stall the shared
-    // conversion pass. One FIFO per instance, so consumer index == child index.
+    // Every pipe needs its reader before any child is read, or a dead child stalls
+    // the shared pass. One FIFO per instance, so consumer index == child index.
     streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
 
     let mut streams = Vec::with_capacity(unprimed.len());
@@ -1477,16 +1479,38 @@ fn run_se_instances_streamed(
     ) {
         // An instance that died starves the merge, which then fails on the
         // symptom; report the instance itself.
-        return Err(streams.iter_mut().find_map(|s| s.failure()).unwrap_or(e));
+        return Err(streams
+            .iter_mut()
+            .find_map(|s| s.failure())
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
     }
-    for s in streams {
-        s.finish()?;
-    }
-    Ok(())
+    Ok(finish_concurrently(streams, AlignerStream::finish)
+        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+        .into_iter()
+        .enumerate()
+        .collect())
+}
+
+/// Reap every instance at once: they share one conversion pass, so an instance
+/// left unread stalls the others.
+fn finish_concurrently<S: Send>(
+    streams: Vec<S>,
+    finish: fn(S) -> Result<Emitted>,
+) -> Result<Vec<Emitted>> {
+    std::thread::scope(|scope| {
+        let reapers: Vec<_> = streams
+            .into_iter()
+            .map(|s| scope.spawn(move || finish(s)))
+            .collect();
+        reapers
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
 }
 
 /// [`process_se_chunk`] for the in-process rammap backend, with the converted
-/// reads handed over in memory (#1120).
+/// reads handed over in memory.
 ///
 /// This backend aligns inside the Bismark process, so a temp file or FIFO would be
 /// a pointless round trip. One reader per instance, fed by one conversion pass per
@@ -5243,7 +5267,7 @@ type PePlanEntry = (
 );
 
 /// Spawn, merge and reap the paired-end aligner instances of a streamed chunk;
-/// the PE sibling of [`run_se_instances_streamed`].
+/// the PE sibling of [`run_se_instances_streamed`], returning pairs per instance.
 #[allow(clippy::too_many_arguments)]
 fn run_pe_instances_streamed(
     config: &RunConfig,
@@ -5255,7 +5279,7 @@ fn run_pe_instances_streamed(
     streamed: &stream::StreamedConversion,
     sinks: &mut PeSinks,
     counters: &mut Counters,
-) -> Result<()> {
+) -> Result<Vec<(usize, Emitted)>> {
     let bt2 = &config.detected_aligner.path;
     // Place each primed stream at its Bismark slot so the merge scan order holds.
     let mut unprimed = Vec::with_capacity(plan.len());
@@ -5305,16 +5329,25 @@ fn run_pe_instances_streamed(
             .iter_mut()
             .flatten()
             .find_map(|s| s.failure())
-            .unwrap_or(e));
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
     }
-    for s in streams.into_iter().flatten() {
-        s.finish()?;
-    }
-    Ok(())
+    // Instance i reads pipes 2i (`-1`) and 2i+1 (`-2`) and sits at its plan slot.
+    let in_plan_order = plan
+        .iter()
+        .map(|e| streams[e.0].take().expect("every plan slot is primed"))
+        .collect();
+    Ok(
+        finish_concurrently(in_plan_order, PairedAlignerStream::finish)
+            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, n)| [(2 * i, n), (2 * i + 1, n)])
+            .collect(),
+    )
 }
 
 /// [`process_pe_chunk`], with the converted reads streamed through FIFOs instead
-/// of written to `--temp_dir` (#1120).
+/// of written to `--temp_dir`.
 ///
 /// Two FIFOs per instance (`-1` and `-2`), one conversion pass per distinct
 /// `(mate, kind)`: four pipes and two passes for directional/pbat, eight and four
@@ -5375,11 +5408,17 @@ fn process_pe_chunk_streamed(
     }
 
     // Every child is reaped inside this call, before `streamed` can be dropped.
-    run_pe_instances_streamed(
+    let returned = match run_pe_instances_streamed(
         config, genome, refid, read_1, read_2, &plan, &streamed, sinks, counters,
-    )?;
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
 
-    for (source, count) in sources.iter().zip(streamed.finish()?) {
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, true)?)
+    {
         eprintln!(
             "Streamed {} converted version of {} ({count} sequences, no temp file written)",
             conv_label_for(source.kind),

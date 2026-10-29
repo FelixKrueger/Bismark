@@ -416,7 +416,7 @@ fn happy_path_resolves_and_prints_config() {
                 ))
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
-                // #1120: the C->T conversion streams to the aligner by default.
+                // The C->T conversion streams to the aligner by default.
                 .and(predicate::str::contains("Streaming C->T converted"))
                 .and(predicate::str::contains("no temp file written"))
                 // Phase 5: the pipeline ran end-to-end (fake bowtie2 emits unmapped).
@@ -443,12 +443,8 @@ fn happy_path_resolves_and_prints_config() {
     );
 }
 
-/// #1120: an aligner instance that exits cleanly without reading its pipe must
-/// not starve the sibling that shares its converted source. The input exceeds
-/// the ~1 MiB of per-instance slack so a starved sibling would hang.
-///
-/// Few, long reads: the non-reading stub exits before its stdout is read, so its
-/// output must fit in one pipe buffer.
+/// An instance that exits cleanly without reading its pipe does not starve its sibling.
+/// The input exceeds the per-instance slack; the stub's output fits in one pipe buffer.
 #[cfg(unix)]
 #[test]
 fn streamed_run_survives_an_instance_that_never_reads_its_input() {
@@ -507,6 +503,300 @@ esac
         .stderr(predicate::str::contains(format!(
             "({N} sequences, no temp file written)"
         )));
+}
+
+/// A wrapper that reads the converted reads before the aligner does fails a
+/// streamed run at any input size, naming the fix, and runs with files.
+#[cfg(unix)]
+#[test]
+fn a_sniffing_wrapper_fails_the_streamed_run_at_any_size() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+head -c 2 "$inp" > /dev/null
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+
+    // Under the pipe buffer, under the per-instance slack, and above it.
+    for n in [50, 3_000, 30_000] {
+        let read = genome.path().join(format!("sniff_{n}.fq"));
+        let seq = "ACGT".repeat(25);
+        let mut fq = String::new();
+        for i in 0..n {
+            fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+        }
+        fs::write(&read, fq).unwrap();
+
+        for stream in [true, false] {
+            let temp = TempDir::new().unwrap();
+            let outdir = TempDir::new().unwrap();
+            let mut cmd = bin();
+            cmd.arg("--genome")
+                .arg(genome.path())
+                .arg("--path_to_bowtie2")
+                .arg(bins.path())
+                .arg("--temp_dir")
+                .arg(temp.path())
+                .arg("--output_dir")
+                .arg(outdir.path())
+                .arg(&read)
+                .timeout(std::time::Duration::from_secs(120));
+            if stream {
+                cmd.assert()
+                    .failure()
+                    .stderr(
+                        predicate::str::is_match(
+                            "stopped reading|returned [0-9]+ of|stop matching",
+                        )
+                        .unwrap(),
+                    )
+                    .stderr(predicate::str::contains("--no_stream_converted"));
+            } else {
+                cmd.arg("--no_stream_converted").assert().success();
+            }
+        }
+    }
+}
+
+/// A paired-end aligner that exits non-zero after a wrapper sniffed its `-2`
+/// pipe fails the streamed run, naming the fix.
+#[cfg(unix)]
+#[test]
+fn an_aligner_failing_after_a_sniff_names_the_fix() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // On a pipe, sniff `-2`; fail unless what is left of `-2` starts with a whole record.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; m2=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-2" ] && m2="$a"
+  prev="$a"
+done
+[ -p "$m2" ] && head -c 2 "$m2" > /dev/null
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1"
+awk 'NR == 1 { ok = /^@r[0-9]+\/2\/2$/ } END { exit !ok }' "$m2"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..50 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &fq).unwrap();
+    fs::write(&r2, &fq).unwrap();
+
+    for stream in [true, false] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .timeout(std::time::Duration::from_secs(120));
+        if stream {
+            cmd.assert()
+                .failure()
+                .stderr(predicate::str::contains("exited unsuccessfully"))
+                .stderr(predicate::str::contains("--no_stream_converted"));
+        } else {
+            cmd.arg("--no_stream_converted").assert().success();
+        }
+    }
+}
+
+/// Read IDs that stop matching the aligner's, here because of CRLF line
+/// endings, fail a streamed run with the likely causes, also when the input
+/// outgrows the pipes.
+#[cfg(unix)]
+#[test]
+fn a_crlf_input_fails_the_streamed_run_by_name() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Like Bowtie 2, the stub drops the `\r` from each read name.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\r$/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let read = genome.path().join("crlf.fq");
+    let seq = "ACGT".repeat(25);
+    for n in [50, 30_000] {
+        let mut fq = String::new();
+        for i in 0..n {
+            fq.push_str(&format!(
+                "@r{i}\r\n{seq}\r\n+\r\n{}\r\n",
+                "I".repeat(seq.len())
+            ));
+        }
+        fs::write(&read, fq).unwrap();
+
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .timeout(std::time::Duration::from_secs(120))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "stop matching the input at read 1 of {n}"
+            )))
+            .stderr(predicate::str::contains("dos2unix"));
+    }
+}
+
+/// A truncated gzip input reports the input error, streamed or not.
+#[cfg(unix)]
+#[test]
+fn a_truncated_gzip_input_names_the_input_error() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Like Bowtie 2, the stub fails on a cut-off final record.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }
+     NR%4==2 { n = length($0) }
+     NR%4==0 && length($0) != n { bad = 1 }
+     END { exit bad || NR%4 }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..4000 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
+    std::io::Write::write_all(&mut gz, fq.as_bytes()).unwrap();
+    let gz = gz.finish().unwrap();
+    let read = genome.path().join("cut.fq.gz");
+    fs::write(&read, &gz[..gz.len() * 3 / 4]).unwrap();
+
+    for stream in [true, false] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .timeout(std::time::Duration::from_secs(120));
+        if !stream {
+            cmd.arg("--no_stream_converted");
+        }
+        cmd.assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected end of file"))
+            .stderr(predicate::str::contains("--no_stream_converted").not());
+    }
+}
+
+/// A streamed aligner failure suggests `gzip -t` for gzipped input only.
+#[cfg(unix)]
+#[test]
+fn a_failed_streamed_aligner_suggests_gzip_t_for_gzipped_input_only() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Reads its whole input, so the conversion pass succeeds, then fails.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+cat "$inp" > /dev/null
+exit 1
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..50 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let plain = genome.path().join("reads.fq");
+    fs::write(&plain, &fq).unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut gz, fq.as_bytes()).unwrap();
+    let gzipped = genome.path().join("reads.fq.gz");
+    fs::write(&gzipped, gz.finish().unwrap()).unwrap();
+
+    for (read, hinted) in [(&gzipped, true), (&plain, false)] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let check = predicate::str::contains("Check the gzipped input with `gzip -t`.");
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(read)
+            .timeout(std::time::Duration::from_secs(120))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("(streamed run;"));
+        if hinted {
+            assert.stderr(check);
+        } else {
+            assert.stderr(check.not());
+        }
+    }
 }
 
 #[cfg(unix)]
