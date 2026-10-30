@@ -1,0 +1,2 @@
+sample	tag	arm	rep	pairs_in	unique_pairs	map_eff	cpg_pct	chg_pct	chh_pct	dup_pct	records	mapq0	r1_records	readthrough	tlen_p10	tlen_p50	tlen_p90	deconv_precision	deconv_recall	wall_s	time_maxrss_kb	tree_peak_rss_kb	aligner_cpu_s	load_start	load_end	key
+NA12878	dry10M	B	1	9795184	8632298	88.1	48.6	1.3	1.2	1.65	17264532	166010	8632266	320	241	344	444	82.5	6.2	566.38	5049172	7277596	7730	69.23	77.03	7a04fedfc8d20108

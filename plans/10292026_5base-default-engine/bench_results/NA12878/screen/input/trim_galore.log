@@ -1,0 +1,41 @@
+
+Trim Galore - Oxidized Edition v2.2.0
+unknown — linux/x86_64 — built 2026-05-16T11:02:42Z
+==================================================
+
+Using 8 worker threads (parallel trim + compress)
+Auto-detecting adapter type...
+Using Nextera adapter for trimming (count: 650). Second best hit was smallRNA (count: 2).
+Adapter: Nextera (CTGTCTCTTATA)
+
+Poly-G trimming: ENABLED (auto-detected). 10276 of 1000000 reads (1.03%) have poly-G tails (>=10bp) — consistent with 2-colour chemistry (NovaSeq/NextSeq). To disable: --no_poly_g
+Trimming (paired-end):
+  R1: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1.fq
+  R2: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2.fq
+  Output R1: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1_val_1.fq
+  Output R2: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2_val_2.fq
+
+=== Summary (Read 1) ===
+
+Total reads processed:            100000000
+Reads with adapters:               11895962 (11.9%)
+
+=== Summary (Read 2) ===
+
+Total reads processed:            100000000
+Reads with adapters:               12009750 (12.0%)
+R1 reads with poly-G trimmed:       3210514 (3.2%)
+  R1 poly-G bases removed:         55943069
+R2 reads with poly-C trimmed:       1849567 (1.8%)
+  R2 poly-C bases removed:         11353801
+
+=== Paired-end validation ===
+
+Pairs analyzed:                   100000000
+Pairs removed:                      1917861 (1.9%)
+Unpaired R1 kept:                    245893
+Unpaired R2 kept:                     78096
+Report: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1.fq_trimming_report.txt
+JSON report: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1.fq_trimming_report.json
+Report: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2.fq_trimming_report.txt
+JSON report: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2.fq_trimming_report.json

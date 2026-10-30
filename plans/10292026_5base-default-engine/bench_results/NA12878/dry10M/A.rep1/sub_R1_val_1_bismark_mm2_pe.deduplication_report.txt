@@ -1,0 +1,7 @@
+
+Total number of alignments analysed in /var/tmp/5base_engines/runs/NA12878/dry10M/A.rep1/sub_R1_val_1_bismark_mm2_pe.bam:	9320155
+Total number duplicated alignments removed:	175589 (1.88%)
+Duplicated alignments were found at:	170180 different position(s)
+
+Total count of deduplicated leftover sequences: 9144566 (98.12% of total)
+

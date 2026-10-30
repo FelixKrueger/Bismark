@@ -355,3 +355,52 @@ The decision rule and challenger choice are frozen in a committed file before an
   - the startup-notice fix.
   - Q2 answered from `VALIDATION_REAL_DATA.md`.
   - Not adopted: block bootstrap (sampling error is negligible at this scale), a simulated-truth arm, extra NA12878 libraries and a `--dovetail` arm. These are optional extras that would add cost without changing the decision rule.
+
+## Implementation notes — 2026-10-29
+
+Felix gave the implementation trigger for the benchmark (outline steps 2–5). Step 8, the code and docs change, waits for the decision.
+
+- **Data:**
+  - Screen inputs were downloaded to oxy `/var/tmp/5base_engines` via the personal BaseSpace account (EUW2) and verified: R1 = R2 per lane, `gzip -t`, `MD5SUMS`.
+  - The durable copy is `s3://altos-lab-bioinf/CI/Illumina_5base_test_data/`.
+  - Reads: NA12878 L001+L002 = 131.4M pairs; HG002 = 163.2M pairs.
+  - DRAGEN NA12878 total input: 489.9M pairs.
+- **Facts fixed in `PREREGISTRATION.md`** (committed `38e5f2d` before any challenger ran):
+  - minimap2 2.31 `-F` default is 800, so B-X uses `-X 800`;
+  - DRAGEN's lambda/pUC19 controls are in a separate `control.CX_report`, so the human reference stays control-free (answers Q3);
+  - NUMA node 0 has physical cores 0–31, so `taskset -c 0-31`.
+- **Harness:**
+  - `validation/five_base_engine_bench.sh` (prep / cell / score) and `validation/five_base_compare.py` (compare / refcheck / `--selftest`; stdlib only, reusing `concordance.py`'s parser).
+  - Self-tests pass locally and on oxy.
+  - Copies live in `~/5base_harness` on oxy's persistent disk; results go to `~/5base_results`.
+- **Deviations:**
+  1. The harness is bash, not POSIX sh, because it needs arrays.
+  2. `mawk` is oxy's `awk`, so flag tests use arithmetic rather than `and()`.
+  3. `dcli scp` rejects paths, so files go through `dcli ssh` with base64.
+  4. oxy's host shows a load average of ~50–70 from other pods. Pinning cannot isolate that, so timings are noisy and remain tie-breakers only, as planned.
+  5. The reference and indexes are built into the ephemeral `/var/tmp`. They can be rebuilt with `setup_ref.sh`.
+- **Confirm-stage prerequisite:** full depth needs all 8 lanes per sample (about 100 GB each), downloaded later with the same `bs download file` loop.
+
+### Iteration log
+
+1. **Index builds collided.** Bowtie 2 and HISAT2 were built into one prefix in one directory, and HISAT2's temporary `.sa` files clobbered Bowtie 2's (`Could not open file for reading a suffix array`). Both are now rebuilt in separate directories (`index/bt2`, `index/ht2`).
+2. **Trim Galore output names.** Trim Galore 2.2 keeps the input's compression, so the plain subset produced `sub_R*_val_*.fq`, not `.fq.gz`, and prep aborted at its own output check. Prep now reuses a finished trim; `trimmed()` accepts either extension.
+3. **`--gzip` for future trims** (Felix's suggestion). Full-depth confirm input would otherwise be about 350 GB of plain FASTQ per sample. The dry-run and screen trims stay plain; compression does not affect the comparison.
+4. **Reference check (NA12878):** 1,000,000 of 1,000,000 sampled DRAGEN CpGs are CpGs in the Ensembl FASTA (100.0000%), so the reference matches DRAGEN's coordinates.
+5. **Shared reference indexes** (Felix's direction). The benchmark uses the shared prebuilt indexes rather than its own builds. They are linked from oxy's persistent `~/references/GRCh38/{Bowtie2Index,Hisat2Index,WholeGenomeFasta}`, which point to `/datasets/s3/altos-lab-reference-data/genomes/Homo_sapiens/Ensembl/GRCh38/`; prefix `Homo_sapiens.GRCh38`.
+   - Both indexes match our FASTA: 194 sequences with identical names and lengths, checked via `bowtie2-inspect -s` and `hisat2-inspect -s` against the `.fai`.
+   - The HISAT2 index is plain: `hisat2-inspect --ss/--exon/--snp` each report 0.
+   - Our own index builds were stopped. The harness reads `REFS` (default `~/references/GRCh38`).
+   - The index files are S3-backed, so the first Bowtie 2/HISAT2 run may include a cold read. Timing only breaks ties, so this is acceptable.
+6. **Dry run (NA12878, 10M pairs, arms A and B, two repeats each).**
+   - **Accuracy is deterministic.** Each arm's two repeats give byte-identical CpG reports (A `f1d707dc…`, B `62a0bf32…`) and identical read metrics.
+   - **Wall time is not repeatable within 10%:** arm A 1073 s vs 924 s, arm B 566 s vs 542 s. The host load average reached 1070, from other tenants. This confirms that timing cannot decide anything here.
+   - **Scoring works end to end.** Own-set r is about 0.77–0.79 at ~1× coverage, consistent with the published 0.5× value of 0.77. The common set (7,049 CpGs) is identical for both arms, and B's gain set (1,408 CpGs) scores lower (r 0.67).
+   - **The joined-fraction guard fired** (A 0.34, B 0.32), as expected at ~1×. The threshold is now `MIN_JOINED` (default 0.5, meant for screen depth).
+7. **Per-cell cleanup.** A 10M cell uses about 8 GB, so seven 100M cells would need about 550 GB against 645 GB free. Each cell now deletes the per-context call files and the deduplicated BAM, and gzips the deconvolution table.
+   - It keeps the raw BAM, the CpG report and the `.cov`/bedGraph, about 30 GB per screen cell.
+   - Deviation from "keep BAMs": the deduplicated BAM is re-creatable from the raw BAM in minutes.
+8. **The screen runs as two concurrent streams.**
+   - Stream 1 (NUMA node 0, CPUs 0–31): NA12878 A, then B-loc, then C.
+   - Stream 2 (node 1, CPUs 32–63): NA12878 B, then B-X, then HG002 A.
+   - The CPU set is recorded per cell. As Efficiency allows, concurrent screen timings are excluded; cost is measured in the sequential confirm stage.
