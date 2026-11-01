@@ -5,20 +5,20 @@ description: The lines of the alignment report, the deduplication report and the
 tags: [report, mapping-efficiency, deduplication, qc]
 page_id: run-reports
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 65b183a
+    commit: f6a21fd
 ---
 
 # Run reports
@@ -31,7 +31,7 @@ Each main step writes a plain-text report. The alignment report gives the mappin
 
 `<name>_bismark_<token>_SE_report.txt` or `_PE_report.txt`, written by `aligner/report.rs`.
 
-**Header** (`write_report_header`): the input file(s) and Bismark version, the aligner and its options, and one line naming the library type and which strands were aligned (`library_line`).
+**Header** (`write_report_header`): the input file(s) and Bismark version, the aligner and its options, and one line naming the library type and which strands were aligned (`library_line`). The aligner line says `against the bisulfite genome of <folder>`; a 5-Base run says `against the unconverted genome of <folder>` (`write_five_base_report_header`).
 
 **Final Alignment report** (`print_final_analysis_report_single_end`, `print_final_analysis_report_paired_ends`). Paired-end lines say "Sequence pairs" where single-end lines say "Sequences".
 
@@ -71,6 +71,15 @@ The report ends with `Bismark completed in <d>d <h>h <m>m <s>s`.
 ## Splitting report
 
 `<name>_splitting_report.txt` from `bismark extract` (`write_splitting_report` in `extractor/output.rs`). It lists the parameters used, including each `--ignore` value, then `Processed <n> lines in total`, `Total number of methylation call strings processed`, and a **Final Cytosine Methylation Report** with methylated counts and `C to T conversions` (unmethylated counts) per context, and the % methylated per context. With `--merge_non_CpG` the CHG and CHH lines are merged into `non-CpG`.
+
+With `--allow_discordant`, the report ends with a `Discordant read handling (--allow_discordant)` section, which also goes to stderr. It is written even when every count is 0 (`discordant_section_text`):
+
+| Line | Meaning |
+|---|---|
+| `Cross-chromosome pairs called independently` | Pairs whose mates are on different chromosomes |
+| `Same-chromosome discordant pairs called independently` | Same-chromosome pairs that are not proper FR pairs from one strand |
+| `Orphan reads (mate unmapped) called` | Mapped reads whose mate is absent |
+| `Secondary alignments skipped`, `Supplementary alignments skipped` | Records with FLAG `0x100` or `0x800` |
 
 ## Links
 

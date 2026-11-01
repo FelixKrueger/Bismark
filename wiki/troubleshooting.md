@@ -1,36 +1,48 @@
 ---
 type: troubleshooting
 title: Troubleshooting
-description: Low mapping efficiency, choosing the library type, coverage problems, M-bias, and the errors that stop a run.
+description: Low mapping efficiency, choosing the library type, coverage problems, M-bias, the errors that stop a run, and the warnings that do not.
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: 65b183a
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/mod.rs
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/stream.rs
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/parallel.rs
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/state.rs
+    commit: f6a21fd
 ---
 
 # Troubleshooting
@@ -43,7 +55,7 @@ The developer says users ask most often about low mapping efficiency, which libr
 
 1. Open the alignment report and find where the reads went ([reference/run-reports.md](reference/run-reports.md)): `no alignments under any condition`, `did not map uniquely`, or `could not be extracted`.
 2. Check the library type line in the report header. A directional run aligns only OT and OB; reads from CTOT and CTOB find no alignment (`library_line` in `aligner/report.rs`). See the next section.
-3. The default score limit is `--score_min L,0,-0.2`, end-to-end (`build_aligner_options` in `aligner/options.rs`). `--score_min L,0,-0.6` allows more mismatches; `--local` (Bowtie 2 or HISAT2) allows soft-clipped ends.
+3. The default score limit is `--score_min L,0,-0.2`, end-to-end; 5-Base runs with Bowtie 2 or HISAT2 default to `L,0,-0.6` (`default_linear_score` in `aligner/options.rs`). `--score_min L,0,-0.6` allows more mismatches; `--local` (Bowtie 2 or HISAT2) allows soft-clipped ends.
 4. Reads that map equally well to several places are counted under `did not map uniquely` and are not in the BAM. `--ambiguous` writes them to a file so you can inspect them.
 
 ## Which library type?
@@ -85,6 +97,14 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
 | `--include_overlap requires --paired-end` | Overlap option without `-p` | Add `-p` |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
+| `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
+| `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |
+| `… (streamed run; if an aligner wrapper … use --no_stream_converted)` | Something other than the aligner read the converted-read FIFO, or an instance stopped reading it (`with_wrapper_hint` in `aligner/stream.rs`) | Re-run with `--no_stream_converted`; for gzipped input, also check it with `gzip -t` |
+| `mkfifo <path> failed` | A FIFO could not be made in `--temp_dir` during the run (`mkfifo` in `aligner/stream.rs`) | Free or fix the temp folder, or use `--no_stream_converted` |
+
+With `--multicore`, an aligner error ends with `(in --multicore chunk <i> of <n> of <input>)` (`in_chunk` in `aligner/parallel.rs`).
+
+`bismark extract --allow_discordant` prints `warning: --allow_discordant: <n> of <m> templates are orphans (>20%)` and keeps running. Check that mates are present and that the BAM is name-grouped (`ExtractState::finalize` in `extractor/state.rs`).
 
 ## Links
 

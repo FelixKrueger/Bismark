@@ -5,23 +5,23 @@ description: Remove PCR duplicates from a Bismark BAM, when to skip this step, a
 tags: [deduplication, pcr-duplicates, umi, rrbs]
 page_id: deduplicate-alignments
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/dedup.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/filename.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 65b183a
+    commit: f6a21fd
 ---
 
 # Deduplicate alignments

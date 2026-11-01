@@ -1,33 +1,36 @@
 ---
 type: usage
 title: Align reads
-description: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, and run 5-Base data.
+description: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, see how the converted reads reach the aligner, and run 5-Base data.
 tags: [alignment, bowtie2, hisat2, minimap2, library-type, 5-base]
 page_id: align-reads
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: 65b183a
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/stream.rs
+    commit: f6a21fd
 ---
 
 # Align reads
@@ -53,7 +56,7 @@ sources:
    bismark --genome /data/genomes/GRCh38/ -1 sample_R1.fq.gz -2 sample_R2.fq.gz
    ```
 
-   The genome can also be the first positional argument. `-1` and `-2` take comma-separated lists of equal length (`resolve_layout` in `aligner/config.rs`).
+   The genome can also be the first positional argument. `-1` and `-2` take comma-separated lists of equal length (`resolve_layout` in `aligner/config.rs`). A positional uBAM or BINSEQ file that holds pairs runs as paired-end, so `-I`/`-X` apply to it (`positional_input_is_paired` in `aligner/mod.rs`).
 3. Read the alignment report and check the mapping efficiency: [reference/run-reports.md](../reference/run-reports.md).
 4. Go on to [usage/deduplicate-alignments.md](deduplicate-alignments.md), or for RRBS, amplicon and implicon data straight to [usage/extract-methylation-calls.md](extract-methylation-calls.md).
 
@@ -87,6 +90,20 @@ Only one aligner can be selected (`resolve_aligner` in `aligner/config.rs`). The
 
 A single-end directional run starts 2 aligner instances and a non-directional run starts 4 (`se_instance_plan` in `aligner/mod.rs`); each instance gets the `-p` threads.
 
+## Converted reads
+
+Each read file is converted (C→T, G→A) before it is aligned. By default the converted reads go to each aligner instance through a named pipe (FIFO) in `--temp_dir`, and no `_C_to_T` / `_G_to_A` temp file is written (`resolve_stream_converted` in `aligner/config.rs`, `aligner/stream.rs`). The output is the same either way. The configuration summary on stderr shows the choice in its `converted reads:` line (`RunConfig::summary` in `aligner/config.rs`).
+
+| Run | Converted reads |
+|---|---|
+| Bowtie 2 or minimap2 | Streamed through FIFOs |
+| rammap (in-process) | Passed in memory |
+| `--no_stream_converted` | Written to `--temp_dir` as files |
+| HISAT2, `--combined_index*`, `--rammap_subprocess`, or a `--temp_dir` where a FIFO cannot be made | Written as files; a `Note:` line says why (`run` in `aligner/mod.rs`) |
+| `--illumina_5base` | None; the raw reads are aligned |
+
+If something reads the converted input before the aligner does (for example an aligner wrapper script), use `--no_stream_converted`.
+
 ## Output files
 
 The name comes from the first read file with `.fastq.gz`, `.fq.gz`, `.fastq` or `.fq` removed (`derive_output_path` in `aligner/mod.rs`). Aligner token: `bt2`, `hisat2`, `mm2` or `rammap`.
@@ -108,6 +125,7 @@ bismark --illumina_5base --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
 
 - Paired-end, directional, FastQ only (`resolve` in `aligner/config.rs`).
 - minimap2 `-x sr` against the genome FASTA is the default. For Bowtie 2 or HISAT2, add `--bowtie2` or `--hisat2` with `--five_base_index <basename>` of a normal, unconverted index. A bisulfite `BS_CT`/`BS_GA` index is rejected.
+- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--local`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`). The default `--score_min` is `L,0,-0.6`. HISAT2 always gets `--no-spliced-alignment`, and `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
 - Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 - Optional outputs, each next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`).
 - `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning.

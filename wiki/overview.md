@@ -5,20 +5,26 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 65b183a
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/mod.rs
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/pair_class.rs
+    commit: f6a21fd
 ---
 
 # Bismark overview
@@ -50,12 +56,14 @@ The developer gave this order. Most workflows run these steps:
 **Limits in the code.**
 
 - Reads are FastQ (default) or FastA; `--pbat` accepts only FastQ and no `--gzip` (`resolve_library` in `aligner/config.rs`).
-- minimap2 and rammap align single-end reads only; paired-end input is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
+- minimap2 and rammap align single-end reads only; paired-end input, including a positional paired uBAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
+- Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
 - `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
 - `extract --cytosine_report` needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
+- The extractor reads only BAMs with Bismark `XM`/`XR`/`XG` tags. For a BAM from another aligner, `extract --allow_discordant` handles cross-chromosome and discordant pairs, orphan reads, and secondary or supplementary records (`classify_pair` in `extractor/pair_class.rs`).
 
 ## Subcommands
 

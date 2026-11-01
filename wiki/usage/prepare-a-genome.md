@@ -7,19 +7,19 @@ page_id: prepare-a-genome
 subject_status: current
 updated: 2026-10-12
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/cli.rs
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/discovery.rs
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/folders.rs
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/indexer.rs
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/discovery.rs
     commit: 65b183a
 ---

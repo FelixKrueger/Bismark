@@ -1,30 +1,36 @@
 ---
 type: usage
 title: Extract methylation calls
-description: Turn a Bismark BAM into per-cytosine call files and an M-bias table, and use M-bias to set the --ignore trimming.
+description: Turn a Bismark BAM into per-cytosine call files and an M-bias table, use M-bias to set the --ignore trimming, and read BAMs from other aligners with --allow_discordant.
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: 65b183a
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/pair_class.rs
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/state.rs
+    commit: f6a21fd
 ---
 
 # Extract methylation calls
@@ -61,6 +67,17 @@ All four default to 0. Soft-clipped bases count as read positions (`extract_call
 ## Paired-end overlap
 
 For paired-end input, calls from read 2 that overlap read 1 are dropped by default, so a cytosine is counted once per fragment. `--include_overlap` keeps them; it is accepted only together with an explicit `-p` (`Cli::validate` in `extractor/cli.rs`). Coordinate-sorted paired-end input is rejected, because mates must be next to each other; coordinate-sorted single-end input is fine (`extract_pe_parallel` in `extractor/parallel.rs`).
+
+## BAMs from other aligners
+
+`--allow_discordant` (off by default) accepts a BAM from another aligner that writes Bismark `XM`/`XR`/`XG` tags. Paired-end input must still be name-grouped, for example with `samtools collate` or `samtools sort -n`. With the flag:
+
+- Secondary (`0x100`) and supplementary (`0x800`) records are skipped and counted. In single-end mode this is the only effect.
+- Each pair is classified (`classify_pair` in `extractor/pair_class.rs`). A same-chromosome pair with one forward and one reverse mate from the same original strand, and spans that fit that orientation, takes the normal path. Every other pair is called mate by mate; on the same chromosome, read 2 calls at positions read 1 also calls are dropped (`drop_overlap_generic` in `extractor/overlap.rs`).
+- A mapped read whose mate is absent is called as an orphan, single-end style.
+- When more than 20% of templates are orphans, a warning prints, even with `-q`. It usually means unmapped mates or input that is not name-grouped (`ExtractState::finalize` in `extractor/state.rs`).
+
+The counts go into the splitting report: [reference/run-reports.md](../reference/run-reports.md).
 
 ## Output layout
 

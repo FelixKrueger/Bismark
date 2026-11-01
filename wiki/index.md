@@ -8,9 +8,9 @@
 
 - `usage/install.md`: The four ways to get the bismark binary, and the external aligners each one needs.
 - `usage/prepare-a-genome.md`: Build the C-to-T and G-to-A converted genome and its indexes once, before the first alignment.
-- `usage/align-reads.md`: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, and run 5-Base data.
+- `usage/align-reads.md`: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, see how the converted reads reach the aligner, and run 5-Base data.
 - `usage/deduplicate-alignments.md`: Remove PCR duplicates from a Bismark BAM, when to skip this step, and the UMI modes.
-- `usage/extract-methylation-calls.md`: Turn a Bismark BAM into per-cytosine call files and an M-bias table, and use M-bias to set the --ignore trimming.
+- `usage/extract-methylation-calls.md`: Turn a Bismark BAM into per-cytosine call files and an M-bias table, use M-bias to set the --ignore trimming, and read BAMs from other aligners with --allow_discordant.
 - `usage/make-coverage-and-cytosine-reports.md`: Build the bedGraph, the .bismark.cov.gz coverage file and the genome-wide cytosine report, from the extractor or with the standalone tools.
 
 ## Reference
@@ -22,4 +22,4 @@
 
 ## Troubleshooting
 
-- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, M-bias, and the errors that stop a run.
+- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, M-bias, the errors that stop a run, and the warnings that do not.

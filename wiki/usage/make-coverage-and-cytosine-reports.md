@@ -5,26 +5,26 @@ description: Build the bedGraph, the .bismark.cov.gz coverage file and the genom
 tags: [bedgraph, coverage, cytosine-report, coverage2cytosine]
 page_id: make-coverage-and-cytosine-reports
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/downstream_filenames.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/filename.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: 65b183a
+    commit: f6a21fd
 ---
 
 # Make coverage and cytosine reports

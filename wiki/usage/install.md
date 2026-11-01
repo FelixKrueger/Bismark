@@ -7,19 +7,19 @@ page_id: install
 subject_status: current
 updated: 2026-10-12
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: Dockerfile
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 65b183a
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
     commit: 65b183a
 ---

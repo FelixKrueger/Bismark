@@ -5,20 +5,23 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-01
 sources:
-  - repo: Bismark
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 65b183a
-  - repo: Bismark
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: 65b183a
+    commit: f6a21fd
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/mod.rs
+    commit: f6a21fd
 ---
 
 # Aligner options
@@ -61,7 +64,7 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--score_min <func>` | `L,0,-0.2`; `G,20,8` with Bowtie 2 `--local` | Minimum alignment score |
 | `--local` | off | Local alignment; Bowtie 2 and HISAT2 only |
 | `--rdg <a,b>` / `--rfg <a,b>` | `5,3` | Read and reference gap penalties |
-| `-I <n>` / `-X <n>` (`--minins` / `--maxins`) | `-X 500` | Insert size; paired-end only |
+| `-I <n>` / `-X <n>` (`--minins` / `--maxins`) | `-X 500` | Insert size; paired-end only, including a positional uBAM or BINSEQ file that holds pairs |
 | `--no_dovetail` | dovetail on | Paired-end Bowtie 2 gets `--dovetail` unless this is set |
 | `-p <n>` / `--threads <n>` | off | Threads per instance, 2 or more |
 | `--multicore <n>` / `--parallel <n>` | 1 | Input chunks run in parallel; 1 or more |
@@ -70,14 +73,15 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--mm2_maximum_length <n>` | 10000 | minimap2 / rammap length cutoff, 100 to 100000 |
 | `--quiet` | off | Fewer Bowtie 2 warnings |
 
-Every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end run gets `--no-mixed --no-discordant` (`build_aligner_options`).
+Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end run gets `--no-mixed --no-discordant` (`build_aligner_options`).
 
 ## Output
 
 | Option | Default | Meaning |
 |---|---|---|
 | `-o <dir>` (`--output_dir`) | current folder | Created with parents if missing |
-| `--temp_dir <dir>` | current folder | Where the converted reads are written during the run |
+| `--temp_dir <dir>` | current folder | Where the converted-read FIFOs, or the converted files, go during the run |
+| `--no_stream_converted` | off | Write the converted reads to `--temp_dir` as files instead of streaming them (`resolve_stream_converted`); see [usage/align-reads.md](../usage/align-reads.md) |
 | `-B <name>` (`--basename`) | from read file | Output basename |
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
 | `--bam` | on | Accepted; BAM is the only output |
@@ -90,13 +94,16 @@ Every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end run gets
 
 All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other.
 
+With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, with a default `--score_min` of `L,0,-0.6` (`build_five_base_aligner_options`, `default_linear_score`). They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant` or `--dovetail`. `--known-splicesite-infile` is rejected.
+
 ## Rejected options and combinations
 
 | Case | Where |
 |---|---|
 | `--sam`, `--cram` | `resolve_output` |
 | `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
-| minimap2 or rammap with paired-end reads (outside 5-Base) | `reject_unsupported_paired_aligner` |
+| minimap2 or rammap with paired-end reads, or a positional paired uBAM/BINSEQ (outside 5-Base) | `reject_unsupported_paired_aligner` |
+| Read files with Windows (CRLF) line endings | `reject_crlf_inputs` in `aligner/mod.rs`, before any aligner starts |
 | `--local` with minimap2, rammap or `--combined_index` | `resolve` |
 | `--combined_index` with `--multicore` > 1, or with minimap2 / rammap | `reject_combined_index_unsupported` |
 | `--hisat2` with both `--multicore` and `-p` | `resolve` |
