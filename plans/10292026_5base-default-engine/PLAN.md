@@ -404,3 +404,76 @@ Felix gave the implementation trigger for the benchmark (outline steps 2–5). S
    - Stream 1 (NUMA node 0, CPUs 0–31): NA12878 A, then B-loc, then C.
    - Stream 2 (node 1, CPUs 32–63): NA12878 B, then B-X, then HG002 A.
    - The CPU set is recorded per cell. As Efficiency allows, concurrent screen timings are excluded; cost is measured in the sequential confirm stage.
+
+## Implementation notes — outcome (a), 2026-10-30
+
+The screen gave outcome (a) under `PREREGISTRATION.md` (see `RESULTS.md`). Felix gave the implementation trigger for Behavior 8:
+- **Docs** (`docs/src/content/docs/rust/illumina-5-base.md`):
+  - the stability contract now names the default minimap2 engine as the one behind the published numbers;
+  - "Running it" states why minimap2 is the default, with a link to the evidence;
+  - a new "Choosing an engine" section has the screen table and advises raising Bowtie 2's 500 bp insert cap (e.g. `-X 800`) on 5-Base libraries;
+  - the tuning section points to it.
+- **Startup notice:** `five_base_notice(aligner)` in `mod.rs` names the engine that runs and says paired-end only. Before, it said minimap2 and "SE + PE" for every run.
+  - Unit test: `five_base_notice_names_the_engine_that_runs`.
+  - CLI assertion in `five_base_1134_default_argv_is_exact`.
+- **CHANGELOG:** one sentence.
+- **No pin test added:** `illumina_5base_resolves_to_minimap2` already pins the default.
+- **Committed results:** the harness, `RESULTS.md` and the small text results (`bench_results/`, excluding `bismark.log` and the tarball). The pre-registration commit is `425d42b` after the rebase onto `dev` (`5da54cd`); it was `38e5f2d` before.
+- **Not done (outside the pre-registration):** a 5-Base Bowtie 2 default insert cap (and `--dovetail`), and a larger minimap2 `-K` for 5-Base throughput. Both are proposed as separate issues in `RESULTS.md`.
+- **Wall time:** dropped from the docs table and the decision, because the screen ran concurrently on a shared, heavily loaded host (Efficiency section).
+- **Checks:** fmt, `--lib aligner::` 612, `aligner_cli` 139, release Clippy `-D warnings` and the full `bismark` suite (2324 passed, 0 failed, 20 ignored) pass.
+
+### Review round — 2026-11-01
+
+Dual code review (`CODE_REVIEW_reviewer-A.md`, `CODE_REVIEW_reviewer-B.md`) and the coverage audit (`COVERAGE.md`, INCOMPLETE: 2 MISSING, 4 PARTIAL) both confirm outcome (a). Felix gave the implementation trigger for the fixes.
+
+- **Docs:**
+  - the input is described as 100M pairs before trimming (98.1M after);
+  - the table lead-in separates the shared r set from each engine's own CpG count;
+  - memory is given in GiB;
+  - a note explains why screen r is below the full-depth contract figure;
+  - the untested causal claims (memory, "typical fragments") are removed.
+- **`RESULTS.md`:**
+  - B-loc and recall statements corrected;
+  - HISAT2's loss is not attributed to the insert cap;
+  - minimap2's index build (~69 s) and thread use (~3.8 of 32 busy, from noisy wall times) are reported from its log;
+  - follow-ups revised (Bowtie 2 `-X 800`/`--dovetail`; minimap2 `-K`).
+- **`five_base_compare.py`:**
+  - the newline is stripped from the last field, so 6-column reports load;
+  - duplicate sites and duplicate arm names fail;
+  - the empty-common-set, per-contig and joined-fraction guards moved here (`--min-joined`);
+  - the self-test now checks r against `concordance.py`'s reference functions and covers each guard (Validation 6), plus a failing refcheck.
+- **`five_base_engine_bench.sh`:**
+  - the process tree is sampled from the launched PID's descendants (no `setsid`);
+  - a `@PG` command-line check (`check_pg_line`/`verify_pg`) is added;
+  - arm A requires `-x sr` and B-loc requires `--reorder`;
+  - a missing commit hash fails, and the DRAGEN CX report must be unique;
+  - `score` requires each cell's `DONE` marker, exactly one CpG report and equal read counts;
+  - `selftest` passes the real options for every arm and rejects 8 injected wrong ones (Validation 1).
+- **CLI test:** asserts that the Bowtie 2/HISAT2 notice does not mention minimap2.
+- **Data loss on oxy:** an idle restart between 2026-10-30 and 2026-11-01 wiped `/var/tmp`, including the screen BAMs (kept per plan "until the PR merges") and the dry-run score file.
+  - Durable results survive: `~/5base_results` on oxy, `bench_results/` here, and the inputs in S3.
+  - The retroactive `@PG` check could therefore not be run on the screen BAMs; `RESULTS.md` says so.
+  - Dry-run scorer value, for the record: A own-set r at cov ≥ 10 = 0.789631, n = 9,492 (`concordance.py`: 0.7899, n = 9,501).
+
+### Re-review round — 2026-11-01
+
+The re-reviews (`CODE_REVIEW_R2_reviewer-A.md` / `-B.md`) and the re-audit (`COVERAGE_R2.md`: COMPLETE) found no regressions. Felix gave the implementation trigger for the remaining items:
+
+- **`RESULTS.md`:**
+  - a data-retention caveat covering the lost BAMs and CpG reports, the fact that `score.tsv` cannot be recomputed without re-aligning, and that it was produced by the pre-guard scorer;
+  - thread use stated as an observation from noisy wall times, with `-K` as an untested hypothesis;
+  - minimap2 index build given as ~69 s;
+  - the dry-run scorer value's source stated;
+  - "raw outputs" changed to "retained outputs".
+- **Docs:** "needs no prebuilt index".
+- **Harness:**
+  - the `@PG` check matches each arm's flags as one string;
+  - the header is read before grepping, to avoid a `pipefail`/SIGPIPE false failure;
+  - `score` checks that the `DONE` key matches `metrics.tsv` and that read counts are non-empty;
+  - a control-only CX report gets a message;
+  - a zero memory peak aborts;
+  - five new failing self-test cases cover `-x sr`, B-loc `--reorder`, the B-X/C `--local` ban and the B-X insert value. The self-test now has 18 cases (5 pass, 13 rejected), on the laptop and on oxy.
+- **Scorer:** the self-test asserts the empty-common-set message.
+- **CLI test:** asserts that no stderr line says "aligned with minimap2".
+- **Checks:** fmt, `--lib aligner::` 612, `aligner_cli` 139, release Clippy and both self-tests pass.

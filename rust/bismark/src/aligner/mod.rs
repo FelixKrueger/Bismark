@@ -161,6 +161,17 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
     )
 }
 
+/// Never-silent notice for an `--illumina_5base` run, naming the engine that runs.
+fn five_base_notice(aligner: Aligner) -> String {
+    format!(
+        "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
+         with {} to the UNCONVERTED genome and methylation is called with inverted \
+         polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
+         NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
+        aligner.name()
+    )
+}
+
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
@@ -238,17 +249,9 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         eprintln!("Note: --strandID only applies to paired-end output; it has no effect here.");
     }
 
-    // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
-    // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
-    // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
-    // for 5-Base, so this is NOT byte-identical; it is concordance-validated vs DRAGEN.
+    // Never-silent opt-in notice (#787): 5-Base has no Perl oracle, so it is not byte-identical.
     if config.five_base {
-        eprintln!(
-            "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
-             with minimap2 to the UNCONVERTED genome and methylation is called with inverted \
-             polarity (a read T at a genomic C = methylated). Directional only (SE + PE). \
-             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN."
-        );
+        eprintln!("{}", five_base_notice(config.aligner));
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to
@@ -8448,6 +8451,25 @@ mod tests {
         assert_eq!(five_base_threads(None, 1, Some(16)), 16);
         assert_eq!(five_base_threads(None, 1, Some(1)), 1);
         assert_eq!(five_base_threads(None, 1, None), 2);
+    }
+
+    #[test]
+    fn five_base_notice_names_the_engine_that_runs() {
+        for aligner in [
+            config::Aligner::Minimap2,
+            config::Aligner::Bowtie2,
+            config::Aligner::Hisat2,
+        ] {
+            let notice = five_base_notice(aligner);
+            assert!(
+                notice.contains(&format!(
+                    "aligned with {} to the UNCONVERTED",
+                    aligner.name()
+                )),
+                "{notice}"
+            );
+            assert!(notice.contains("paired-end only"), "{notice}");
+        }
     }
 
     #[test]

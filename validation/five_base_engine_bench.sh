@@ -51,10 +51,10 @@ verify_options() {
   local opts=" ${line##*with the specified options: } "
   local need=() deny=()
   case $arm in
-    A) need=("Bismark was run with minimap2" " -t $THREADS ") ;;
+    A) need=("Bismark was run with minimap2" " -t $THREADS " " -x sr ") ;;
     B) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --score-min L,0,-0.6 ")
        deny=(" --local " " --maxins ") ;;
-    B-loc) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --local " " --score-min G,20,8 ") ;;
+    B-loc) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --local " " --score-min G,20,8 ") ;;
     B-X) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --maxins 800 ") deny=(" --local ") ;;
     C) need=("Bismark was run with HISAT2" " -p $THREADS " " --reorder " " --no-spliced-alignment ")
        deny=(" --local ") ;;
@@ -67,6 +67,24 @@ verify_options() {
   if [[ $arm == C ]]; then
     [[ $(grep -o -- "--no-spliced-alignment" <<<"$opts" | wc -l) -eq 1 ]] || die "C: no-splice not exactly once"
   fi
+}
+
+# The Bismark @PG command line must carry --illumina_5base, the thread count and every arm flag.
+check_pg_line() {
+  local arm=$1 line=$2 t
+  [[ $line == *"ID:Bismark"* ]] || die "$arm: not a Bismark @PG line: $line"
+  local cl=" ${line#*CL:} "; cl=${cl//\"/ }
+  local flags; flags=$(arm_flags "$arm")
+  for t in --illumina_5base "-p $THREADS" ${flags:+"$flags"}; do
+    [[ $cl == *" $t "* ]] || die "$arm: @PG command line lacks '$t': $cl"
+  done
+}
+
+verify_pg() {
+  local header line
+  header=$(samtools view -H "$2") || die "$1: cannot read the header of $2"
+  line=$(grep -m1 $'^@PG\tID:Bismark' <<<"$header") || die "$1: no Bismark @PG in $2"
+  check_pg_line "$1" "$line"
 }
 
 free_gb() { df -Pk "$ROOT" | awk 'NR==2{print int($4/1024/1024)}'; }
@@ -109,7 +127,8 @@ cmd_prep() {
   local reads; reads=$(trimmed "$w") || die "Trim Galore output missing in $w"
   # shellcheck disable=SC2086
   ( cd "$w" && md5sum $(basename -a $reads) > input.md5 )
-  local cx; cx=$(ls "$ROOT/$s"/dragen/*.CX_report.txt.gz | grep -v '\.control\.')
+  local cx; cx=$(ls "$ROOT/$s"/dragen/*.CX_report.txt.gz 2>/dev/null | grep -v '\.control\.' || true)
+  [[ -n $cx && $(wc -l <<<"$cx") -eq 1 ]] || die "expected one DRAGEN CX report in $ROOT/$s/dragen, found: '$cx'"
   if [[ ! -s $ROOT/$s/dragen/dragen.cpg.txt ]]; then
     log "prep $s: DRAGEN CpG-only copy"
     zcat "$cx" | awk -F'\t' '$6=="CG"' > "$ROOT/$s/dragen/dragen.cpg.txt.tmp"
@@ -121,13 +140,24 @@ cmd_prep() {
   log "prep $s/$tag done"
 }
 
-# Process-tree peak RSS (kB) and the aligner's CPU seconds, sampled every 2 s.
+# PIDs of a process and all its descendants, comma-separated.
+tree_pids() {
+  ps -e -o pid=,ppid= | awk -v root="$1" '
+    { kids[$2] = kids[$2] " " $1 }
+    END { q[1] = root; n = 1; out = root
+          for (i = 1; i <= n; i++) { m = split(kids[q[i]], c, " ")
+            for (j = 1; j <= m; j++) { q[++n] = c[j]; out = out "," c[j] } }
+          print out }'
+}
+
+# Process-tree peak RSS (KiB) and the aligner's CPU seconds, sampled every 2 s.
 sample_tree() {
   local sid=$1 out=$2 peak=0 acpu=0
   while kill -0 "$sid" 2>/dev/null; do
-    local rss cpu
-    rss=$(ps -s "$sid" -o rss= 2>/dev/null | awk '{s+=$1} END {print s+0}')
-    cpu=$(ps -s "$sid" -o comm=,times= 2>/dev/null \
+    local rss cpu pids
+    pids=$(tree_pids "$sid")
+    rss=$(ps -o rss= -p "$pids" 2>/dev/null | awk '{s+=$1} END {print s+0}')
+    cpu=$(ps -o comm=,times= -p "$pids" 2>/dev/null \
           | awk '$1 ~ /^(minimap2|bowtie2-align|hisat2-align)/ {s+=$2} END {print s+0}')
     (( rss > peak )) && peak=$rss
     (( cpu > acpu )) && acpu=$cpu
@@ -140,7 +170,8 @@ cmd_cell() {
   local s=$1 tag=$2 arm=$3 rep=${4:-1}
   local in=$ROOT/runs/$s/$tag/input d=$ROOT/runs/$s/$tag/$arm.rep$rep
   [[ -f $in/DONE ]] || die "run 'prep $s $tag' first"
-  local commit; commit=$(bismark --version | grep -o '([0-9a-f]\{7,\}' | tr -d '(')
+  local commit; commit=$(bismark --version | grep -o '([0-9a-f]\{7,\}' | tr -d '(') || true
+  [[ -n $commit ]] || die "no commit hash in 'bismark --version'"
   local flags; flags=$(arm_flags "$arm")
   local key; key=$(printf '%s|%s|%s|%s' "$commit" "$flags" "$THREADS" "$(cat "$in/input.md5")" | sha256sum | cut -c1-16)
   if [[ -f $d/DONE ]] && [[ $(cat "$d/DONE") == "$key" ]]; then log "cell $s/$tag/$arm.rep$rep already done"; return; fi
@@ -152,7 +183,7 @@ cmd_cell() {
   log "cell $s/$tag/$arm.rep$rep: align ($flags)"
   local load0; load0=$(cut -d' ' -f1 /proc/loadavg)
   # shellcheck disable=SC2086
-  setsid taskset -c "$CPUS" /usr/bin/time -v -o "$d/time.txt" \
+  taskset -c "$CPUS" /usr/bin/time -v -o "$d/time.txt" \
     bismark --illumina_5base $flags --five_base_deconvolution -p "$THREADS" \
       --genome "$GENOME" -o "$d" --temp_dir "$d/tmp" -1 "$r1" -2 "$r2" \
       > "$d/bismark.log" 2>&1 &
@@ -163,9 +194,11 @@ cmd_cell() {
   wait "$spid" 2>/dev/null || true
   local load1; load1=$(cut -d' ' -f1 /proc/loadavg)
   [[ $rc -eq 0 ]] || die "bismark exited $rc (see $d/bismark.log)"
+  [[ -s $d/tree.tsv && $(cut -f1 "$d/tree.tsv") -gt 0 ]] || die "the process-tree sampler recorded no memory"
   local bam report deconv
   bam=$(ls "$d"/*_pe.bam); report=$(ls "$d"/*_PE_report.txt); deconv=$(ls "$d"/*_pe.5base_deconvolution.txt)
   verify_options "$arm" "$report"
+  verify_pg "$arm" "$bam"
 
   log "cell $s/$tag/$arm.rep$rep: dedup + extract"
   deduplicate_bismark -p --bam --output_dir "$d" "$bam" > "$d/dedup.log" 2>&1
@@ -220,26 +253,70 @@ cmd_cell() {
 
 cmd_score() {
   local s=$1 tag=$2 base=$3; shift 3
-  local args=()
+  local args=() pairs=()
   for arm in "$@"; do
-    local cpg; cpg=$(ls "$ROOT/runs/$s/$tag/$arm.rep1"/*CpG_report.txt* | head -1)
+    local d=$ROOT/runs/$s/$tag/$arm.rep1 cpg
+    [[ -s $d/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
+    [[ $(cat "$d/DONE") == "$(awk -F'\t' 'NR==2 {print $NF}' "$d/metrics.tsv")" ]] \
+      || die "cell $s/$tag/$arm.rep1: DONE key does not match metrics.tsv"
+    cpg=$(ls "$d"/*CpG_report.txt*)
+    [[ $(wc -l <<<"$cpg") -eq 1 ]] || die "expected one CpG report in $d, found: $cpg"
+    local n; n=$(awk -F'\t' 'NR==2 {print $5}' "$d/metrics.tsv")
+    [[ $n =~ ^[0-9]+$ && $n -gt 0 ]] || die "cell $s/$tag/$arm.rep1: no read count in metrics.tsv"
+    pairs+=("$n")
     args+=(--arm "$arm=$cpg")
   done
+  [[ $(printf '%s\n' "${pairs[@]}" | sort -u | wc -l) -eq 1 ]] \
+    || die "arms analysed different read counts: ${pairs[*]}"
   local out=$ROOT/runs/$s/$tag/score.tsv
   python3 -I "$HERE/five_base_compare.py" compare --dragen "$ROOT/$s/dragen/dragen.cpg.txt" \
-    "${args[@]}" --baseline "$base" --out "$out"
-  local bad
-  bad=$(awk -F'\t' 'NR>1 && $4 > 0 && $3 == 0 {print $1":"$2}' "$out.contigs" | head -5)
-  [[ -z $bad ]] || die "zero joined CpGs on a DRAGEN-covered contig: $bad"
-  awk -F'\t' -v min="${MIN_JOINED:-0.5}" 'NR>1 && $4 < min {print "ERROR: " $1 " joins only " $4 " of DRAGEN CpGs"; e=1} END {exit e}' "$out.joined"
+    "${args[@]}" --baseline "$base" --out "$out" --min-joined "${MIN_JOINED:-0.5}"
   mkdir -p "$RESULTS/$s/$tag"
   cp "$out" "$out.contigs" "$out.joined" "$RESULTS/$s/$tag/"
   log "score $s/$tag written"
+}
+
+# Option checks accept each arm's real options and reject a wrong one.
+cmd_selftest() {
+  local t; t=$(mktemp -d "${TMPDIR:-/tmp}/fbe_selftest.XXXXXX")
+  local ok=0 bad=0
+  expect() {  # expect pass|fail <arm> <report-options> <pg-command-line>
+    local want=$1 arm=$2 got=pass
+    printf 'Bismark was run with %s against the unconverted genome of /g with the specified options: %s\n' \
+      "$(engine_of "$arm")" "$3" > "$t/report"
+    ( verify_options "$arm" "$t/report" && check_pg_line "$arm" $'@PG\tID:Bismark\tVN:v0.25.1\tCL:"'"$4"'"' ) \
+      > /dev/null 2>&1 || got=fail
+    if [[ $got == "$want" ]]; then ok=$((ok + 1)); else bad=$((bad + 1)); echo "selftest: $arm expected $want: $3 | $4"; fi
+  }
+  engine_of() { case $1 in A) echo minimap2 ;; C) echo HISAT2 ;; *) echo "Bowtie 2" ;; esac; }
+  local p="-p $THREADS" i5=--illumina_5base bt="--bowtie2 --five_base_index $BT2_INDEX" ht="--hisat2 --five_base_index $HT2_INDEX"
+  expect pass A "-a --MD --secondary=no -t $THREADS -x sr -K 250K" "bismark $i5 $p --genome /g"
+  expect fail A "-a --MD --secondary=no -t 8 -x sr -K 250K" "bismark $i5 $p --genome /g"
+  expect fail A "-a --MD --secondary=no -t $THREADS -x sr -K 250K" "bismark $i5 -p 8 --genome /g"
+  expect pass B "-q --score-min L,0,-0.6 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B "-q --score-min L,0,-0.6 -p $THREADS" "bismark $i5 $bt $p"
+  expect fail B "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect pass B-loc "-q --local --score-min G,20,8 -p $THREADS --reorder" "bismark $i5 $bt --local $p"
+  expect fail B-loc "-q --score-min L,0,-0.6 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect pass B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $p"
+  expect fail B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect pass C "-q --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
+  expect fail C "-q --score-min L,0,-0.6 --no-spliced-alignment --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
+  expect fail C "-q --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $ht $p"
+  expect fail A "-a --MD --secondary=no -t $THREADS -x map-ont -K 250K" "bismark $i5 $p --genome /g"
+  expect fail B-loc "-q --local --score-min G,20,8 -p $THREADS" "bismark $i5 $bt --local $p"
+  expect fail B-X "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $p"
+  expect fail C "-q --local --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
+  expect fail B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 8000 $p"
+  rm -r "$t"
+  echo "selftest: $ok passed, $bad failed"
+  [[ $bad -eq 0 ]]
 }
 
 case ${1:-} in
   prep) shift; cmd_prep "$@" ;;
   cell) shift; cmd_cell "$@" ;;
   score) shift; cmd_score "$@" ;;
+  selftest) cmd_selftest ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;
 esac

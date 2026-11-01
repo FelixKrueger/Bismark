@@ -23,7 +23,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from concordance import _norm_chrom, _open  # noqa: E402
+from concordance import _norm_chrom, _open, pearson, weighted_pearson  # noqa: E402
 
 CONTIGS = [str(i) for i in range(1, 23)] + ["X"]
 CONTIG_IDX = {c: i for i, c in enumerate(CONTIGS)}
@@ -43,7 +43,7 @@ def load_cpg(path):
     out = {}
     with _open(path) as fh:
         for line in fh:
-            f = line.split("\t", 6)
+            f = line.rstrip("\n").split("\t", 6)
             if len(f) < 6 or f[5] not in ("CG", "CpG"):
                 continue
             c = _norm_chrom(f[0])
@@ -52,7 +52,10 @@ def load_cpg(path):
             meth, unmeth = int(f[3]), int(f[4])
             cov = meth + unmeth
             if cov:
-                out[key(c, f[1], f[2])] = (meth << 32) | cov
+                k = key(c, f[1], f[2])
+                if k in out:
+                    raise SystemExit(f"five_base_compare: duplicate site {c}:{f[1]}{f[2]} in {path}")
+                out[k] = (meth << 32) | cov
     if not out:
         raise SystemExit(f"five_base_compare: no CpGs on autosomes/X in {path}")
     return out
@@ -111,6 +114,8 @@ def cmd_compare(args):
             raise SystemExit(f"--arm expects NAME=path, got {spec!r}")
         arms.append((name, path))
     names = [n for n, _ in arms]
+    if len(set(names)) != len(names):
+        raise SystemExit(f"duplicate arm names in {names}")
     if args.baseline not in names:
         raise SystemExit(f"--baseline {args.baseline!r} is not one of the arms {names}")
     drg = load_cpg(args.dragen)
@@ -155,6 +160,9 @@ def cmd_compare(args):
             fh.write("\t".join(map(str, r)) + "\n")
 
     drg_cov1 = sum(1 for v in drg.values() if cov_of(v) >= 1)
+    errors = []
+    if not common:
+        errors.append("empty common set")
     with open(args.out + ".contigs", "w") as fh:
         fh.write("arm\tcontig\tjoined_cov10\tdragen_cov10\n")
         for n in names:
@@ -168,12 +176,18 @@ def cmd_compare(args):
                         per[c] += 1
             for c in CONTIGS:
                 fh.write(f"{n}\t{c}\t{per[c]}\t{dper[c]}\n")
+                if dper[c] and not per[c]:
+                    errors.append(f"{n} joins no cov>=10 CpG on contig {c}")
     with open(args.out + ".joined", "w") as fh:
         fh.write("arm\tdragen_cpgs\tjoined_cpgs\tjoined_fraction\n")
         for n in names:
             j = sum(1 for k in drg if k in data[n])
             fh.write(f"{n}\t{drg_cov1}\t{j}\t{j / drg_cov1:.6f}\n")
+            if j / drg_cov1 < args.min_joined:
+                errors.append(f"{n} joins only {j / drg_cov1:.4f} of DRAGEN CpGs")
     print(f"wrote {args.out} (+ .contigs, .joined); common set = {len(common)} CpGs")
+    if errors:
+        raise SystemExit("five_base_compare: " + "; ".join(errors))
 
 
 def read_fasta(path, keep):
@@ -262,7 +276,7 @@ def _selftest():
     ])
     out = os.path.join(d, "m.tsv")
     cmd_compare(argparse.Namespace(dragen=drg, arm=[f"A={a}", f"B={b}"],
-                                   baseline="A", out=out))
+                                   baseline="A", out=out, min_joined=0.5))
     rows = {}
     with open(out) as fh:
         next(fh)
@@ -279,12 +293,50 @@ def _selftest():
     joined = open(out + ".joined").read()
     assert "A\t4\t4\t1.000000" in joined and "B\t4\t3\t0.750000" in joined, joined
 
+    # Own-set r and weighted r match concordance.py's reference functions.
+    xs, ys, ws = [100.0, 100.0 / 12, 50.0, 100.0], [100.0, 0.0, 50.0, 100.0], [10, 12, 4, 3]
+    assert abs(float(rows[("A", "own", "1")][4]) - pearson(xs, ys)) < 1e-6
+    assert abs(float(rows[("A", "own", "1")][5]) - weighted_pearson(xs, ys, ws)) < 1e-6
+
+    def fails(fn, needle):
+        try:
+            fn()
+        except SystemExit as e:
+            assert needle in str(e), e
+            return
+        raise AssertionError(f"expected failure containing {needle!r}")
+
+    # Guards: an arm with no CpG on a DRAGEN-covered contig, a low joined fraction,
+    # duplicate arm names, duplicate sites.
+    chr2_only = write("c2.txt", [("2", 5, "+", 3, 0, "CG")])
+    fails(lambda: cmd_compare(argparse.Namespace(dragen=drg, arm=[f"A={a}", f"T={chr2_only}"],
+                                                 baseline="A", out=out, min_joined=0.0)),
+          "T joins no cov>=10 CpG on contig 1")
+    fails(lambda: cmd_compare(argparse.Namespace(dragen=drg, arm=[f"A={a}", f"T={chr2_only}"],
+                                                 baseline="A", out=out, min_joined=0.0)),
+          "empty common set")
+    fails(lambda: cmd_compare(argparse.Namespace(dragen=drg, arm=[f"A={a}", f"B={b}"],
+                                                 baseline="A", out=out, min_joined=0.9)),
+          "B joins only 0.7500")
+    fails(lambda: cmd_compare(argparse.Namespace(dragen=drg, arm=[f"A={a}", f"A={b}"],
+                                                 baseline="A", out=out, min_joined=0.0)),
+          "duplicate arm names")
+    dup = write("dup.txt", [("1", 10, "+", 1, 0, "CG"), ("1", 10, "+", 2, 0, "CG")])
+    fails(lambda: load_cpg(dup), "duplicate site")
+    six = os.path.join(d, "six.txt")
+    with open(six, "w") as fh:
+        fh.write("1\t10\t+\t1\t1\tCG\n")
+    assert len(load_cpg(six)) == 1
+
     fa = os.path.join(d, "g.fa")
     with open(fa, "w") as fh:
         fh.write(">1\n" + "A" * 9 + "CG" + "A" * 7 + "CG" + "A" * 10 + "\n>2\nAAAACGAA\n")
     refcheck_drg = write("rc.txt", [("chr1", 10, "+", 1, 0, "CG"), ("chr1", 11, "-", 1, 0, "CG"),
                                     ("chr1", 19, "+", 1, 0, "CG"), ("chr2", 5, "+", 1, 0, "CG")])
     cmd_refcheck(argparse.Namespace(dragen=refcheck_drg, fasta=fa, n=10, min_fraction=0.999))
+    off_by_one = write("rc_bad.txt", [("chr1", 11, "+", 1, 0, "CG"), ("chr2", 5, "+", 1, 0, "CG")])
+    fails(lambda: cmd_refcheck(argparse.Namespace(dragen=off_by_one, fasta=fa, n=10,
+                                                  min_fraction=0.999)), "below the")
     print("selftest OK")
 
 
@@ -296,6 +348,8 @@ def main():
     c.add_argument("--arm", action="append", required=True, help="NAME=cytosine_report")
     c.add_argument("--baseline", required=True)
     c.add_argument("--out", required=True)
+    c.add_argument("--min-joined", type=float, default=0.5,
+                   help="minimum fraction of DRAGEN CpGs each arm must cover")
     r = sub.add_parser("refcheck")
     r.add_argument("--dragen", required=True)
     r.add_argument("--fasta", required=True)
