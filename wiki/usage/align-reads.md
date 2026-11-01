@@ -9,28 +9,31 @@ updated: 2026-11-01
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: f6a21fd
+    commit: b4f901b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/parallel.rs
+    commit: b4f901b
 ---
 
 # Align reads
@@ -86,7 +89,7 @@ Only one aligner can be selected (`resolve_aligner` in `aligner/config.rs`). The
 | Option | Effect |
 |---|---|
 | `-p <n>` / `--threads <n>` | Threads per aligner instance, 2 or more. For Bowtie 2 and HISAT2 it also adds `--reorder` (`build_aligner_options` in `aligner/options.rs`). For minimap2 and rammap it sets `-t`. |
-| `--multicore <n>` / `--parallel <n>` | Splits the input into `n` chunks that run in parallel. For HISAT2 it means one instance with `-p n` instead, and a run that gives both `--multicore` and `-p` is rejected. |
+| `--multicore <n>` / `--parallel <n>` | Splits the input into `n` chunks that run in parallel. For HISAT2 it means one instance with `-p n` instead, and a run that gives both `--multicore` and `-p` is rejected; in 5-Base runs `-p` wins instead. |
 
 A single-end directional run starts 2 aligner instances and a non-directional run starts 4 (`se_instance_plan` in `aligner/mod.rs`); each instance gets the `-p` threads.
 
@@ -97,10 +100,12 @@ Each read file is converted (C→T, G→A) before it is aligned. By default the 
 | Run | Converted reads |
 |---|---|
 | Bowtie 2 or minimap2 | Streamed through FIFOs |
-| rammap (in-process) | Passed in memory |
+| rammap, in-process backend, FastQ input | Passed in memory |
 | `--no_stream_converted` | Written to `--temp_dir` as files |
-| HISAT2, `--combined_index*`, `--rammap_subprocess`, or a `--temp_dir` where a FIFO cannot be made | Written as files; a `Note:` line says why (`run` in `aligner/mod.rs`) |
+| HISAT2, `--combined_index*`, rammap through the external binary (`--rammap_subprocess`, FastA input, or a build without the in-process backend), or a `--temp_dir` where a FIFO cannot be made | Written as files; a `Note:` line says why (`run` in `aligner/mod.rs`) |
 | `--illumina_5base` | None; the raw reads are aligned |
+
+`--gzip` has no effect on streamed reads. Streaming does not remove every temp file: `--multicore` above 1 writes plain input chunks `<file>.temp.<i>` (`split_contiguous` in `aligner/parallel.rs`), and uBAM or BINSEQ input is decoded to FastQ under `<temp_dir>/.bismark_ubam/` or `.bismark_binseq/` (`resolve_alt_inputs` in `aligner/mod.rs`).
 
 If something reads the converted input before the aligner does (for example an aligner wrapper script), use `--no_stream_converted`.
 
@@ -125,7 +130,7 @@ bismark --illumina_5base --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
 
 - Paired-end, directional, FastQ only (`resolve` in `aligner/config.rs`).
 - minimap2 `-x sr` against the genome FASTA is the default. For Bowtie 2 or HISAT2, add `--bowtie2` or `--hisat2` with `--five_base_index <basename>` of a normal, unconverted index. A bisulfite `BS_CT`/`BS_GA` index is rejected.
-- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--local`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`). The default `--score_min` is `L,0,-0.6`. HISAT2 always gets `--no-spliced-alignment`, and `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
+- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`, and `--local` for Bowtie 2). The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local`. HISAT2 always gets `--no-spliced-alignment` and never `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
 - Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 - Optional outputs, each next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`).
 - `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning.

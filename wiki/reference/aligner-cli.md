@@ -9,19 +9,19 @@ updated: 2026-11-01
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: f6a21fd
+    commit: b4f901b
 ---
 
 # Aligner options
@@ -85,7 +85,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 | `-B <name>` (`--basename`) | from read file | Output basename |
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
 | `--bam` | on | Accepted; BAM is the only output |
-| `--gzip` | off | Gzip the temporary converted reads (`convert.rs`); not with `--pbat` |
+| `--gzip` | off | Gzip the converted reads when they are written as files (`convert.rs`); no effect when they are streamed; not with `--pbat` |
 | `--unmapped` (`--un`), `--ambiguous`, `--ambig_bam` | off | Extra outputs for unmapped and ambiguous reads |
 | `--add_barcode`, `--add_umi` | off | `CB:Z:` / `UR:Z:` tags from the read name |
 | `--strandID` | off | `YS:Z:` strand tag; paired-end only, a note is printed for single-end |
@@ -94,7 +94,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 
 All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other.
 
-With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, with a default `--score_min` of `L,0,-0.6` (`build_five_base_aligner_options`, `default_linear_score`). They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant` or `--dovetail`. `--known-splicesite-infile` is rejected.
+With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above. The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`build_five_base_aligner_options`, `default_linear_score`). They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant`, `--dovetail` or a default `--maxins 500`. HISAT2 never gets `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected.
 
 ## Rejected options and combinations
 
@@ -106,7 +106,7 @@ With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above,
 | Read files with Windows (CRLF) line endings | `reject_crlf_inputs` in `aligner/mod.rs`, before any aligner starts |
 | `--local` with minimap2, rammap or `--combined_index` | `resolve` |
 | `--combined_index` with `--multicore` > 1, or with minimap2 / rammap | `reject_combined_index_unsupported` |
-| `--hisat2` with both `--multicore` and `-p` | `resolve` |
+| `--hisat2` with both `--multicore` and `-p` (outside 5-Base, where `-p` wins) | `resolve` |
 | `-p 1` | `build_aligner_options` |
 | `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
 

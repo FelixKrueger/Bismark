@@ -9,28 +9,34 @@ updated: 2026-11-01
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: f6a21fd
+    commit: b4f901b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/overlap.rs
+    commit: b4f901b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/pipeline.rs
+    commit: b4f901b
 ---
 
 # Extract methylation calls
@@ -73,7 +79,7 @@ For paired-end input, calls from read 2 that overlap read 1 are dropped by defau
 `--allow_discordant` (off by default) accepts a BAM from another aligner that writes Bismark `XM`/`XR`/`XG` tags. Paired-end input must still be name-grouped, for example with `samtools collate` or `samtools sort -n`. With the flag:
 
 - Secondary (`0x100`) and supplementary (`0x800`) records are skipped and counted. In single-end mode this is the only effect.
-- Each pair is classified (`classify_pair` in `extractor/pair_class.rs`). A same-chromosome pair with one forward and one reverse mate from the same original strand, and spans that fit that orientation, takes the normal path. Every other pair is called mate by mate; on the same chromosome, read 2 calls at positions read 1 also calls are dropped (`drop_overlap_generic` in `extractor/overlap.rs`).
+- Each pair is classified (`classify_pair` in `extractor/pair_class.rs`). A same-chromosome pair with one forward and one reverse mate from the same original strand, and spans that fit that orientation, takes the normal path. Every other pair is called mate by mate; on the same chromosome, read 2 calls at positions read 1 also calls are dropped unless `--include_overlap` is given (`drop_overlap_generic` in `extractor/overlap.rs`).
 - A mapped read whose mate is absent is called as an orphan, single-end style.
 - When more than 20% of templates are orphans, a warning prints, even with `-q`. It usually means unmapped mates or input that is not name-grouped (`ExtractState::finalize` in `extractor/state.rs`).
 

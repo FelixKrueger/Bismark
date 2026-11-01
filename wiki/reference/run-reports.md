@@ -9,16 +9,16 @@ updated: 2026-11-01
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: f6a21fd
+    commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: f6a21fd
+    commit: b4f901b
 ---
 
 # Run reports
@@ -72,7 +72,7 @@ The report ends with `Bismark completed in <d>d <h>h <m>m <s>s`.
 
 `<name>_splitting_report.txt` from `bismark extract` (`write_splitting_report` in `extractor/output.rs`). It lists the parameters used, including each `--ignore` value, then `Processed <n> lines in total`, `Total number of methylation call strings processed`, and a **Final Cytosine Methylation Report** with methylated counts and `C to T conversions` (unmethylated counts) per context, and the % methylated per context. With `--merge_non_CpG` the CHG and CHH lines are merged into `non-CpG`.
 
-With `--allow_discordant`, the report ends with a `Discordant read handling (--allow_discordant)` section, which also goes to stderr. It is written even when every count is 0 (`discordant_section_text`):
+With `--allow_discordant`, the report ends with a `Discordant read handling (--allow_discordant)` section, which also goes to stderr unless `-q` is given. It is written even when every count is 0 (`discordant_section_text`):
 
 | Line | Meaning |
 |---|---|
