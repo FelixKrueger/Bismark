@@ -727,6 +727,21 @@ pub struct SplittingReport {
     pub calls_chh_meth: u64,
     /// `h`.
     pub calls_chh_unmeth: u64,
+
+    // ─── `--allow_discordant` class counters (all zero when the flag is off) ───
+    /// Cross-chromosome pairs called independently (`PairClass::Independent`
+    /// with different refids).
+    pub pairs_cross_chr_independent: u64,
+    /// Same-chromosome discordant pairs called independently
+    /// (`PairClass::Independent` with the same refid — e.g. FF/RR or annihilated
+    /// geometry).
+    pub pairs_same_chr_independent: u64,
+    /// Orphan reads (mapped primary whose mate was unmapped/filtered) called.
+    pub orphan_reads_called: u64,
+    /// Secondary alignments (FLAG 0x100) skipped by the io filter.
+    pub secondary_skipped: u64,
+    /// Supplementary alignments (FLAG 0x800) skipped by the io filter.
+    pub supplementary_skipped: u64,
 }
 
 impl SplittingReport {
@@ -761,6 +776,21 @@ impl SplittingReport {
         self.calls_chg_unmeth = self.calls_chg_unmeth.saturating_add(other.calls_chg_unmeth);
         self.calls_chh_meth = self.calls_chh_meth.saturating_add(other.calls_chh_meth);
         self.calls_chh_unmeth = self.calls_chh_unmeth.saturating_add(other.calls_chh_unmeth);
+        self.pairs_cross_chr_independent = self
+            .pairs_cross_chr_independent
+            .saturating_add(other.pairs_cross_chr_independent);
+        self.pairs_same_chr_independent = self
+            .pairs_same_chr_independent
+            .saturating_add(other.pairs_same_chr_independent);
+        self.orphan_reads_called = self
+            .orphan_reads_called
+            .saturating_add(other.orphan_reads_called);
+        self.secondary_skipped = self
+            .secondary_skipped
+            .saturating_add(other.secondary_skipped);
+        self.supplementary_skipped = self
+            .supplementary_skipped
+            .saturating_add(other.supplementary_skipped);
     }
 }
 
@@ -1076,9 +1106,40 @@ pub fn write_splitting_report(
         )?;
     }
 
+    // Step 20b: `--allow_discordant` section (opt-in; absent when the flag is
+    // off, so the report is byte-identical to the default path). A run's report
+    // states the policy that was active even when all counts are zero.
+    if config.allow_discordant {
+        w.write_all(discordant_section_text(report).as_bytes())?;
+    }
+
     // Step 21: flush.
     w.flush()?;
     Ok(())
+}
+
+/// The `--allow_discordant` splitting-report / stderr section. Pure `String`
+/// builder so `write_splitting_report` (file) and `logging::final_summary`
+/// (stderr) render byte-identical text. The section carries no leading `\n`:
+/// on the file path the preceding percentage block's trailing `\n\n\n` supplies
+/// the blank-line separator, and on stderr `logging::final_summary` emits it via
+/// a separate `info()` call (its own line break).
+#[must_use]
+pub fn discordant_section_text(report: &SplittingReport) -> String {
+    format!(
+        "Discordant read handling (--allow_discordant)\n\
+         =============================================\n\
+         Cross-chromosome pairs called independently:\t{cross}\n\
+         Same-chromosome discordant pairs called independently:\t{same}\n\
+         Orphan reads (mate unmapped) called:\t{orphan}\n\
+         Secondary alignments skipped:\t{sec}\n\
+         Supplementary alignments skipped:\t{supp}\n",
+        cross = report.pairs_cross_chr_independent,
+        same = report.pairs_same_chr_independent,
+        orphan = report.orphan_reads_called,
+        sec = report.secondary_skipped,
+        supp = report.supplementary_skipped,
+    )
 }
 
 #[cfg(test)]
@@ -1226,6 +1287,11 @@ mod tests {
             calls_chg_unmeth: 100,
             calls_chh_meth: 80,
             calls_chh_unmeth: 170,
+            pairs_cross_chr_independent: 3,
+            pairs_same_chr_independent: 4,
+            orphan_reads_called: 5,
+            secondary_skipped: 6,
+            supplementary_skipped: 7,
         };
         let b = SplittingReport {
             records_processed: 250,
@@ -1237,6 +1303,11 @@ mod tests {
             calls_chg_unmeth: 250,
             calls_chh_meth: 220,
             calls_chh_unmeth: 330,
+            pairs_cross_chr_independent: 11,
+            pairs_same_chr_independent: 12,
+            orphan_reads_called: 13,
+            secondary_skipped: 14,
+            supplementary_skipped: 15,
         };
         // a + b
         let mut a_into_b = SplittingReport {
@@ -1249,6 +1320,11 @@ mod tests {
             calls_chg_unmeth: b.calls_chg_unmeth,
             calls_chh_meth: b.calls_chh_meth,
             calls_chh_unmeth: b.calls_chh_unmeth,
+            pairs_cross_chr_independent: b.pairs_cross_chr_independent,
+            pairs_same_chr_independent: b.pairs_same_chr_independent,
+            orphan_reads_called: b.orphan_reads_called,
+            secondary_skipped: b.secondary_skipped,
+            supplementary_skipped: b.supplementary_skipped,
         };
         a_into_b.add(&a);
         // b + a
@@ -1262,6 +1338,11 @@ mod tests {
             calls_chg_unmeth: a.calls_chg_unmeth,
             calls_chh_meth: a.calls_chh_meth,
             calls_chh_unmeth: a.calls_chh_unmeth,
+            pairs_cross_chr_independent: a.pairs_cross_chr_independent,
+            pairs_same_chr_independent: a.pairs_same_chr_independent,
+            orphan_reads_called: a.orphan_reads_called,
+            secondary_skipped: a.secondary_skipped,
+            supplementary_skipped: a.supplementary_skipped,
         };
         b_into_a.add(&b);
 
@@ -1277,6 +1358,23 @@ mod tests {
         assert_eq!(a_into_b.calls_chg_unmeth, b_into_a.calls_chg_unmeth);
         assert_eq!(a_into_b.calls_chh_meth, b_into_a.calls_chh_meth);
         assert_eq!(a_into_b.calls_chh_unmeth, b_into_a.calls_chh_unmeth);
+        // `--allow_discordant` class counters also sum commutatively.
+        assert_eq!(
+            a_into_b.pairs_cross_chr_independent,
+            b_into_a.pairs_cross_chr_independent
+        );
+        assert_eq!(
+            a_into_b.pairs_same_chr_independent,
+            b_into_a.pairs_same_chr_independent
+        );
+        assert_eq!(a_into_b.orphan_reads_called, b_into_a.orphan_reads_called);
+        assert_eq!(a_into_b.secondary_skipped, b_into_a.secondary_skipped);
+        assert_eq!(
+            a_into_b.supplementary_skipped,
+            b_into_a.supplementary_skipped
+        );
+        assert_eq!(a_into_b.pairs_cross_chr_independent, 14); // 3 + 11
+        assert_eq!(a_into_b.orphan_reads_called, 18); // 5 + 13
         // Sanity sums:
         assert_eq!(a_into_b.records_processed, 350);
         assert_eq!(a_into_b.call_strings_processed, 700);
@@ -1331,6 +1429,7 @@ mod tests {
             parallel: 1,
             quiet: false,
             verbose: false,
+            allow_discordant: false,
         }
     }
 

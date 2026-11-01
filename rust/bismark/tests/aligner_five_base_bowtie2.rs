@@ -152,3 +152,68 @@ fn five_base_pe_bowtie2_multithreaded_keeps_every_pair_in_order() {
     );
     assert_eq!(r1_names, expected, "pairs come back in FASTQ order");
 }
+
+#[test]
+fn five_base_pe_bowtie2_max_insert_override_admits_long_fragment() {
+    if !have_bowtie2() {
+        eprintln!("skipping: bowtie2 not on PATH (5-Base insert-size gate)");
+        return;
+    }
+    let mut rng = Lcg(0x1134_5BA5_E000_0001);
+    let reference: Vec<u8> = (0..10_000).map(|_| b"ACGT"[rng.next(4) as usize]).collect();
+    let genome = TempDir::new().unwrap();
+    let mut fa = b">chr1\n".to_vec();
+    fa.extend_from_slice(&reference);
+    fa.push(b'\n');
+    fs::write(genome.path().join("genome.fa"), fa).unwrap();
+    let index = genome.path().join("genome");
+    assert!(
+        StdCommand::new("bowtie2-build")
+            .arg("-q")
+            .arg(genome.path().join("genome.fa"))
+            .arg(&index)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let (mut r1, mut r2) = (Vec::new(), Vec::new());
+    fastq_record(&mut r1, "long_pair", &reference[1000..1090]);
+    fastq_record(&mut r2, "long_pair", &revcomp(&reference[1710..1800]));
+    let read1 = genome.path().join("reads_1.fq");
+    let read2 = genome.path().join("reads_2.fq");
+    fs::write(&read1, r1).unwrap();
+    fs::write(&read2, r2).unwrap();
+    for maxins in [None, Some("1000")] {
+        let outdir = TempDir::new().unwrap();
+        let temp = TempDir::new().unwrap();
+        let mut cmd = Command::cargo_bin("bismark").unwrap();
+        cmd.arg("--illumina_5base")
+            .arg("--bowtie2")
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--five_base_index")
+            .arg(&index)
+            .args(["-p", "2"])
+            .arg("-1")
+            .arg(&read1)
+            .arg("-2")
+            .arg(&read2)
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("--temp_dir")
+            .arg(temp.path());
+        if let Some(x) = maxins {
+            cmd.args(["-X", x]);
+        }
+        cmd.assert().success();
+        let mut reader =
+            bismark::io::BamReader::from_path(&outdir.path().join("reads_1_bismark_bt2_pe.bam"))
+                .unwrap();
+        let records: Vec<_> = reader.records().map(Result::unwrap).collect();
+        assert_eq!(records.len(), if maxins.is_some() { 2 } else { 0 });
+        for rec in records {
+            assert_ne!(u16::from(rec.inner().flags()) & 0x2, 0);
+            assert_eq!(rec.inner().template_length().abs(), 800);
+        }
+    }
+}

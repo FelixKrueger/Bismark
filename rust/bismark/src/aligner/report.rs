@@ -47,6 +47,19 @@ pub struct ReportHeader<'a> {
 ///
 /// The library-line TEXT also differs for pbat between SE (1715) and PE (1944).
 pub fn write_report_header<W: Write>(w: &mut W, h: &ReportHeader) -> Result<()> {
+    write_report_header_for_reference(w, h, "bisulfite")
+}
+
+/// Write the 5-Base report header for alignment to an unconverted reference.
+pub(crate) fn write_five_base_report_header<W: Write>(w: &mut W, h: &ReportHeader) -> Result<()> {
+    write_report_header_for_reference(w, h, "unconverted")
+}
+
+fn write_report_header_for_reference<W: Write>(
+    w: &mut W,
+    h: &ReportHeader,
+    reference: &str,
+) -> Result<()> {
     let paired = h.sequence_file2.is_some();
     // line 1: "Bismark report for: ..." (PE names both files, Perl 1843).
     match h.sequence_file2 {
@@ -65,7 +78,7 @@ pub fn write_report_header<W: Write>(w: &mut W, h: &ReportHeader) -> Result<()> 
         )?,
     }
     let run_with = format!(
-        "Bismark was run with {} against the bisulfite genome of {} with the specified options: {}",
+        "Bismark was run with {} against the {reference} genome of {} with the specified options: {}",
         h.aligner.name(),
         h.genome_folder,
         h.aligner_options
@@ -351,6 +364,32 @@ mod tests {
         let mut v = Vec::new();
         print_final_analysis_report_single_end(&mut v, c, directional).unwrap();
         v
+    }
+
+    #[test]
+    fn five_base_pe_header_names_unconverted_genome_exactly() {
+        for aligner in [Aligner::Bowtie2, Aligner::Hisat2, Aligner::Minimap2] {
+            let h = ReportHeader {
+                sequence_file: "r_1.fq",
+                sequence_file2: Some("r_2.fq"),
+                genome_folder: "/abs/genome/",
+                aligner_options: "-q --score-min L,0,-0.6 -p 4 --reorder",
+                aligner,
+                library: LibraryType::Directional,
+            };
+            let mut bytes = Vec::new();
+            write_five_base_report_header(&mut bytes, &h).unwrap();
+            assert_eq!(
+                s(&bytes),
+                format!(
+                    "Bismark report for: r_1.fq and r_2.fq (version: {})\n\
+                 Bismark was run with {} against the unconverted genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.6 -p 4 --reorder\n\
+                 Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n",
+                    crate::aligner::BISMARK_VERSION,
+                    aligner.name()
+                )
+            );
+        }
     }
 
     #[test]

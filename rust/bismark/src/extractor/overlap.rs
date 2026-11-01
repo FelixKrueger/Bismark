@@ -39,6 +39,8 @@
 //! iteration order (descending for OT R2 via `$start - $index`; ascending
 //! for OB R2 via `$start + $index`). Inherited from SAM CIGAR semantics.
 
+use rustc_hash::FxHashSet;
+
 use crate::io::{BismarkPair, BismarkStrand, CigarExt};
 
 use crate::extractor::call::MethCall;
@@ -131,6 +133,46 @@ pub fn drop_overlap(
         r2_calls.retain(|c| c.ref_pos < r1_ref_start);
     }
     Ok(r2_calls)
+}
+
+/// Generic reference-position overlap dedup for `--allow_discordant`
+/// **same-chromosome Independent** pairs.
+///
+/// Unlike [`drop_overlap`], this is **orientation-agnostic**: it does NOT
+/// assume the strand-implied FR geometry the half-plane predicates require.
+/// It drops every R2 call whose reference position is also called by R1 (R1's
+/// calls are kept), so an FF/RR or dovetailed-past overlapping same-chr pair —
+/// which [`drop_overlap`]'s half-plane `retain` would silently mangle — is
+/// deduplicated exactly, never double-counting the shared cytosines.
+///
+/// Independent same-chromosome pairs are **not** all span-disjoint: the
+/// [`crate::extractor::pair_class`] gate routes same-orientation (FF/RR) pairs
+/// to Independent regardless of geometry (they fail its complementary-
+/// orientation check before the span gate is even evaluated), and those may
+/// overlap and share reference positions. For such pairs this dedup is
+/// load-bearing — it is the reason overlapping FF/RR mates are not
+/// double-counted (see `same_chr_ff_overlapping_pair_not_double_counted`). It
+/// degenerates to a no-op for the genuinely span-disjoint Independent pairs
+/// (the complementary-orientation, geometry-disjoint case `pair_class` proves
+/// disjoint) and for opposite-strand-of-origin pairs (`OT`+`OB` / `CTOB`+`CTOT`,
+/// also routed to Independent): a top-strand and a bottom-strand cytosine never
+/// occupy the same reference position, so R1 and R2 share none and every call
+/// is kept, each attributed to its own strand. Together these make the
+/// Independent path exact for every geometry.
+///
+/// Only valid for **same-chromosome** pairs: cross-chromosome reference
+/// positions can coincide numerically but denote different loci, so the caller
+/// must NOT invoke this for cross-chr pairs.
+#[must_use]
+pub fn drop_overlap_generic(r1_calls: &[MethCall], mut r2_calls: Vec<MethCall>) -> Vec<MethCall> {
+    if r1_calls.is_empty() || r2_calls.is_empty() {
+        return r2_calls;
+    }
+    // `FxHashSet` (the repo's dedup convention, cf. `dedup::dedup`) over u32 ref
+    // positions — no cryptographic hashing needed for this per-pair dedup.
+    let r1_positions: FxHashSet<u32> = r1_calls.iter().map(|c| c.ref_pos).collect();
+    r2_calls.retain(|c| !r1_positions.contains(&c.ref_pos));
+    r2_calls
 }
 
 /// Forward-class pair strands: R1's mapped position is the upstream end of

@@ -212,6 +212,12 @@ pub struct Cli {
     #[arg(long = "mbias_off")]
     pub mbias_off: bool,
 
+    // ─── Aligner-agnostic discordant handling ───
+    /// Accept XM/XR/XG-tagged discordant pairs and missing/unmapped mates; skip secondary/supplementary records (the only effect in SE mode).
+    /// Off by default; requires name-grouped PE input. More than 20% orphan templates warns, even under --quiet, without validating grouping.
+    #[arg(long = "allow_discordant")]
+    pub allow_discordant: bool,
+
     // ─── Console diagnostics (#882) ───
     /// Suppress the informational stderr log (banner, mode, parameter summary,
     /// header provenance, progress counter, final summary, kept/deleted).
@@ -351,6 +357,10 @@ pub struct ResolvedConfig {
     pub quiet: bool,
     /// Include `@SQ` lines in header provenance (#882).
     pub verbose: bool,
+    /// Aligner-agnostic discordant handling: skip+count secondary/supplementary,
+    /// call cross-chr / same-chr discordant pairs independently, call orphans.
+    /// OFF by default; gates every new code path so the default is byte-identical.
+    pub allow_discordant: bool,
 }
 
 impl ResolvedConfig {
@@ -550,6 +560,7 @@ impl Cli {
             parallel: self.parallel as usize,
             quiet: self.quiet,
             verbose: self.verbose,
+            allow_discordant: self.allow_discordant,
         })
     }
 }

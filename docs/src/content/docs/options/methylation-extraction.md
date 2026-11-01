@@ -29,6 +29,12 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.
 
+- `--allow_discordant`
+
+  Accept output from other bisulfite aligners carrying Bismark-format `XM`/`XR`/`XG` tags. In paired-end mode, process discordant and cross-chromosome pairs independently and extract mapped reads whose mate is absent or unmapped; skip and count secondary and supplementary alignments. In single-end mode, only the secondary/supplementary filtering applies. Default: OFF.
+
+  Paired input must be grouped by read name; use `-p` for paired input from a non-Bismark aligner. An orphan rate above 20% of templates produces a warning, including under `--quiet`, and does not by itself fail extraction. A template is one complete pair or one orphan. The warning does not establish incorrect ordering, and its absence does not validate grouping. Paired input declared coordinate-sorted is rejected. See [input from a non-Bismark aligner](../../usage/methylation-extraction/#input-from-a-non-bismark-aligner) for preparation and output details.
+
 - `--no_overlap`
 
   For paired-end reads it is theoretically possible that Read 1 and Read 2 overlap. This option avoids scoring overlapping methylation calls twice (only methylation calls of read 1 are used for in the process since read 1 has historically higher quality basecalls than read 2). Whilst this option removes a bias towards more methylation calls in the center of sequenced fragments it may _de facto_ remove a sizeable proportion of the data. This option is on by default for paired-end data but can be disabled using `--include_overlap`. Default: ON.

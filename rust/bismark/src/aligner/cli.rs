@@ -369,6 +369,14 @@ pub struct Cli {
     /// Temporary directory (default: output directory's parent / CWD).
     #[arg(long = "temp_dir", value_name = "PATH")]
     pub temp_dir: Option<PathBuf>,
+    /// `[#1120]` Write the converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir`
+    /// as files instead of streaming them to the aligner through named pipes (the
+    /// default, which needs no temp disk space). Useful for inspecting the converted
+    /// reads. Output is byte-identical either way. Runs that cannot stream
+    /// (`--hisat2`, combined-index modes, `--rammap_subprocess`, or a `--temp_dir`
+    /// that cannot host a FIFO) fall back to files automatically and say so.
+    #[arg(long = "no_stream_converted")]
+    pub no_stream_converted: bool,
     /// Output base name (overrides the derived name).
     #[arg(short = 'B', long = "basename", value_name = "name")]
     pub basename: Option<String>,

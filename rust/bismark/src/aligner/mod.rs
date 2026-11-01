@@ -60,6 +60,7 @@ pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+pub mod stream;
 pub mod ubam;
 
 use std::collections::HashMap;
@@ -75,7 +76,7 @@ use flate2::write::GzEncoder;
 use crate::io::BamWriter;
 
 use crate::aligner::align::{
-    AlignerStream, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
+    AlignerStream, Emitted, FileSamStream, Orientation, PairedAlignerStream, PairedFileSamStream,
     PairedSamStream, SamRecord, SamStream,
 };
 use crate::aligner::aux_out::AuxKind;
@@ -201,8 +202,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // (`bqtools decode`-equivalent). Returns the per-input temp dirs to clean up after
     // the run (the transcode FASTQ is consumed by BOTH the convert step and the
     // methylation-call re-read, so cleanup must follow the pipeline).
-    let alt_input_temp_dirs =
-        resolve_alt_inputs(&mut config, cli, &[&UbamDecoder, &BinseqDecoder])?;
+    let alt_input_temp_dirs = resolve_alt_inputs(&mut config)?;
     let deferred = config::deferred_flags(cli);
     if !deferred.is_empty() {
         eprintln!(
@@ -214,9 +214,30 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
+    // Streaming needs a `--temp_dir` that can hold a named pipe (an I/O probe).
+    if config.stream_converted.enabled && !stream::temp_dir_supports_fifo(&config.output.temp_dir) {
+        config.stream_converted = config::StreamConverted {
+            enabled: false,
+            reason: Some(format!(
+                "a named pipe could not be created in the temp dir {} (no mkfifo on PATH, or a \
+                 filesystem that does not support FIFOs)",
+                temp_dir_label(&config.output.temp_dir)
+            )),
+        };
+    }
+    // Announce any automatic fallback to files. An explicit `--no_stream_converted`
+    // carries no reason and prints nothing.
+    if let Some(reason) = &config.stream_converted.reason {
+        eprintln!(
+            "Note: the converted reads are being written to {} as files rather than streamed \
+             to the aligner, because {reason}.",
+            temp_dir_label(&config.output.temp_dir)
+        );
+    }
     if config.strand_id && matches!(config.layout, config::ReadLayout::SingleEnd { .. }) {
         eprintln!("Note: --strandID only applies to paired-end output; it has no effect here.");
     }
+
     // Never-silent opt-in notice (#787): --illumina_5base is the inverse-of-bisulfite
     // 5-Base (5mC->T) mode — it aligns the RAW reads to the UNCONVERTED genome with
     // minimap2 and calls methylation with inverted polarity. There is no Perl oracle
@@ -288,13 +309,57 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    let result = pipeline(&config);
+    let result = reject_crlf_inputs(&config.layout).and_then(|()| pipeline(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
     for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
+}
+
+/// Fail on a read input with Windows (CRLF) line endings.
+fn reject_crlf_inputs(layout: &ReadLayout) -> Result<()> {
+    let (first, second): (&[String], &[String]) = match layout {
+        ReadLayout::SingleEnd { reads } => (reads, &[]),
+        ReadLayout::PairedEnd { mates1, mates2 } => (mates1, mates2),
+    };
+    for file in first.iter().chain(second) {
+        let mut line = Vec::new();
+        convert::open_reader(Path::new(file))
+            .and_then(|r| Ok(std::io::Read::take(r, 64 * 1024).read_until(b'\n', &mut line)?))
+            .map_err(|e| AlignerError::Validation(format!("{file}: {e}")))?;
+        if line.ends_with(b"\r\n") {
+            return Err(AlignerError::Validation(format!(
+                "{file} has Windows (CRLF) line endings; convert it first (e.g. with dos2unix)"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// After the merge: the error of an instance that failed, else of one whose read names
+/// stopped matching the input, given each instance's `(failure, stopped_at)`.
+fn check_merged(
+    instances: impl IntoIterator<Item = (Option<AlignerError>, Option<u64>)>,
+    input: &str,
+    paired: bool,
+) -> Result<()> {
+    let mut stopped = None;
+    for (failure, at) in instances {
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        stopped = stopped.or(at);
+    }
+    match stopped {
+        None => Ok(()),
+        Some(k) => Err(AlignerError::Validation(format!(
+            "the aligner reading {input} returned read names that stop matching the input at {} \
+             {k}; if the input has Windows (CRLF) line endings, convert it (e.g. with dos2unix)",
+            if paired { "pair" } else { "read" }
+        ))),
+    }
 }
 
 /// #1025 Phase 1: resolve unaligned-BAM (uBAM) read inputs into temp FASTQ files.
@@ -328,9 +393,8 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 /// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
 /// second. The shared resolver [`resolve_alt_inputs`] owns the SE/PE
 /// classification, the per-input temp subdir + cleanup, the SingleEnd→PairedEnd
-/// switch (with PE-options recompute + the paired-aligner reject), and the
-/// fail-loud guards — so every backend behaves identically; a backend only
-/// supplies detection + the transcode.
+/// switch, and the fail-loud guards — so every backend behaves identically; a
+/// backend only supplies detection + the transcode.
 trait InputDecoder {
     /// Does `path` belong to this backend? Backends must be mutually exclusive
     /// and must never match a FASTQ/FASTA file (uBAM = BAM magic byte; BINSEQ =
@@ -406,15 +470,32 @@ impl InputDecoder for BinseqDecoder {
     }
 }
 
+/// The alternative read-input backends, in detection order.
+const ALT_INPUT_DECODERS: &[&dyn InputDecoder] = &[&UbamDecoder, &BinseqDecoder];
+
+/// Whether a single-end `layout` is really paired-end: true when any positional input is
+/// a paired binary input, which [`resolve_alt_inputs`] later splits into mates.
+pub(crate) fn positional_input_is_paired(layout: &ReadLayout) -> Result<bool> {
+    let ReadLayout::SingleEnd { reads } = layout else {
+        return Ok(false);
+    };
+    for r in reads {
+        let path = Path::new(r);
+        if let Some(dec) = ALT_INPUT_DECODERS.iter().find(|d| d.detect(path))
+            && dec.is_paired(path)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Detect alternative binary read inputs (uBAM, BINSEQ, …), transcode them to
 /// temp FASTQ, and rewrite `config.layout` / `config.format` so the byte-frozen
 /// pipeline runs unchanged. Returns the per-input temp subdirs to clean up after
 /// the pipeline. Generalizes the Phase-1 uBAM resolver across backends.
-fn resolve_alt_inputs(
-    config: &mut RunConfig,
-    cli: &cli::Cli,
-    decoders: &[&dyn InputDecoder],
-) -> Result<Vec<PathBuf>> {
+fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
+    let decoders = ALT_INPUT_DECODERS;
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
@@ -499,22 +580,6 @@ fn resolve_alt_inputs(
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
-        // The positional file resolved as SINGLE-END, so `resolve()`'s layout-dependent
-        // guards ran against the SE layout. Re-run the paired-aligner reject (so e.g.
-        // `--minimap2 <pe binary file>` fails loud exactly as `--minimap2 -1 .. -2 ..`)
-        // and recompute the PE aligner options (`--no-mixed --no-discordant …`) via the
-        // SAME builders `resolve()` uses — without them Bowtie 2 emits half-mapped pairs
-        // the PE merge can't score.
-        config::reject_unsupported_paired_aligner(config.aligner, &config.layout)?;
-        let (opts, gaps) = options::build_aligner_options(
-            cli,
-            config.aligner,
-            config.format,
-            true,
-            config.hisat2_multicore_remap,
-        )?;
-        config.aligner_options = opts;
-        config.gap_penalties = gaps;
     } else {
         // Single-end: transcode each binary input; leave any plain FASTQ entries as-is.
         let mut new_reads = reads.clone();
@@ -1135,14 +1200,26 @@ fn convert_se_files(
     let path = Path::new(read_file);
     let td = &config.output.temp_dir;
     let fasta = matches!(config.format, ReadFormat::FastA);
-    Ok(match config.library {
-        LibraryType::Directional => vec![convert_se_ct(fasta, path, td, opts)?],
-        LibraryType::Pbat => vec![convert_se_ga(fasta, path, td, opts)?],
-        LibraryType::NonDirectional => vec![
-            convert_se_ct(fasta, path, td, opts)?, // file 0 = C→T
-            convert_se_ga(fasta, path, td, opts)?, // file 1 = G→A
-        ],
-    })
+    se_conv_kinds(config.library)
+        .iter()
+        .map(|&kind| match kind {
+            convert::ConvKind::Ct => convert_se_ct(fasta, path, td, opts),
+            convert::ConvKind::Ga => convert_se_ga(fasta, path, td, opts),
+        })
+        .collect()
+}
+
+/// The per-mode SE converted set, in the order [`se_instance_plan`]'s file index
+/// keys off: directional `[C→T]`, pbat `[G→A]`, non-directional `[C→T, G→A]`.
+/// Shared by the file path ([`convert_se_files`]) and the streaming path so they
+/// agree on that order.
+fn se_conv_kinds(library: LibraryType) -> &'static [convert::ConvKind] {
+    use convert::ConvKind::{Ct, Ga};
+    match library {
+        LibraryType::Directional => &[Ct],
+        LibraryType::Pbat => &[Ga],
+        LibraryType::NonDirectional => &[Ct, Ga],
+    }
 }
 
 /// The per-mode SE instance plan (Perl `@fhs` templates `reset_counters_and_fhs`
@@ -1166,6 +1243,25 @@ fn se_instance_plan(library: LibraryType) -> Vec<(Orientation, IndexChoice, usiz
         LibraryType::NonDirectional => {
             vec![(Norc, Ct, 0), (Nofw, Ga, 0), (Nofw, Ct, 1), (Norc, Ga, 1)]
         }
+    }
+}
+
+/// How to name `--temp_dir` in a diagnostic: it defaults to the empty path
+/// (meaning "beside the output"), which would otherwise print as nothing.
+fn temp_dir_label(temp_dir: &Path) -> String {
+    if temp_dir.as_os_str().is_empty() {
+        "the current directory".to_string()
+    } else {
+        temp_dir.display().to_string()
+    }
+}
+
+/// The conversion banner label for a substitution kind; the streaming path's
+/// equivalent of [`conv_label`], which needs a file name.
+fn conv_label_for(kind: convert::ConvKind) -> &'static str {
+    match kind {
+        convert::ConvKind::Ct => "C->T",
+        convert::ConvKind::Ga => "G->A",
     }
 }
 
@@ -1199,6 +1295,15 @@ fn process_se_chunk(
 ) -> Result<Vec<convert::ConvertedReads>> {
     let bt2 = &config.detected_aligner.path;
     let read_file = input.to_string_lossy();
+    // The in-process rammap backend takes the converted reads in memory, not a FIFO.
+    #[cfg(feature = "rammap-inprocess")]
+    if use_se_inprocess_rammap(config) && config.stream_converted.enabled {
+        return process_se_chunk_inprocess(config, genome, refid, input, opts, sinks, counters);
+    }
+    // Stream the converted reads into the aligner when the run supports it.
+    if config.stream_converted.enabled {
+        return process_se_chunk_streamed(config, genome, refid, input, opts, sinks, counters);
+    }
     // Phase 2/8: convert the per-mode temp file(s). Both/all instances read this set.
     let converted = convert_se_files(config, &read_file, opts)?;
     for cr in &converted {
@@ -1220,10 +1325,26 @@ fn process_se_chunk(
     // short-circuit routes the in-process rammap path here for ANY `--multicore N`). Only
     // FastA falls through to the subprocess path (the stream is FastQ-only; see
     // `use_se_inprocess_rammap` + the never-silent notice in `run`).
+
+    // The in-process rammap backend over converted files, reached only with
+    // `--no_stream_converted`.
     #[cfg(feature = "rammap-inprocess")]
     if use_se_inprocess_rammap(config) {
         let pbat = matches!(config.library, LibraryType::Pbat);
-        let mut streams = build_se_inprocess_streams(config, &converted)?;
+        let mut readers: Vec<Option<Box<dyn BufRead>>> = se_instance_plan(config.library)
+            .into_iter()
+            .map(|(_o, _i, file_idx)| {
+                let path = &converted[file_idx].path;
+                let f = File::open(path)?;
+                let r: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
+                    Box::new(BufReader::new(MultiGzDecoder::new(f)))
+                } else {
+                    Box::new(BufReader::new(f))
+                };
+                Ok(Some(r))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut streams = build_se_inprocess_streams(config, &mut readers)?;
         drive_merge(
             input,
             &mut streams,
@@ -1268,10 +1389,248 @@ fn process_se_chunk(
         sinks,
         counters,
     )?;
+    check_merged(
+        streams
+            .iter_mut()
+            .map(|s| (s.exit_failure(), s.stopped_at())),
+        &read_file,
+        false,
+    )?;
     for s in streams {
         s.finish()?;
     }
     Ok(converted)
+}
+
+/// [`process_se_chunk`], with the converted reads streamed through FIFOs instead
+/// of written to `--temp_dir`.
+///
+/// Same plan, argv shape and merge; only the aligner's input paths change. One
+/// conversion pass per converted stream, fanned out to the instances that read it.
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[allow(clippy::too_many_arguments)]
+fn process_se_chunk_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = se_instance_plan(config.library);
+
+    // One source per converted stream, in `se_conv_kinds` order so the plan's
+    // file index means the same thing here as on the file path.
+    let kinds = se_conv_kinds(config.library);
+    let sources: Vec<stream::ConvSource> = kinds
+        .iter()
+        .map(|&kind| stream::ConvSource {
+            input: input.to_path_buf(),
+            kind,
+            id_suffix: b"", // single-end: no /1/1 or /2/2 tag
+        })
+        .collect();
+    let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
+
+    let streamed = stream::StreamedConversion::start(
+        &config.output.temp_dir,
+        fasta,
+        opts,
+        &sources,
+        &demands,
+    )?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Streaming {} converted version of {} to {} aligner instance(s)",
+            conv_label_for(source.kind),
+            input.display(),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    // Every child is reaped inside this call, before `streamed` can be dropped.
+    let returned = match run_se_instances_streamed(
+        config, genome, refid, input, &plan, &streamed, sinks, counters,
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
+
+    // Every instance is drained and reaped.
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, false)?)
+    {
+        eprintln!(
+            "Streamed {} converted version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            input.display(),
+        );
+    }
+    Ok(Vec::new())
+}
+
+/// Spawn, merge and reap the single-end aligner instances of a streamed chunk.
+///
+/// Every child is spawned before any is primed: a writer blocks in its open until
+/// its child opens the pipe, and the instances share one bounded conversion pass,
+/// so priming child 0 before child 1 exists would deadlock. All children are
+/// reaped (or killed, on error) before this returns.
+///
+/// Returns what each instance emitted, as `(consumer, emitted)`.
+#[allow(clippy::too_many_arguments)]
+fn run_se_instances_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    plan: &[(Orientation, IndexChoice, usize)],
+    streamed: &stream::StreamedConversion,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<(usize, Emitted)>> {
+    let bt2 = &config.detected_aligner.path;
+    let mut unprimed = Vec::with_capacity(plan.len());
+    for (consumer, &(orientation, index_choice, _)) in plan.iter().enumerate() {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        unprimed.push(AlignerStream::spawn_unprimed(
+            config.aligner,
+            bt2,
+            &config.aligner_options,
+            orientation,
+            index_basename,
+            streamed.path(consumer),
+        )?);
+    }
+    // Every pipe needs its reader before any child is read, or a dead child stalls
+    // the shared pass. One FIFO per instance, so consumer index == child index.
+    streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
+
+    let mut streams = Vec::with_capacity(unprimed.len());
+    for u in unprimed {
+        streams.push(u.prime()?);
+    }
+
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    if let Err(e) = drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    ) {
+        // An instance that died starves the merge, which then fails on the
+        // symptom; report the instance itself.
+        return Err(streams
+            .iter_mut()
+            .find_map(|s| s.failure())
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+    }
+    Ok(finish_concurrently(streams, AlignerStream::finish)
+        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+        .into_iter()
+        .enumerate()
+        .collect())
+}
+
+/// Reap every instance at once: they share one conversion pass, so an instance
+/// left unread stalls the others.
+fn finish_concurrently<S: Send>(
+    streams: Vec<S>,
+    finish: fn(S) -> Result<Emitted>,
+) -> Result<Vec<Emitted>> {
+    std::thread::scope(|scope| {
+        let reapers: Vec<_> = streams
+            .into_iter()
+            .map(|s| scope.spawn(move || finish(s)))
+            .collect();
+        reapers
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+            .collect()
+    })
+}
+
+/// [`process_se_chunk`] for the in-process rammap backend, with the converted
+/// reads handed over in memory.
+///
+/// This backend aligns inside the Bismark process, so a temp file or FIFO would be
+/// a pointless round trip. One reader per instance, fed by one conversion pass per
+/// source as on the FIFO path. The conversion loop is the shared one, so the bytes
+/// parsed here are the bytes the file path would write.
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[cfg(feature = "rammap-inprocess")]
+#[allow(clippy::too_many_arguments)]
+fn process_se_chunk_inprocess(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    input: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut Sinks,
+    counters: &mut Counters,
+) -> Result<Vec<convert::ConvertedReads>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = se_instance_plan(config.library);
+    let kinds = se_conv_kinds(config.library);
+    let sources: Vec<stream::ConvSource> = kinds
+        .iter()
+        .map(|&kind| stream::ConvSource {
+            input: input.to_path_buf(),
+            kind,
+            id_suffix: b"", // single-end: no /1/1 or /2/2 tag
+        })
+        .collect();
+    let demands: Vec<usize> = plan.iter().map(|&(_, _, file_idx)| file_idx).collect();
+
+    let (readers, conversion) = stream::InMemoryConversion::start(fasta, opts, &sources, &demands)?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Converting {} in memory for {} in-process instance(s) (no temp file written)",
+            conv_label_for(source.kind),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    let mut boxed: Vec<Option<Box<dyn BufRead>>> = readers
+        .into_iter()
+        .map(|r| Some(Box::new(BufReader::new(r)) as Box<dyn BufRead>))
+        .collect();
+    let mut streams = build_se_inprocess_streams(config, &mut boxed)?;
+
+    let pbat = matches!(config.library, LibraryType::Pbat);
+    drive_merge(
+        input,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        pbat,
+        sinks,
+        counters,
+    )?;
+    // Drop the streams (and their readers) before joining, or a converter blocked
+    // on an undrained reader would never finish.
+    drop(streams);
+
+    for (source, count) in sources.iter().zip(conversion.finish()?) {
+        eprintln!(
+            "Converted {} version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            input.display(),
+        );
+    }
+    Ok(Vec::new())
 }
 
 /// Whether the SE in-process rammap path drives this run (epic 06152026; #995; rev2 Alt-1).
@@ -1308,7 +1667,7 @@ fn use_se_inprocess_rammap(config: &RunConfig) -> bool {
 /// is `!subprocess_opt_out` — in-process is the DEFAULT, subprocess is the `--rammap_subprocess`
 /// opt-out. No `multicore` term (#995: the in-process path is N-threaded; fork-worker safety
 /// is via the `pipeline()` short-circuit + the `aligner == Rammap` conjunct).
-fn inprocess_rammap_selected(
+pub(crate) fn inprocess_rammap_selected(
     aligner: Aligner,
     subprocess_opt_out: bool,
     format: ReadFormat,
@@ -1347,7 +1706,7 @@ fn rammap_preset(p: Mm2Preset) -> ::rammap::Preset {
 #[cfg(feature = "rammap-inprocess")]
 fn build_se_inprocess_streams(
     config: &RunConfig,
-    converted: &[convert::ConvertedReads],
+    readers: &mut [Option<Box<dyn BufRead>>],
 ) -> Result<Vec<crate::aligner::inprocess::InProcessAlignerStream<Box<dyn BufRead>>>> {
     use std::sync::Arc;
 
@@ -1406,7 +1765,9 @@ fn build_se_inprocess_streams(
     );
 
     let mut streams = Vec::with_capacity(plan.len());
-    for (_orientation, index_choice, file_idx) in plan {
+    // One reader per instance, not per source: directional SE has both instances
+    // reading the same source, and a reader can be consumed only once.
+    for (consumer, (_orientation, index_choice, _file_idx)) in plan.into_iter().enumerate() {
         let aligner = match index_choice {
             IndexChoice::Ct => Arc::clone(
                 ct.as_ref()
@@ -1417,14 +1778,16 @@ fn build_se_inprocess_streams(
                     .expect("GA index loaded because the plan references it"),
             ),
         };
-        // The converted temp the subprocess CLI would have read (`.gz` when `--gzip`).
-        let path = &converted[file_idx].path;
-        let f = File::open(path)?;
-        let reader: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(f)))
-        } else {
-            Box::new(BufReader::new(f))
-        };
+        // The converted reads for this instance (in memory, or from a temp file
+        // with `--no_stream_converted`).
+        let reader = readers
+            .get_mut(consumer)
+            .and_then(Option::take)
+            .ok_or_else(|| {
+                AlignerError::Validation(format!(
+                    "internal: no converted reader for in-process instance {consumer}"
+                ))
+            })?;
         streams.push(crate::aligner::inprocess::InProcessAlignerStream::new(
             aligner,
             reader,
@@ -1521,39 +1884,17 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The aligner option string for a 5-Base run. minimap2 (the default) uses the
-/// resolved `-x sr …` options against the genome FASTA. bowtie2/hisat2 align the RAW
-/// reads to the user's NORMAL (unconverted) index with a permissive `--score-min`
-/// (the sparse C→T conversions are well within default scoring) — NOT the bisulfite
-/// option string. Used for BOTH the spawn argv and the report's "was run with" line.
-///
-/// Threads: the bisulfite minimap2 path hardcodes `-t 2` (Perl faithfulness, byte-
-/// frozen). The 5-Base path is NOT byte-identical, so there is no reason to throttle
-/// it. The aligner thread count is Bismark's `-p` (threads-to-aligner) knob, falling
-/// back to `--multicore`, then all logical CPUs — applied as minimap2 `-t N` /
-/// bowtie2,hisat2 `-p N`. (`-p` and `--multicore`/`--parallel` are different axes:
-/// `-p` = threads inside one aligner instance, `--multicore` = the fork model; for the
-/// single-instance 5-Base path `-p` is the right knob.)
+/// Effective 5-Base options with single-instance threading and input ordering.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
-    let n = config
-        .bowtie_threads
-        .filter(|&p| p > 0)
-        .or(if config.multicore > 1 {
-            Some(config.multicore)
-        } else {
-            None
-        })
-        .map(|p| p as usize)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|x| x.get())
-                .unwrap_or(2)
-        });
+    let n = five_base_threads(
+        config.bowtie_threads,
+        config.multicore,
+        std::thread::available_parallelism().ok().map(|x| x.get()),
+    );
     match config.aligner {
         // `--reorder`: the driver pairs FASTQ and SAM records by position.
-        Aligner::Bowtie2 => format!("-q --score-min L,0,-0.6 -p {n} --reorder"),
-        Aligner::Hisat2 => {
-            format!("-q --no-spliced-alignment --score-min L,0,-0.6 -p {n} --reorder")
+        Aligner::Bowtie2 | Aligner::Hisat2 => {
+            format!("{} -p {n} --reorder", config.aligner_options)
         }
         // minimap2 (default 5-Base engine): reuse the resolved options but lift the
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
@@ -1561,6 +1902,18 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         // base string carries a resolved `-t {p}` (#1074 C2).
         _ => replace_minimap2_threads(&config.aligner_options, n),
     }
+}
+
+/// Explicit `-p`, then `--multicore` above one, then detected CPUs (2 if undetectable).
+fn five_base_threads(
+    bowtie_threads: Option<u32>,
+    multicore: u32,
+    detected: Option<usize>,
+) -> usize {
+    bowtie_threads
+        .or((multicore > 1).then_some(multicore))
+        .map(|p| p as usize)
+        .unwrap_or_else(|| detected.unwrap_or(2))
 }
 
 /// Set the value token after `-t` in a whitespace-separated minimap2 option string,
@@ -1795,7 +2148,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             "_PE_report.txt",
         );
         let mut report = BufWriter::new(File::create(&report_path)?);
-        report::write_report_header(
+        report::write_five_base_report_header(
             &mut report,
             &ReportHeader {
                 sequence_file: read_1,
@@ -4824,6 +5177,29 @@ fn pe_instance_plan(
     }
 }
 
+/// The distinct `(mate, kind)` conversions a PE plan needs, in first-seen order:
+/// 2 for directional/pbat (each shared by both instances), 4 for non-directional.
+/// Shared by the file and streaming paths.
+fn pe_conv_sources(
+    plan: &[(
+        usize,
+        Orientation,
+        IndexChoice,
+        convert::ConvKind,
+        convert::ConvKind,
+    )],
+) -> Vec<(u8, convert::ConvKind)> {
+    let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
+    for &(_slot, _orient, _idx, k1, k2) in plan {
+        for mk in [(1u8, k1), (2u8, k2)] {
+            if !needed.contains(&mk) {
+                needed.push(mk);
+            }
+        }
+    }
+    needed
+}
+
 /// Look up the converted temp file for a planned `(mate, kind)` (every planned
 /// pair is converted exactly once into `converted`).
 fn pe_lookup(
@@ -4857,6 +5233,12 @@ fn process_pe_chunk(
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<Vec<((u8, convert::ConvKind), convert::ConvertedReads)>> {
+    // Stream the converted reads into the aligner when the run supports it.
+    if config.stream_converted.enabled {
+        return process_pe_chunk_streamed(
+            config, genome, refid, read_1, read_2, opts, sinks, counters,
+        );
+    }
     let bt2 = &config.detected_aligner.path;
     let fasta = matches!(config.format, ReadFormat::FastA);
     let plan = pe_instance_plan(config.library);
@@ -4864,14 +5246,7 @@ fn process_pe_chunk(
     // Convert each distinct (mate, kind) the plan needs EXACTLY ONCE — Perl makes 2
     // files for directional/pbat (shared by both instances) and 4 for non-dir (each
     // pair shared by two slots). Preserve first-seen order.
-    let mut needed: Vec<(u8, convert::ConvKind)> = Vec::new();
-    for &(_slot, _orient, _idx, k1, k2) in &plan {
-        for mk in [(1u8, k1), (2u8, k2)] {
-            if !needed.contains(&mk) {
-                needed.push(mk);
-            }
-        }
-    }
+    let needed = pe_conv_sources(&plan);
     let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
     for &(mate, kind) in &needed {
         let input = if mate == 1 { read_1 } else { read_2 };
@@ -4926,10 +5301,190 @@ fn process_pe_chunk(
         sinks,
         counters,
     )?;
+    check_merged(
+        streams
+            .iter_mut()
+            .flatten()
+            .map(|s| (s.exit_failure(), s.stopped_at())),
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
+    )?;
     for s in streams.into_iter().flatten() {
         s.finish()?;
     }
     Ok(converted)
+}
+
+/// One [`pe_instance_plan`] entry: slot, orientation, index, mate-1 and mate-2
+/// conversion.
+type PePlanEntry = (
+    usize,
+    Orientation,
+    IndexChoice,
+    convert::ConvKind,
+    convert::ConvKind,
+);
+
+/// Spawn, merge and reap the paired-end aligner instances of a streamed chunk;
+/// the PE sibling of [`run_se_instances_streamed`], returning pairs per instance.
+#[allow(clippy::too_many_arguments)]
+fn run_pe_instances_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    plan: &[PePlanEntry],
+    streamed: &stream::StreamedConversion,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<(usize, Emitted)>> {
+    let bt2 = &config.detected_aligner.path;
+    // Place each primed stream at its Bismark slot so the merge scan order holds.
+    let mut unprimed = Vec::with_capacity(plan.len());
+    for (i, &(slot, orientation, index_choice, _k1, _k2)) in plan.iter().enumerate() {
+        let index_basename = match index_choice {
+            IndexChoice::Ct => &config.genome.ct_index_basename,
+            IndexChoice::Ga => &config.genome.ga_index_basename,
+        };
+        unprimed.push((
+            slot,
+            PairedAlignerStream::spawn_unprimed(
+                config.aligner,
+                bt2,
+                &config.aligner_options,
+                orientation,
+                index_basename,
+                streamed.path(2 * i),
+                streamed.path(2 * i + 1),
+            )?,
+        ));
+    }
+    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
+    // `-2` = consumer 2i+1), both mapping back to child i.
+    streamed.await_readers(|consumer| unprimed[consumer / 2].1.try_wait())?;
+
+    let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
+    for (slot, u) in unprimed {
+        streams[slot] = Some(u.prime()?);
+    }
+
+    // See `process_pe_chunk` for why the TLEN sign comes from `config.dovetail`
+    // and not from a scan of `aligner_options`.
+    let dovetail = config.dovetail;
+    if let Err(e) = drive_merge_pe(
+        read_1,
+        read_2,
+        &mut streams,
+        config,
+        genome,
+        refid,
+        dovetail,
+        sinks,
+        counters,
+    ) {
+        // Report a dead instance rather than the merge's symptom of it.
+        return Err(streams
+            .iter_mut()
+            .flatten()
+            .find_map(|s| s.failure())
+            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+    }
+    // Instance i reads pipes 2i (`-1`) and 2i+1 (`-2`) and sits at its plan slot.
+    let in_plan_order = plan
+        .iter()
+        .map(|e| streams[e.0].take().expect("every plan slot is primed"))
+        .collect();
+    Ok(
+        finish_concurrently(in_plan_order, PairedAlignerStream::finish)
+            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, n)| [(2 * i, n), (2 * i + 1, n)])
+            .collect(),
+    )
+}
+
+/// [`process_pe_chunk`], with the converted reads streamed through FIFOs instead
+/// of written to `--temp_dir`.
+///
+/// Two FIFOs per instance (`-1` and `-2`), one conversion pass per distinct
+/// `(mate, kind)`: four pipes and two passes for directional/pbat, eight and four
+/// for non-directional. Children are spawned before any is primed, as in
+/// [`process_se_chunk_streamed`].
+///
+/// Returns an empty vector: there is nothing on disk for the caller to delete.
+#[allow(clippy::too_many_arguments)]
+fn process_pe_chunk_streamed(
+    config: &RunConfig,
+    genome: &Genome,
+    refid: &HashMap<String, usize>,
+    read_1: &Path,
+    read_2: &Path,
+    opts: &convert::ConvertOptions,
+    sinks: &mut PeSinks,
+    counters: &mut Counters,
+) -> Result<Vec<((u8, convert::ConvKind), convert::ConvertedReads)>> {
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let plan = pe_instance_plan(config.library);
+    let needed = pe_conv_sources(&plan);
+
+    let mut sources = Vec::with_capacity(needed.len());
+    for &(mate, kind) in &needed {
+        sources.push(stream::ConvSource {
+            input: if mate == 1 { read_1 } else { read_2 }.to_path_buf(),
+            kind,
+            id_suffix: convert::pe_id_suffix(mate)?,
+        });
+    }
+    // Consumer order is `slot`-major, mate-minor: instance i reads pipes 2i (`-1`)
+    // and 2i+1 (`-2`).
+    let index_of = |mate: u8, kind: convert::ConvKind| {
+        needed
+            .iter()
+            .position(|&(m, k)| m == mate && k == kind)
+            .expect("pe_conv_sources covers every planned (mate, kind)")
+    };
+    let demands: Vec<usize> = plan
+        .iter()
+        .flat_map(|&(_slot, _orient, _idx, k1, k2)| [index_of(1, k1), index_of(2, k2)])
+        .collect();
+
+    let streamed = stream::StreamedConversion::start(
+        &config.output.temp_dir,
+        fasta,
+        opts,
+        &sources,
+        &demands,
+    )?;
+    for (i, source) in sources.iter().enumerate() {
+        eprintln!(
+            "Streaming {} converted version of {} to {} aligner instance(s)",
+            conv_label_for(source.kind),
+            source.input.display(),
+            demands.iter().filter(|&&d| d == i).count(),
+        );
+    }
+
+    // Every child is reaped inside this call, before `streamed` can be dropped.
+    let returned = match run_pe_instances_streamed(
+        config, genome, refid, read_1, read_2, &plan, &streamed, sinks, counters,
+    ) {
+        Ok(returned) => returned,
+        Err(e) => return Err(streamed.input_failure().unwrap_or(e)),
+    };
+
+    for (source, count) in sources
+        .iter()
+        .zip(streamed.finish_checked(&returned, true)?)
+    {
+        eprintln!(
+            "Streamed {} converted version of {} ({count} sequences, no temp file written)",
+            conv_label_for(source.kind),
+            source.input.display(),
+        );
+    }
+    Ok(Vec::new())
 }
 
 /// PE pipeline (single-core / `--parallel 1`, all library types) (Perl
@@ -7072,6 +7627,31 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn reject_crlf_inputs_passes_empty_and_lf_files_and_names_a_crlf_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
+        std::fs::write(path("empty.fq"), b"").unwrap();
+        let gz = GzEncoder::new(Vec::new(), Compression::default())
+            .finish()
+            .unwrap();
+        std::fs::write(path("empty.fq.gz"), gz).unwrap();
+        std::fs::write(path("lf.fq"), b"@r\nAC\n+\nII\n").unwrap();
+        std::fs::write(path("crlf.fq"), b"@r\r\nAC\r\n+\r\nII\r\n").unwrap();
+        let se = |names: &[&str]| ReadLayout::SingleEnd {
+            reads: names.iter().map(|n| path(n)).collect(),
+        };
+        reject_crlf_inputs(&se(&["empty.fq", "empty.fq.gz", "lf.fq"])).unwrap();
+        let e = reject_crlf_inputs(&se(&["lf.fq", "crlf.fq"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with(&path("crlf.fq")), "{e}");
+        let e = reject_crlf_inputs(&se(&["missing.fq"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.starts_with(&path("missing.fq")), "{e}");
+    }
+
     // ---- #1092 in-process rammap preset wiring (feature-gated, hermetic) ----
 
     /// Bismark's presets map to rammap's, exhaustively.
@@ -7154,12 +7734,13 @@ mod tests {
         writeln!(fq, "\n+\n{}", "I".repeat(read.len())).unwrap();
         drop(fq);
 
-        let converted = vec![convert::ConvertedReads {
+        // A single converted file, read once per instance.
+        let converted = convert::ConvertedReads {
             name: "conv_C_to_T.fastq".into(),
             path: fq_path,
             count: 1,
             seqid_tab_count: 0,
-        }];
+        };
 
         let score_for = |preset: Mm2Preset| -> i64 {
             let config = run_config_stub(
@@ -7172,7 +7753,15 @@ mod tests {
                     reads: vec!["conv.fastq".into()],
                 },
             );
-            let streams = build_se_inprocess_streams(&config, &converted).unwrap();
+            // One reader per instance (directional SE = 2), both over the same
+            // converted file.
+            let mut readers: Vec<Option<Box<dyn BufRead>>> = (0..2)
+                .map(|_| {
+                    let f = File::open(&converted.path).unwrap();
+                    Some(Box::new(BufReader::new(f)) as Box<dyn BufRead>)
+                })
+                .collect();
+            let streams = build_se_inprocess_streams(&config, &mut readers).unwrap();
             // EVERY stream, not just the first: directional SE loads BOTH indexes (CT for
             // the OT instance, GA for CTOB), so a preset reaching only one of them would
             // bias the merge's best-instance choice while a `streams[0]`-only assertion
@@ -7825,21 +8414,40 @@ mod tests {
             },
         );
         c.five_base = true;
+        c.aligner_options = match aligner {
+            Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
+            _ => "-q --score-min L,0,-0.6".into(),
+        };
         c.bowtie_threads = Some(4);
         c
     }
 
     #[test]
     fn five_base_bowtie2_and_hisat2_keep_input_order() {
-        for aligner in [config::Aligner::Bowtie2, config::Aligner::Hisat2] {
-            let opts = five_base_aligner_options(&five_base_stub(aligner));
-            let toks: Vec<&str> = opts.split_whitespace().collect();
-            assert!(toks.contains(&"--reorder"), "{aligner:?}: {opts}");
-            assert!(
-                toks.windows(2).any(|w| w == ["-p", "4"]),
-                "{aligner:?}: {opts}"
+        for (aligner, expected) in [
+            (
+                config::Aligner::Bowtie2,
+                "-q --score-min L,0,-0.6 -p 4 --reorder",
+            ),
+            (
+                config::Aligner::Hisat2,
+                "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
+            ),
+        ] {
+            assert_eq!(
+                five_base_aligner_options(&five_base_stub(aligner)),
+                expected
             );
         }
+    }
+
+    #[test]
+    fn five_base_threads_prefers_p_then_multicore_then_detected_cpus() {
+        assert_eq!(five_base_threads(Some(8), 4, Some(16)), 8);
+        assert_eq!(five_base_threads(None, 4, Some(16)), 4);
+        assert_eq!(five_base_threads(None, 1, Some(16)), 16);
+        assert_eq!(five_base_threads(None, 1, Some(1)), 1);
+        assert_eq!(five_base_threads(None, 1, None), 2);
     }
 
     #[test]

@@ -36,6 +36,8 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 ##### Input:
 
+A FastQ or FastA input with Windows (CRLF) line endings stops the run at start-up; convert such a file first (e.g. with `dos2unix`). A run whose aligner returns read names that stop matching the input's also stops with an error.
+
 - `--se <list>` / `--single_end <list>`
 
   Sets single-end mapping mode explicitly giving a list of file names as <list>. The filenames may be provided as a comma [`,`] or colon [`:`]-separated list.
@@ -175,6 +177,22 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 - `--gzip`
 
   Temporary bisulfite conversion files will be written out in a `GZIP` compressed form to save disk space. This option is available for most alignment modes but is not available for paired-end `FastA` files.
+
+- `--no_stream_converted`
+
+  Write the in-silico converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir` as files instead of streaming them to the aligner through named pipes.
+
+  Bismark converts your reads before aligning them, and by default those converted reads now go straight into the aligner through a FIFO and are never written to disk. They have exactly one consumer — the aligner — so nothing is lost by not keeping them: the methylation call re-reads your *original* FastQ. On a disk-constrained scratch this is the difference between a run that starts and one that does not; the converted set is typically around 5x the size of a gzipped input, and `--gzip` only ever made it smaller, never absent. Wall time is unchanged — conversion no longer has to finish before the aligner starts, but that serial phase was small to begin with.
+
+  Output is byte-identical either way. Use this flag if you want to inspect the converted reads, or to bisect a suspected streaming problem. `--gzip` has no effect on the streamed reads — there is no file to compress.
+
+  `--rammap`'s default in-process backend goes one better: it aligns inside the Bismark process, so it receives the converted reads in memory with neither a file nor a pipe in between. `--rammap_subprocess` runs the external binary and keeps files.
+
+  Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap_subprocess`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
+
+  While a run streams, its named pipes sit in `--temp_dir` (one `*.fifo.*` entry per aligner input) and are removed when it finishes. A run that is killed can leave them behind; they hold no data and are safe to delete.
+
+  An aligner wrapper (`--path_to_bowtie2` or `--path_to_minimap2`) that reads part of the input before the aligner does cannot be streamed: Bismark stops with an error naming `--no_stream_converted`, which runs it with files. A wrapper that leaves a background process holding the input open without reading it fails the same way, but the run can wait until that process exits.
 
 - `--sam`
 
