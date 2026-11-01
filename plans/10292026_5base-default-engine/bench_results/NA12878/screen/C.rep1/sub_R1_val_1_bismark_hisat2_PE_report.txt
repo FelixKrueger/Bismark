@@ -1,0 +1,42 @@
+Bismark report for: /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1_val_1.fq and /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2_val_2.fq (version: v0.25.1)
+Bismark was run with HISAT2 against the unconverted genome of /var/tmp/5base_engines/genome/ with the specified options: -q --score-min L,0,-0.6 --no-spliced-alignment -p 32 --reorder
+Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)
+
+Final Alignment report
+======================
+Sequence pairs analysed in total:	98082139
+Number of paired-end alignments with a unique best hit:	89568843
+Mapping efficiency:	91.3% 
+Sequence pairs with no alignments under any condition:	8513296
+Sequence pairs did not map uniquely:	0
+Sequence pairs which were discarded because genomic sequence could not be extracted:	770
+
+Number of sequence pairs with unique best (first) alignment came from the bowtie output:
+CT/GA/CT:	44814339	((converted) top strand)
+GA/CT/CT:	0	(complementary to (converted) top strand)
+GA/CT/GA:	0	(complementary to (converted) bottom strand)
+CT/GA/GA:	44753734	((converted) bottom strand)
+
+Number of alignments to (merely theoretical) complementary strands being rejected in total:	0
+
+Final Cytosine Methylation Report
+=================================
+Total number of C's analysed:	5195302597
+
+Total methylated C's in CpG context:	115603387
+Total methylated C's in CHG context:	13530593
+Total methylated C's in CHH context:	42229458
+Total methylated C's in Unknown context:	14688
+
+Total unmethylated C's in CpG context:	134329558
+Total unmethylated C's in CHG context:	1087315703
+Total unmethylated C's in CHH context:	3802293898
+Total unmethylated C's in Unknown context:	2359346
+
+C methylated in CpG context:	46.3%
+C methylated in CHG context:	1.2%
+C methylated in CHH context:	1.1%
+C methylated in Unknown context (CN or CHN):	0.6%
+
+
+Bismark completed in 0d 1h 42m 41s
