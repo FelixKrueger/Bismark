@@ -20,7 +20,7 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
 
 - **Supported in GA (3.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
   `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`. Each is validated against Illumina
-  DRAGEN on the real NA12878 demo at full depth by the metric appropriate to what it
+  DRAGEN on the real NA12878 demo at full depth, with the default minimap2 engine, by the metric appropriate to what it
   produces: **core** by per-CpG concordance with DRAGEN's (deduplicated, full-depth) CX
   report (deduplicated, iso-DRAGEN) — **r approximately 0.99 over 55M CpGs (0.998 at
   cov>=10), 99.3% call-agreement at cov>=10 (98.8% at cov>=1)**; **deconvolution**
@@ -44,10 +44,11 @@ Because it is concordance-gated rather than byte-identical, every 5-Base path is
 
 Directional, paired-end, against the unconverted genome. minimap2 (`-x sr`) against the
 genome FASTA is the default engine; bowtie2 or hisat2 work against a NORMAL (unconverted)
-index supplied with `--five_base_index`. minimap2 is the default because it indexes the
-genome FASTA at run time, so no index has to be built first; choose `--bowtie2` or
-`--hisat2` when you need their tuning options (for example for short fragments) or want
-to match the aligner of your bisulfite runs.
+index supplied with `--five_base_index`. minimap2 is the default: it needs no prebuilt
+index, and in a head-to-head comparison against DRAGEN no alternative was clearly
+better (see [Choosing an engine](#choosing-an-engine)). Choose `--bowtie2` or
+`--hisat2` when you need their tuning options or want to match the aligner of your
+bisulfite runs.
 
 `--genome` needs only to contain the genome FASTA — the reference the methylation calls are
 made against. There is no `bismark_genome_preparation` step for 5-Base, because no path here
@@ -71,8 +72,9 @@ bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
 Both engines accept `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `--score_min`,
 `-I`/`--minins`, and `-X`/`--maxins` in 5-Base mode. Quality-encoding flags
 (`--phred33-quals` or `--phred64-quals`) and `--quiet` are also passed through. The default
-linear score threshold is `L,0,-0.6`; the engine's default maximum insert is 500 bp.
-For short fragments, for example:
+linear score threshold is `L,0,-0.6`; the engine's default maximum insert is 500 bp,
+which can cut off the longest fragments of a 5-Base library (see
+[Choosing an engine](#choosing-an-engine)). For short fragments, for example:
 
 ```sh
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
@@ -91,6 +93,28 @@ For either engine, `-p N` sets threads in the single aligner instance. Otherwise
 setting (or `--multicore 1`), Bismark uses the available logical CPUs. In 5-Base
 mode an explicit `-p` takes precedence over `--multicore`; ordinary bisulfite
 HISAT2 keeps its existing conflict rule. Input ordering is always preserved.
+
+### Choosing an engine
+
+The engines were compared on the first 100M read pairs of the NA12878 demo (Sample8,
+100 ng; 98.1M pairs after trimming), each scored per CpG against DRAGEN's CX report.
+Pearson r uses the 400,760 CpGs that every engine and DRAGEN cover at cov ≥ 10; the CpG
+column counts each engine's own CpGs at cov ≥ 10 in both it and DRAGEN.
+
+| Engine | Mapping efficiency | Pearson r vs DRAGEN | CpGs at cov ≥ 10 | Peak memory |
+|---|---|---|---|---|
+| minimap2 (default) | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
+| Bowtie 2 | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
+| Bowtie 2 `-X 800` | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
+| Bowtie 2 `--local` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
+| HISAT2 | 91.3% | 0.9631 | 664,790 | 8.3 GiB |
+
+This depth is about 5× per strand, so cov ≥ 10 is the high-coverage tail and r is lower
+than the full-depth figure in the stability contract. Bowtie 2's 500 bp insert cap cost it
+about 7 points of mapping efficiency and a third of its well-covered CpGs on this library;
+`-X 800` (minimap2's own limit) brings it level with minimap2, so raise the cap when you
+use Bowtie 2 on 5-Base data. minimap2 used about twice the peak memory. The comparison
+covers one 5-Base WGS gDNA library; short-fragment libraries such as cfDNA were not tested.
 
 The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extractor,
 `bismark2bedGraph`, `coverage2cytosine`, and the reports consume it unchanged.

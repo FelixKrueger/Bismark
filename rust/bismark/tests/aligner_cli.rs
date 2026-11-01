@@ -7548,6 +7548,21 @@ fn five_base_1134_default_argv_is_exact() {
         let args = f.argv();
         let end = args.iter().position(|a| a == "-x").unwrap();
         assert_eq!(args[..end].join(" "), expected, "{engine}");
+        let name = if engine == "bowtie2" {
+            "Bowtie 2"
+        } else {
+            "HISAT2"
+        };
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+        let notice = stderr
+            .lines()
+            .find(|l| l.starts_with("Note: --illumina_5base"))
+            .unwrap_or_else(|| panic!("{engine}: no 5-Base notice in {stderr}"));
+        assert!(
+            notice.contains(&format!("aligned with {name} to the UNCONVERTED genome")),
+            "{notice}"
+        );
+        assert!(!stderr.contains("aligned with minimap2"), "{stderr}");
         f.check_report(&out.get_output().stderr);
     }
 }
