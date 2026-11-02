@@ -5,7 +5,7 @@ Frozen before any B-new cell has run, including the 10M dry run. The outcome fol
 ## Fixed setup
 
 - **Bismark binary:** branch `feat/5base-bowtie2-defaults` at `72bbf7b` (the builder change and its tests), built on oxy with `cargo build --release -p bismark`. `bismark --version` must name `72bbf7b`. Dedup and the extractor are the same multicall build.
-- **Harness:** `validation/five_base_engine_bench.sh`, `five_base_rescued.py`, `five_base_compare.py` and `concordance.py`, at the commit that adds this file.
+- **Harness:** `validation/five_base_engine_bench.sh`, `five_base_rescued.py`, `five_base_compare.py` and `concordance.py` at `a9ee747`. That is the commit that added this file (`1284243`) plus a fix for the version check: Bowtie 2's stderr warning broke it on oxy before any cell had run.
 - **Tools** (checked by `five_base_engine_bench.sh versions`; a mismatch stops the work): Trim Galore 2.2.0 (Oxidized), Bowtie 2 2.5.5, cutadapt 2.6, samtools 1.23.1.
 - **Reference and indexes:** as #1146: Ensembl GRCh38 primary assembly, the shared plain Bowtie 2 index `Homo_sapiens.GRCh38`; scoring on autosomes and X.
 - **Samples:** NA12878 and HG002, the same 100M-pair screen subsets as #1146 (first 100,000,000 pairs of L001 then L002, before trimming), inputs symlinked from the read-only S3 mount.
