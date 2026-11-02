@@ -428,7 +428,7 @@ cmd_rescued() {
 cmd_duplex() {
   local s=$1 tag=$2 arm=$3 d=$ROOT/runs/$1/$2/$3.rep1 out=$ROOT/runs/$1/$2/$3.duplex
   [[ -s $d/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
-  local help; help=$(bismark --help)
+  local help; help=$(bismark align --help)
   [[ $(grep -A8 -- '--five_base_min_mapq' <<<"$help") == *"[default: 0]"* ]] \
     || die "--five_base_min_mapq no longer defaults to 0"
   rm -rf "$out"; mkdir -p "$out"
