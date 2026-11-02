@@ -5,7 +5,7 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-02
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
@@ -56,7 +56,7 @@ The developer gave this order. Most workflows run these steps:
 **Limits in the code.**
 
 - Reads are FastQ (default) or FastA; `--pbat` accepts only FastQ and no `--gzip` (`resolve_library` in `aligner/config.rs`).
-- Outside 5-Base, minimap2 and rammap align single-end reads only; paired-end input, including a positional paired uBAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
+- minimap2 and rammap align single-end reads only, except minimap2 in 5-Base runs; paired-end input, including a positional paired uBAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
 - Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
 - `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).

@@ -5,7 +5,7 @@ description: The lines of the alignment report, the deduplication report and the
 tags: [report, mapping-efficiency, deduplication, qc]
 page_id: run-reports
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-02
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
@@ -18,6 +18,9 @@ sources:
     commit: b4f901b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
+    commit: b4f901b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/logging.rs
     commit: b4f901b
 ---
 
