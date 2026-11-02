@@ -8419,7 +8419,7 @@ mod tests {
         c.five_base = true;
         c.aligner_options = match aligner {
             Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
-            _ => "-q --score-min L,0,-0.6".into(),
+            _ => "-q --score-min L,0,-0.6 --dovetail --maxins 800".into(),
         };
         c.bowtie_threads = Some(4);
         c
@@ -8430,7 +8430,7 @@ mod tests {
         for (aligner, expected) in [
             (
                 config::Aligner::Bowtie2,
-                "-q --score-min L,0,-0.6 -p 4 --reorder",
+                "-q --score-min L,0,-0.6 --dovetail --maxins 800 -p 4 --reorder",
             ),
             (
                 config::Aligner::Hisat2,
