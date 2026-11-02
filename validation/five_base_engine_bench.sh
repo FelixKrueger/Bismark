@@ -322,7 +322,8 @@ cmd_score() {
   log "score $s/$tag written"
 }
 
-first_line() { "$@" 2>&1 | sed -n 1p; }
+# stdout only: bowtie2 prints a CPU-feature warning on stderr before its version.
+first_line() { "$@" 2>/dev/null | sed -n 1p; }
 
 cmd_versions() {
   mkdir -p "$RESULTS"
