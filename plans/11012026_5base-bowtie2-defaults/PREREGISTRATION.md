@@ -1,4 +1,112 @@
-# Pre-registration: 5-Base Bowtie 2 defaults (`--dovetail --maxins 800`)
+# Pre-registration: 5-Base Bowtie 2 default `--maxins 800`
+
+## Rev 2 (2026-11-03): `--maxins 800` only
+
+Frozen before any rev 2 B-new or B cell has run. The outcome follows this section. If a rev 2 B-new or B cell has produced data and this section is then changed, that run is void. Source: `PLAN.md` rev 6, approved by Felix on 2026-11-03.
+
+### Rev 1 is withdrawn
+
+Rev 1 (below) pre-registered `--dovetail --maxins 800`.
+- Its 10M dry run was meant to decide nothing. It showed that the pairs `--dovetail` admits carry non-genomic overhangs, and Felix then dropped `--dovetail` (2026-11-02). Figures: `PLAN.md`, implementation notes #5.
+- Rev 1's criteria R1–R6 and D0–D3 are withdrawn and decide nothing.
+- Its void-if-changed clause lapses with it, because rev 1's outcome was never applied.
+
+### Fixed setup
+
+- **Binary:** `d27b11e` (the rev 6 builder), built on oxy into `/var/tmp/5base_engines/bin5`. `bismark --version` must name `d27b11e`.
+- **Harness:** `validation/` at `1c126c3`, deployed to `~/5base_harness_bt2_r6`.
+- **Inputs, threads, tools and per-arm pipeline:** as in rev 1. Tool versions are recorded by `versions`, which writes `versions_d27b11e.txt`.
+- **Streams:** stream 1 (NA12878) runs on CPUs 0-31 and stream 2 (HG002) on CPUs 32-63. Timings are not compared.
+
+### Arms
+
+| Arm | Flags added to `--illumina_5base` | Options it must show |
+|---|---|---|
+| B | `--bowtie2 --five_base_index <idx> -X 500` | `--maxins 500` exactly once; no `--dovetail`, no `--local` |
+| B-new | `--bowtie2 --five_base_index <idx>` | `--maxins 800` exactly once; none of `--dovetail`, `--local`, `--no-mixed`, `--no-discordant` |
+
+B-new's `@PG` command line must set none of `-X`, `--maxins`, `--dovetail` and `--no_dovetail`. B-old names the rev 3 cells (`-X 800 --no_dovetail --five_base_umi_qname`, binary `72bbf7b`), which are kept for the cross-checks and cannot be re-run.
+
+### Seen before this freeze
+
+| Rev 3 B-old cell | pairs_in | unique_pairs | map_eff | CpG/CHG/CHH % | dup % | MAPQ-0 | TLEN p10/p50/p90 | deconv prec/rec |
+|---|---|---|---|---|---|---|---|---|
+| NA12878 | 98,082,139 | 92,666,181 | 94.5 | 48.6 / 1.3 / 1.2 | 3.40 | 1,697,864 | 246/353/479 | 93.5 / 61.6 |
+| HG002 | 95,165,937 | 89,955,665 | 94.5 | 63.6 / 1.2 / 1.1 | 3.42 | 2,126,594 | 240/341/456 | 93.5 / 61.0 |
+
+- NA12878 B-old has already passed `repro` against #1146 B-X, on every metric, the deconvolution counts and the own-set cov ≥ 10 n/r (822,432 / 0.965834).
+- Also seen: the rev 3 dry-run figures (`PLAN.md` #5) and #1146's published results.
+- No B (`-X 500`) cell from this branch, and no B-new cell built at `d27b11e`, has been seen.
+- The A1–A7 and secondary thresholds below are the rev 1 and rev 6 thresholds, set before these figures were known. None was chosen or changed with them.
+
+### NA12878 gate
+
+1. `repro NA12878 screen B-new` against `plans/10292026_5base-default-engine/bench_results/NA12878/screen/`. Exact equality is required on:
+   - pairs_in, unique_pairs, map_eff, cpg/chg/chh %, dup %;
+   - records, mapq0, r1_records, readthrough, TLEN p10/p50/p90;
+   - deconvolution precision and recall, and their numerators and denominators;
+   - own-set cov ≥ 10 n and r, scoring B-new alone.
+2. `repro-compare NA12878 screen B-old B-new`: identical on the same list.
+
+What the gate tests: that the shipped default reproduces the configuration #1146 measured, and that the dev commits since `9b5c15b` (#1121, #1145, #1115) leave it unchanged. On a failure, stop and report; if B-old fails the same way, the cause is drift from those commits, not the builder.
+
+### HG002
+
+**Cross-check:** `repro-compare HG002 screen B-old B-new`, identical on the gate's list.
+
+**Admitted pairs** (`rescued HG002 screen B B-new`, which runs the helper with `--all-bases`):
+- **Sets** (on the raw pre-dedup `_pe.bam`s, joined in FASTQ order):
+  - *admitted:* pairs proper in B-new and absent from B;
+  - *changed:* pairs in both whose POS or CIGAR differs on either mate;
+  - *rest:* all other B-new pairs;
+  - *rest_long:* rest pairs with 450 ≤ |TLEN| ≤ 500.
+- **Draws:** one draw from `random.Random(1146)` per B-new pair, in FASTQ order, whatever the pair's set.
+  - The *admitted sample* is admitted pairs with a draw < 0.10; every aligned base of each is tallied.
+  - The *control* is rest pairs with a draw < 0.01; their non-overhang aligned bases are tallied.
+  - The *pool* is rest pairs with a draw < 0.05; their CpG calls are kept.
+- **Cycle** is the read position from the read's 3′ end, with 0 the last base.
+- **Cycle matching:** each control rate is weighted by the sample's per-cycle denominator. Cycles with no control denominator are dropped from both sides and their count is reported.
+- **A1.** Admitted pairs are 1–15% of B-new's pairs.
+- **A2.** At least 95% of admitted pairs have 500 < |TLEN| ≤ 800.
+  - Failing A1 or A2 means investigate: the mechanism is not the insert cap.
+- **A3.** Admitted CHG and CHH, from XM calls on both mates, are each ≤ the rest's + 0.5 pt.
+- **A4.** Admitted CpG is within ±5 pt of the rest's. The rest_long CpG is reported alongside it.
+- **A5 (admitted sample vs cycle-matched control):**
+  - The mismatch rate is ≤ 2× the control's. A mismatch is an `MD` mismatch at a base whose XM character is `.`, and the denominator is those bases.
+  - CHG and CHH are each ≤ the control's + 1.0 pt.
+  - Each comparison needs n ≥ 10,000; otherwise it is INSUFFICIENT.
+- **A6 (matched-site DRAGEN agreement):**
+  - A site counts if DRAGEN has cov ≥ 10 there and it has at least one admitted call and at least one pool call.
+  - The site of a CpG call is (chrom, position, +) when R1 is forward and (chrom, position, −) when R1 is reverse.
+  - Each call scores p if methylated and 1 − p if not, where p is DRAGEN's methylated fraction. Each set's site score is the mean of its call scores.
+  - The mean over sites of (admitted − pool) must be ≥ −0.02. It needs n ≥ 10,000 sites; otherwise it is INSUFFICIENT.
+- **A7 (M-bias):** per set, D = R1 CpG % over 3′ cycles 0–9 minus cycles 60–69, counting only reads long enough for each window. Pass when |D(admitted) − D(rest)| ≤ 3 pt.
+- **Reported only:**
+  - admitted and rest |TLEN| p10/p50/p90;
+  - dovetailed and contained counts;
+  - changed and lost counts.
+
+**Genome-wide, B-new vs B** (`score HG002 screen B B B-new`):
+- common-set Δr at cov ≥ 10 is ≥ −0.001, from r to 6 decimals;
+- CHG and CHH, from the report counts, are each ≤ B's + 0.2 pt;
+- MAPQ-0 (mapq0 / records) is ≤ B's + 2 pt;
+- deconvolution precision and recall, from their counts, each have Δ ≥ −1 pt.
+
+Reported only: own-set and gain-set n and r, and mapping efficiency.
+
+### Outcome
+
+The PR proceeds only if every check is PASS:
+- the NA12878 gate (items 1–2);
+- the HG002 cross-check;
+- A1–A7;
+- the HG002 genome-wide checks.
+
+Any FAIL or INSUFFICIENT stops the work, and the numbers go to Felix. Nothing is tuned, re-run for a better number, or dropped silently. If oxy's scratch is wiped mid-run, the affected cells are re-run unchanged; that is not a re-roll.
+
+---
+
+# Rev 1 (withdrawn): `--dovetail --maxins 800`
 
 Frozen before any B-new cell has run, including the 10M dry run. The outcome follows this file. If a B-new cell has produced data and this file is then changed, that run is void. Source: `PLAN.md` rev 3, Behavior 2, approved by Felix on 2026-11-02.
 
