@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
-"""Rescued-pair, duplex and verdict checks for the 5-Base Bowtie 2 defaults run.
+"""Admitted-pair and verdict checks for the 5-Base Bowtie 2 --maxins 800 default.
 
 Pure stdlib, like five_base_compare.py; BAMs are read through `samtools view`.
-Pre-registration: plans/11012026_5base-bowtie2-defaults/PREREGISTRATION.md.
+Pre-registration: plans/11012026_5base-bowtie2-defaults/PREREGISTRATION.md (rev 2).
 
-  rescued    --fastq <R1> --old <B-old _pe.bam> --new <B-new _pe.bam>
-             --dragen <CpG-only CX> --out <dir> [--seed 1146]
-             Joins both raw BAMs in FASTQ order into rescued / changed / rest
-             pairs and writes <dir>/rescued.json: per-set geometry, methylation,
-             R1 3' M-bias, overhang-vs-control tallies (R4), per-call DRAGEN
-             agreement (R5) and duplex-family partner fractions (D1).
-  consensus  --bam <five_base_consensus.bam> --log <consensus log>
-             --dragen <CpG-only CX> --out <json>
-  verdict    --sample S --rescued <json> --old-dir <B-old cell> --new-dir <B-new cell>
-             --score <score.tsv> [--old-consensus <json> --new-consensus <json>]
-             --out <tsv>
-             Applies the pre-registered criteria; exits 1 unless every one passes.
+  rescued   --fastq <R1> --old <old arm _pe.bam> --new <new arm _pe.bam>
+            --dragen <CpG-only CX> --out <dir> [--all-bases] [--seed 1146]
+            Joins both raw BAMs in FASTQ order into admitted / changed / rest
+            pairs and writes <dir>/rescued.json: per-set geometry, |TLEN|,
+            methylation, R1 3' M-bias, sampled per-base tallies against a
+            cycle-matched control, and matched-site DRAGEN agreement.
+  verdict   --sample S --rescued <json> --old-arm A --new-arm B --old-dir <cell>
+            --new-dir <cell> --score <score.tsv> --out <tsv>
+            Applies the pre-registered A1-A7 and secondary checks; exits 1
+            unless every one passes.
   --selftest
 """
 
 import argparse
-import heapq
 import json
 import os
 import random
@@ -36,19 +33,21 @@ from concordance import _norm_chrom, _open  # noqa: E402
 
 CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
 MD_RE = re.compile(r"(\d+)|\^([A-Z]+)|([A-Z])")
-# Rest pairs below these priorities feed the R4 control and the R5 sample pool.
+# Seeded draws (one per new-arm pair) select the per-base samples and the agreement pool.
 CONTROL_FRAC = 0.01
+ADMIT_FRAC = 0.10
 POOL_FRAC = 0.05
-MBIAS_CYCLES = 10
+MBIAS_3P = range(0, 10)
+MBIAS_MID = range(60, 70)
+REST_LONG = (450, 500)
 MIN_N = 10_000
-SETS = ("rescued", "changed", "rest")
+SETS = ("admitted", "changed", "rest", "rest_long")
 
 
 # ---------------------------------------------------------------- SAM parsing
 
 class Mate:
-    __slots__ = ("name", "flag", "rname", "pos", "mapq", "cigar", "pnext", "tlen",
-                 "seqlen", "xm", "md", "rx", "_span")
+    __slots__ = ("name", "flag", "rname", "pos", "cigar", "tlen", "seqlen", "xm", "md", "_span")
 
     def __init__(self, line):
         f = line.rstrip("\n").split("\t")
@@ -56,20 +55,16 @@ class Mate:
         self.flag = int(f[1])
         self.rname = f[2]
         self.pos = int(f[3])
-        self.mapq = int(f[4])
         self.cigar = f[5]
-        self.pnext = int(f[7])
         self.tlen = int(f[8])
         self.seqlen = len(f[9])
-        self.xm = self.md = self.rx = None
+        self.xm = self.md = None
         for t in f[11:]:
             tag = t[:2]
             if tag == "XM":
                 self.xm = t[5:]
             elif tag == "MD":
                 self.md = t[5:]
-            elif tag == "RX":
-                self.rx = t[5:]
         if self.xm is None:
             raise SystemExit(f"five_base_rescued: record {self.name} has no XM tag")
         self._span = None
@@ -218,40 +213,58 @@ class CycleTally:
         return {k: {str(c): n for c, n in sorted(v.items())} for k, v in self.t.items()}
 
 
+def quantile(hist, f):
+    """Quantile f of a {value: count} histogram."""
+    total = sum(hist.values())
+    if not total:
+        return None
+    target, seen = int(total * f), 0
+    for v in sorted(hist):
+        seen += hist[v]
+        if seen > target:
+            return v
+    return max(hist)
+
+
 class SetStats:
     def __init__(self):
         self.pairs = 0
         self.shape = {"dovetailed": 0, "contained": 0, "normal": 0}
-        self.overhang = array("I")
+        self.overhang = {}
+        self.tlen = {}
         self.calls = dict.fromkeys("ZzXxHh", 0)
-        self.mbias = [[0, 0] for _ in range(MBIAS_CYCLES)]  # [methylated, total] CpG
+        # [methylated, total] R1 CpG calls over the 3' and mid-read cycle windows
+        self.mbias = {"3p": [0, 0], "mid": [0, 0]}
 
     def add(self, r1, r2):
         self.pairs += 1
         shape, over = geometry(r1, r2)
         self.shape[shape] += 1
         if shape == "dovetailed":
-            self.overhang.append(over)
+            self.overhang[over] = self.overhang.get(over, 0) + 1
+        t = abs(r1.tlen)
+        self.tlen[t] = self.tlen.get(t, 0) + 1
         for m in (r1, r2):
             for ch in "ZzXxHh":
                 self.calls[ch] += m.xm.count(ch)
-        tail = r1.xm[:MBIAS_CYCLES] if r1.reverse else r1.xm[-MBIAS_CYCLES:][::-1]
-        for c, x in enumerate(tail):
-            if x == "Z":
-                self.mbias[c][0] += 1
-                self.mbias[c][1] += 1
-            elif x == "z":
-                self.mbias[c][1] += 1
+        xm = r1.xm if r1.reverse else r1.xm[::-1]  # 3'-first
+        for name, window in (("3p", MBIAS_3P), ("mid", MBIAS_MID)):
+            if len(xm) <= window[-1]:
+                continue
+            seg = xm[window[0]:window[-1] + 1]
+            m, u = seg.count("Z"), seg.count("z")
+            self.mbias[name][0] += m
+            self.mbias[name][1] += m + u
 
     def to_json(self):
-        ov = sorted(self.overhang)
-
-        def q(f):
-            return ov[min(len(ov) - 1, int(len(ov) * f))] if ov else None
-        return {"pairs": self.pairs, "shape": self.shape,
-                "overhang": {"n": len(ov), "p10": q(0.1), "p50": q(0.5), "p90": q(0.9),
-                             "max": ov[-1] if ov else None},
-                "calls": self.calls, "mbias_r1_3p": self.mbias}
+        def dist(h):
+            return {"n": sum(h.values()), "p10": quantile(h, 0.1), "p50": quantile(h, 0.5),
+                    "p90": quantile(h, 0.9), "max": max(h) if h else None}
+        in_cap = sum(n for t, n in self.tlen.items() if 500 < t <= 800)
+        return {"pairs": self.pairs, "shape": self.shape, "overhang": dist(self.overhang),
+                "tlen": dist(self.tlen),
+                "tlen_500_800_fraction": in_cap / self.pairs if self.pairs else None,
+                "calls": self.calls, "mbias_r1": self.mbias}
 
 
 def cpg_calls(r1, r2, out):
@@ -270,16 +283,6 @@ def cpg_calls(r1, r2, out):
                 out.append(site_key(chrom, p, strand) << 1 | (x == "Z"))
 
 
-def family_key(r1, r2):
-    """The duplex family key of five_base_duplex.rs: outer span + canonical RX."""
-    start = min(r1.pos, r2.pos) - 1
-    umi = (r1.rx or "").upper()
-    if "+" in umi:
-        a, b = umi.split("+", 1)
-        umi = min(umi, f"{b}+{a}")
-    return f"{r1.rname}\t{start}\t{start + abs(r1.tlen)}\t{umi}"
-
-
 def same_alignment(a, b):
     return all(x.pos == y.pos and x.cigar == y.cigar for x, y in zip(a, b))
 
@@ -289,84 +292,75 @@ def same_alignment(a, b):
 def cmd_rescued(args):
     os.makedirs(args.out, exist_ok=True)
     stats = {s: SetStats() for s in SETS}
-    over_t, ctrl_t = CycleTally(), CycleTally()
-    rescued_calls = array("q")
-    pool_calls, pool = array("q"), []  # pool: (priority, start, end) into pool_calls
+    adm_t, ctrl_t = CycleTally(), CycleTally()
+    adm_calls, pool_calls = array("q"), array("q")
     rng = random.Random(args.seed)
-    lost = new_pairs = old_pairs = fastq_pairs = 0
-    fam_path = os.path.join(args.out, "families.unsorted")
+    lost = new_pairs = old_pairs = fastq_pairs = adm_sampled = ctrl_sampled = 0
     old_it, new_it = sam_pairs(args.old), sam_pairs(args.new)
     old, new = next(old_it, None), next(new_it, None)
-    with open(fam_path, "w") as fam:
-        for name in fastq_names(args.fastq):
-            fastq_pairs += 1
-            o = old if old is not None and old[0].name == name else None
-            n = new if new is not None and new[0].name == name else None
+    for name in fastq_names(args.fastq):
+        fastq_pairs += 1
+        o = old if old is not None and old[0].name == name else None
+        n = new if new is not None and new[0].name == name else None
+        if o is not None:
+            old_pairs += 1
+            old = next(old_it, None)
+        if n is None:
             if o is not None:
-                old_pairs += 1
-                old = next(old_it, None)
-            if n is None:
-                if o is not None:
-                    lost += 1
-                continue
-            new_pairs += 1
-            new = next(new_it, None)
-            r1, r2 = n
-            if o is None:
-                label = "rescued"
-            elif not same_alignment(o, n):
-                label = "changed"
+                lost += 1
+            continue
+        new_pairs += 1
+        new = next(new_it, None)
+        r1, r2 = n
+        draw = rng.random()
+        if o is None:
+            label = "admitted"
+        elif not same_alignment(o, n):
+            label = "changed"
+        else:
+            label = "rest"
+        stats[label].add(r1, r2)
+        if label == "admitted":
+            cpg_calls(r1, r2, adm_calls)
+            if args.all_bases:
+                if draw < ADMIT_FRAC:
+                    adm_sampled += 1
+                    for m in n:
+                        adm_t.add(m, lambda i: True)
             else:
-                label = "rest"
-            stats[label].add(r1, r2)
-            fam.write(f"{family_key(r1, r2)}\t{'OT' if not r1.reverse else 'OB'}\t{label}\n")
-            if label == "rescued":
                 for m, ob in zip(n, overhang_bases(r1, r2)):
                     if ob:
-                        over_t.add(m, ob.__contains__)
-                cpg_calls(r1, r2, rescued_calls)
-            elif label == "rest":
-                pr = rng.random()
-                if pr < CONTROL_FRAC:
-                    for m, ob in zip(n, overhang_bases(r1, r2)):
-                        ctrl_t.add(m, lambda i, ob=ob: i not in ob)
-                if pr < POOL_FRAC:
-                    s = len(pool_calls)
-                    cpg_calls(r1, r2, pool_calls)
-                    pool.append((pr, s, len(pool_calls)))
+                        adm_t.add(m, ob.__contains__)
+        elif label == "rest":
+            if REST_LONG[0] <= abs(r1.tlen) <= REST_LONG[1]:
+                stats["rest_long"].add(r1, r2)
+            if draw < CONTROL_FRAC:
+                ctrl_sampled += 1
+                for m, ob in zip(n, overhang_bases(r1, r2)):
+                    ctrl_t.add(m, lambda i, ob=ob: i not in ob)
+            if draw < POOL_FRAC:
+                cpg_calls(r1, r2, pool_calls)
     if old is not None or new is not None:
         left = (old or new)[0].name
         raise SystemExit(f"five_base_rescued: BAM record {left} is not in the FASTQ, or the BAMs "
                          "are not in FASTQ order")
-
-    # R5: per-call agreement, rescued vs an equal-sized random rest sample.
-    k = stats["rescued"].pairs
-    if k > len(pool):
-        raise SystemExit(f"five_base_rescued: {k} rescued pairs exceed the {len(pool)}-pair rest "
-                         f"pool (POOL_FRAC {POOL_FRAC})")
-    sample_calls = array("q")
-    for _, s, e in heapq.nsmallest(k, pool):
-        sample_calls.extend(pool_calls[s:e])
-    del pool_calls, pool
-    r5 = per_call_agreement(args.dragen, {"rescued": rescued_calls, "rest_sample": sample_calls})
-
-    families = family_partners(fam_path, args.out)
-    os.remove(fam_path)
-    out = {"seed": args.seed, "control_frac": CONTROL_FRAC, "pool_frac": POOL_FRAC,
+    agreement = matched_site_agreement(args.dragen, adm_calls, pool_calls)
+    out = {"seed": args.seed, "all_bases": args.all_bases, "control_frac": CONTROL_FRAC,
+           "admit_frac": ADMIT_FRAC, "pool_frac": POOL_FRAC,
            "fastq_pairs": fastq_pairs, "old_pairs": old_pairs, "new_pairs": new_pairs,
-           "lost_pairs": lost, "sets": {s: stats[s].to_json() for s in SETS},
-           "r4": {"overhang": over_t.to_json(), "control": ctrl_t.to_json()},
-           "r5": r5, "families": families}
+           "lost_pairs": lost, "admitted_sampled": adm_sampled, "control_sampled": ctrl_sampled,
+           "sets": {s: stats[s].to_json() for s in SETS},
+           "per_base": {"admitted": adm_t.to_json(), "control": ctrl_t.to_json()},
+           "agreement": agreement}
     with open(os.path.join(args.out, "rescued.json"), "w") as fh:
         json.dump(out, fh, indent=1)
-    print(f"rescued {k} / {new_pairs} pairs; changed {stats['changed'].pairs}; lost {lost}")
+    print(f"admitted {stats['admitted'].pairs} / {new_pairs} pairs; "
+          f"changed {stats['changed'].pairs}; lost {lost}")
 
 
-def per_call_agreement(dragen, call_sets):
-    """Mean of p (methylated call) or 1 - p (unmethylated) at DRAGEN cov >= 10 sites."""
-    needed = set()
-    for calls in call_sets.values():
-        needed.update(c >> 1 for c in calls)
+def matched_site_agreement(dragen, adm_calls, pool_calls):
+    """Mean over shared DRAGEN cov >= 10 sites of (admitted - pool) per-site mean call score."""
+    shared = {c >> 1 for c in adm_calls} & {c >> 1 for c in pool_calls}
     p = {}
     with _open(dragen) as fh:
         for line in fh:
@@ -379,110 +373,31 @@ def per_call_agreement(dragen, call_sets):
             m, u = int(f[3]), int(f[4])
             if m + u >= 10:
                 k = site_key(c, f[1], f[2])
-                if k in needed:
+                if k in shared:
                     p[k] = m / (m + u)
-    out = {}
-    for name, calls in call_sets.items():
-        n, s = 0, 0.0
+
+    def per_site(calls):
+        acc = {}
         for c in calls:
             v = p.get(c >> 1)
             if v is not None:
-                n += 1
-                s += v if c & 1 else 1.0 - v
-        out[name] = {"calls": len(calls), "n": n, "mean_score": s / n if n else None}
-    return out
-
-
-def family_partners(path, outdir):
-    """Families from the per-pair key lines; per-set fraction of pairs with a partner."""
-    srt = path + ".sorted"
-    env = dict(os.environ, LC_ALL="C")
-    subprocess.run(["sort", "-S", "4G", "--parallel", "4", "-T", outdir, "-o", srt, path],
-                   check=True, env=env)
-    fam = {"total": 0, "duplex": 0, "simplex": 0}
-    part = {s: [0, 0] for s in SETS}  # [partnered pairs, pairs]
-
-    def close(labels, strands):
-        if not labels:
-            return
-        fam["total"] += 1
-        paired = len(strands) == 2
-        fam["duplex" if paired else "simplex"] += 1
-        for lab in labels:
-            part[lab][1] += 1
-            part[lab][0] += paired
-
-    cur, labels, strands = None, [], set()
-    with open(srt) as fh:
-        for line in fh:
-            k, strand, lab = line.rstrip("\n").rsplit("\t", 2)
-            if k != cur:
-                close(labels, strands)
-                cur, labels, strands = k, [], set()
-            labels.append(lab)
-            strands.add(strand)
-    close(labels, strands)
-    os.remove(srt)
-    return {"families": fam,
-            "partnered": {s: {"partnered": a, "pairs": b, "fraction": a / b if b else None}
-                          for s, (a, b) in part.items()}}
-
-
-# ---------------------------------------------------------------- consensus
-
-def cmd_consensus(args):
-    calls = {"+": dict.fromkeys("ZzXxHh", 0), "-": dict.fromkeys("ZzXxHh", 0)}
-    records, names = 0, set()
-    p = subprocess.Popen(["samtools", "view", args.bam], stdout=subprocess.PIPE, text=True)
-    for line in p.stdout:
-        f = line.split("\t")
-        records += 1
-        names.add(f[0])
-        xm = next((t[5:].rstrip("\n") for t in f[11:] if t.startswith("XM:Z:")), None)
-        if xm is None:
-            raise SystemExit(f"five_base_rescued: consensus record {f[0]} has no XM tag")
-        strand = "-" if int(f[1]) & 0x10 else "+"
-        for ch in "ZzXxHh":
-            calls[strand][ch] += xm.count(ch)
-    if p.wait() != 0:
-        raise SystemExit(f"five_base_rescued: samtools view {args.bam} exited {p.returncode}")
-    log = open(args.log).read()
-    dpx = re.search(r"duplex consensus \(PE\): (\d+) consensus read\(s\) emitted, (\d+) "
-                    r"family\(ies\) skipped", log)
-    spx = re.search(r"simplex consensus \(PE\): (\d+) consensus read\(s\) emitted, (\d+) "
-                    r"family\(ies\) skipped, of (\d+) single-strand", log)
-    if not dpx or not spx:
-        raise SystemExit(f"five_base_rescued: no duplex and simplex summary lines in {args.log}")
-    drg = {"+": [0, 0], "-": [0, 0]}
-    with _open(args.dragen) as fh:
-        for line in fh:
-            f = line.split("\t", 6)
-            if len(f) >= 6 and f[5] in ("CG", "CpG") and f[2] in drg \
-                    and _norm_chrom(f[0]) in CONTIG_IDX:
-                drg[f[2]][0] += int(f[3])
-                drg[f[2]][1] += int(f[3]) + int(f[4])
-
-    def pct(m, u):
-        return 100.0 * m / (m + u) if m + u else None
-    tot = {ch: calls["+"][ch] + calls["-"][ch] for ch in "ZzXxHh"}
-    out = {"records": records, "families_in_bam": len(names),
-           "tool_duplex_families": int(dpx.group(1)) + int(dpx.group(2)),
-           "tool_duplex_skipped": int(dpx.group(2)),
-           "tool_simplex_families": int(spx.group(3)),
-           "calls": calls,
-           "cpg_pct": pct(tot["Z"], tot["z"]), "chg_pct": pct(tot["X"], tot["x"]),
-           "chh_pct": pct(tot["H"], tot["h"]),
-           "cpg_pct_strand": {s: pct(calls[s]["Z"], calls[s]["z"]) for s in "+-"},
-           "dragen_cpg_pct_strand": {s: pct(drg[s][0], drg[s][1] - drg[s][0]) for s in "+-"}}
-    with open(args.out, "w") as fh:
-        json.dump(out, fh, indent=1)
-    print(f"consensus: {records} records, {out['tool_duplex_families']} duplex families")
+                a = acc.setdefault(c >> 1, [0.0, 0])
+                a[0] += v if c & 1 else 1.0 - v
+                a[1] += 1
+        return acc
+    a, b = per_site(adm_calls), per_site(pool_calls)
+    diffs = [a[k][0] / a[k][1] - b[k][0] / b[k][1] for k in a if k in b]
+    return {"admitted_calls": len(adm_calls), "pool_calls": len(pool_calls),
+            "sites": len(diffs),
+            "mean_diff": sum(diffs) / len(diffs) if diffs else None,
+            "admitted_mean": sum(v[0] / v[1] for v in a.values()) / len(a) if a else None,
+            "pool_mean": sum(v[0] / v[1] for v in b.values()) / len(b) if b else None}
 
 
 # ---------------------------------------------------------------- verdict
 
 def report_counts(path):
-    """Methylated / unmethylated C counts per context from a Bismark PE report."""
+    """Methylation % per context from a Bismark PE report's methylated / unmethylated counts."""
     out = {}
     for line in open(path):
         m = re.match(r"Total (methylated|unmethylated) C's in (CpG|CHG|CHH) context:\t(\d+)", line)
@@ -521,7 +436,7 @@ def pct_of(calls, m, u):
 
 
 def matched(tally_o, tally_c, num, den):
-    """Overhang rate and the control rate re-weighted to the overhang cycle mix."""
+    """Sample rate and the control rate re-weighted to the sample's cycle mix."""
     on, od, cw, dropped = 0, 0, 0.0, 0
     for c, d in tally_o[den].items():
         cd = tally_c[den].get(c, 0)
@@ -536,123 +451,141 @@ def matched(tally_o, tally_c, num, den):
     return 100.0 * on / od, 100.0 * cw / od, od, dropped
 
 
-def criteria(sample, rj, old_dir, new_dir, score, old_cons=None, new_cons=None):
-    """[(criterion, value, threshold, status)] for one sample."""
+def mbias_shift(s):
+    """R1 CpG % over 3' cycles 0-9 minus cycles 60-69."""
+    (m3, t3), (mm, tm) = s["mbias_r1"]["3p"], s["mbias_r1"]["mid"]
+    if not t3 or not tm:
+        return float("nan")
+    return 100.0 * m3 / t3 - 100.0 * mm / tm
+
+
+def status(ok, n_ok=True):
+    return "PASS" if ok and n_ok else ("INSUFFICIENT" if not n_ok else "FAIL")
+
+
+def admitted_criteria(rj):
+    """[(criterion, value, threshold, status)] for A1-A7, plus report-only rows."""
     rows = []
-
-    def add(name, value, threshold, ok, n_ok=True):
-        rows.append((name, value, threshold,
-                     "PASS" if ok and n_ok else ("INSUFFICIENT" if not n_ok else "FAIL")))
-
     S = rj["sets"]
-    res, rest = S["rescued"], S["rest"]
-    frac = 100.0 * res["pairs"] / rj["new_pairs"]
-    add("R1 rescued % of B-new pairs", f"{frac:.4f}", "0.1-3", 0.1 <= frac <= 3.0)
+    adm, rest, long_ = S["admitted"], S["rest"], S["rest_long"]
+    frac = 100.0 * adm["pairs"] / rj["new_pairs"] if rj["new_pairs"] else float("nan")
+    rows.append(("A1 admitted % of new pairs", f"{frac:.4f}", "1-15", status(1.0 <= frac <= 15.0)))
+    f = adm["tlen_500_800_fraction"]
+    rows.append(("A2 admitted with 500 < |TLEN| <= 800 %",
+                 "nan" if f is None else f"{100 * f:.4f}", ">= 95",
+                 status(f is not None and f >= 0.95)))
     for ctx, (m, u) in (("CHG", "Xx"), ("CHH", "Hh")):
-        a, b = pct_of(res["calls"], m, u), pct_of(rest["calls"], m, u)
-        add(f"R2 rescued {ctx} %", f"{a:.4f} vs rest {b:.4f}", "<= rest + 0.5", a <= b + 0.5)
-    a, b = pct_of(res["calls"], "Z", "z"), pct_of(rest["calls"], "Z", "z")
-    add("R3 rescued CpG %", f"{a:.4f} vs rest {b:.4f}", "within 5", abs(a - b) <= 5.0)
-    o, c = rj["r4"]["overhang"], rj["r4"]["control"]
-    o = {k: {int(x): n for x, n in v.items()} for k, v in o.items()}
-    c = {k: {int(x): n for x, n in v.items()} for k, v in c.items()}
+        a, b = pct_of(adm["calls"], m, u), pct_of(rest["calls"], m, u)
+        rows.append((f"A3 admitted {ctx} %", f"{a:.4f} vs rest {b:.4f}", "<= rest + 0.5",
+                     status(a <= b + 0.5)))
+    a, b = pct_of(adm["calls"], "Z", "z"), pct_of(rest["calls"], "Z", "z")
+    rows.append(("A4 admitted CpG %", f"{a:.4f} vs rest {b:.4f}", "within 5",
+                 status(abs(a - b) <= 5.0)))
+    rows.append(("A4 report: rest 450-500 bp CpG %", f"{pct_of(long_['calls'], 'Z', 'z'):.4f}",
+                 "report only", "INFO"))
+    pb = {k: {kk: {int(x): n for x, n in vv.items()} for kk, vv in v.items()}
+          for k, v in rj["per_base"].items()}
+    o, c = pb["admitted"], pb["control"]
+    ov, cv, n, drop = matched(o, c, "mm", "unc")
+    rows.append(("A5 admitted mismatch %", f"{ov:.4f} vs control {cv:.4f} (n {n}, unmatched {drop})",
+                 "<= 2x control", status(ov <= 2 * cv, n >= MIN_N)))
     for ctx, num, den in (("CHG", "chg_m", "chg_t"), ("CHH", "chh_m", "chh_t")):
         ov, cv, n, drop = matched(o, c, num, den)
-        add(f"R4 overhang {ctx} %", f"{ov:.4f} vs control {cv:.4f} (n {n}, unmatched {drop})",
-            "<= control + 1.0", ov <= cv + 1.0, n >= MIN_N)
-    ov, cv, n, drop = matched(o, c, "mm", "unc")
-    add("R4 overhang mismatch %", f"{ov:.4f} vs control {cv:.4f} (n {n}, unmatched {drop})",
-        "<= 2x control", ov <= 2 * cv, n >= MIN_N)
-    r5 = rj["r5"]
-    a, b = r5["rescued"]["mean_score"], r5["rest_sample"]["mean_score"]
-    n = r5["rescued"]["n"]
-    add("R5 per-call DRAGEN agreement", f"{a} vs rest sample {b} (n {n})", ">= rest - 0.02",
-        a is not None and b is not None and a >= b - 0.02, n >= MIN_N)
+        rows.append((f"A5 admitted {ctx} %",
+                     f"{ov:.4f} vs control {cv:.4f} (n {n}, unmatched {drop})",
+                     "<= control + 1.0", status(ov <= cv + 1.0, n >= MIN_N)))
+    ag = rj["agreement"]
+    d = ag["mean_diff"]
+    rows.append(("A6 matched-site DRAGEN agreement, admitted - rest",
+                 f"{d} (sites {ag['sites']})", ">= -0.02",
+                 status(d is not None and d >= -0.02, ag["sites"] >= MIN_N)))
+    a, b = mbias_shift(adm), mbias_shift(rest)
+    rows.append(("A7 R1 3' M-bias shift (cycles 0-9 minus 60-69)", f"{a:.4f} vs rest {b:.4f}",
+                 "within 3", status(abs(a - b) <= 3.0)))
+    rows.append(("report: admitted |TLEN| p10/p50/p90",
+                 f"{adm['tlen']['p10']}/{adm['tlen']['p50']}/{adm['tlen']['p90']}", "report only",
+                 "INFO"))
+    rows.append(("report: admitted dovetailed/contained",
+                 f"{adm['shape']['dovetailed']}/{adm['shape']['contained']}", "report only", "INFO"))
+    rows.append(("report: changed / lost pairs", f"{S['changed']['pairs']} / {rj['lost_pairs']}",
+                 "report only", "INFO"))
+    return rows
 
-    def mb(s):
-        m = [x for x, t in s["mbias_r1_3p"] if t]
-        t = [t for _, t in s["mbias_r1_3p"] if t]
-        return sum(100.0 * x / y for x, y in zip(m, t)) / len(t) if t else float("nan")
-    a, b = mb(res), mb(rest)
-    add("R6 R1 3' M-bias CpG %", f"{a:.4f} vs rest {b:.4f}", "within 3", abs(a - b) <= 3.0)
 
-    # Secondary, genome-wide.
+def secondary_criteria(old_arm, new_arm, old_dir, new_dir, score):
+    """Genome-wide checks of the new arm against the old arm."""
+    rows = []
     sc = {}
     for line in open(score):
         f = line.rstrip("\n").split("\t")
         sc[(f[0], f[1], f[2])] = f
-    r_old, r_new = float(sc[("B-old", "common", "10")][4]), float(sc[("B-new", "common", "10")][4])
-    add("S common-set delta r", f"{r_new - r_old:.6f}", ">= -0.001", r_new - r_old >= -0.001)
+    for arm in (old_arm, new_arm):
+        if (arm, "common", "10") not in sc:
+            raise SystemExit(f"five_base_rescued: no common-set row for {arm} in {score}")
+    r_old, r_new = float(sc[(old_arm, "common", "10")][4]), float(sc[(new_arm, "common", "10")][4])
+    dr = round(r_new - r_old, 6)  # score.tsv carries r to 6 decimals
+    rows.append(("S common-set delta r", f"{dr:.6f}", ">= -0.001", status(dr >= -0.001)))
     po = report_counts(one(r"_PE_report\.txt$", old_dir))
     pn = report_counts(one(r"_PE_report\.txt$", new_dir))
     for ctx in ("CHG", "CHH"):
-        add(f"S {ctx} %", f"{pn[ctx]:.4f} vs B-old {po[ctx]:.4f}", "<= B-old + 0.2",
-            pn[ctx] <= po[ctx] + 0.2)
-    mo, mn = metrics(os.path.join(old_dir, "metrics.tsv")), metrics(os.path.join(new_dir,
-                                                                                 "metrics.tsv"))
+        rows.append((f"S {ctx} %", f"{pn[ctx]:.4f} vs {old_arm} {po[ctx]:.4f}",
+                     f"<= {old_arm} + 0.2", status(pn[ctx] <= po[ctx] + 0.2)))
+    mo = metrics(os.path.join(old_dir, "metrics.tsv"))
+    mn = metrics(os.path.join(new_dir, "metrics.tsv"))
     qo = 100.0 * int(mo["mapq0"]) / int(mo["records"])
     qn = 100.0 * int(mn["mapq0"]) / int(mn["records"])
-    add("S MAPQ-0 %", f"{qn:.4f} vs B-old {qo:.4f}", "<= B-old + 2", qn <= qo + 2.0)
-    do, dn = deconv_counts(os.path.join(old_dir, "deconv.txt")), deconv_counts(
-        os.path.join(new_dir, "deconv.txt"))
+    rows.append(("S MAPQ-0 %", f"{qn:.4f} vs {old_arm} {qo:.4f}", f"<= {old_arm} + 2",
+                 status(qn <= qo + 2.0)))
+    do = deconv_counts(os.path.join(old_dir, "deconv.txt"))
+    dn = deconv_counts(os.path.join(new_dir, "deconv.txt"))
     for i, name in enumerate(("precision", "recall")):
-        add(f"S deconvolution {name} delta", f"{dn[i] - do[i]:.4f}", ">= -1", dn[i] - do[i] >= -1)
-
-    if old_cons is not None:
-        fams = rj["families"]
-        tool, ours = new_cons["tool_duplex_families"], fams["families"]["duplex"]
-        dev = abs(ours - tool) / tool if tool else float("inf")
-        add("D0 helper duplex families vs tool", f"{ours} vs {tool} ({100 * dev:.4f}%)",
-            "within 0.1%", dev <= 0.001)
-        p = fams["partnered"]
-        a, b = p["rescued"]["fraction"], p["rest"]["fraction"]
-        add("D1 rescued partnered %", f"{100 * a:.4f} vs rest {100 * b:.4f}", ">= rest - 5",
-            a is not None and b is not None and 100 * a >= 100 * b - 5.0)
-        add("D2 consensus CpG %", f"{new_cons['cpg_pct']:.4f} vs B-old {old_cons['cpg_pct']:.4f}",
-            "within 0.5", abs(new_cons["cpg_pct"] - old_cons["cpg_pct"]) <= 0.5)
-        for ctx in ("chg", "chh"):
-            a, b = new_cons[f"{ctx}_pct"], old_cons[f"{ctx}_pct"]
-            add(f"D3 consensus {ctx.upper()} %", f"{a:.4f} vs B-old {b:.4f}", "<= B-old + 0.2",
-                a <= b + 0.2)
-    return [(sample,) + r for r in rows]
+        rows.append((f"S deconvolution {name} delta", f"{dn[i] - do[i]:.4f}", ">= -1",
+                     status(dn[i] - do[i] >= -1)))
+    for key in ("own", "gain"):
+        row = sc.get((new_arm, key, "10"))
+        if row:
+            rows.append((f"report: {new_arm} {key}-set cov>=10 n / r", f"{row[3]} / {row[4]}",
+                         "report only", "INFO"))
+    rows.append(("report: map_eff", f"{mn['map_eff']} vs {old_arm} {mo['map_eff']}",
+                 "report only", "INFO"))
+    return rows
 
 
 def cmd_verdict(args):
     rj = json.load(open(args.rescued))
-    oc = json.load(open(args.old_consensus)) if args.old_consensus else None
-    nc = json.load(open(args.new_consensus)) if args.new_consensus else None
-    if (oc is None) != (nc is None):
-        raise SystemExit("five_base_rescued: give both --old-consensus and --new-consensus")
-    rows = criteria(args.sample, rj, args.old_dir, args.new_dir, args.score, oc, nc)
+    rows = admitted_criteria(rj) + secondary_criteria(args.old_arm, args.new_arm, args.old_dir,
+                                                      args.new_dir, args.score)
+    rows = [(args.sample,) + r for r in rows]
     with open(args.out, "w") as fh:
         fh.write("sample\tcriterion\tvalue\tthreshold\tstatus\n")
         for r in rows:
             fh.write("\t".join(map(str, r)) + "\n")
     for r in rows:
         print("\t".join(map(str, r)))
-    return 0 if all(r[-1] == "PASS" for r in rows) else 1
+    return 0 if all(r[-1] in ("PASS", "INFO") for r in rows) else 1
 
 
 # ---------------------------------------------------------------- selftest
 
-def _sam(name, flag, pos, cigar, pnext, tlen, seq, xm, md, rx="CAGTAGT+CACCTAC"):
-    tags = [f"XM:Z:{xm}", f"MD:Z:{md}"] + ([f"RX:Z:{rx}"] if rx else [])
+def _sam(name, flag, pos, cigar, pnext, tlen, seq, xm, md):
     return "\t".join([name, str(flag), "1", str(pos), "40", cigar, "=", str(pnext), str(tlen),
-                      seq, "I" * len(seq)] + tags) + "\n"
+                      seq, "I" * len(seq), f"XM:Z:{xm}", f"MD:Z:{md}"]) + "\n"
 
 
-def _selftest():
-    global CONTROL_FRAC, POOL_FRAC
-    CONTROL_FRAC = POOL_FRAC = 1.0  # every rest pair is control and pool at this size
-    d = tempfile.mkdtemp(prefix="fbr_selftest_")
-    L = 10
-    s = "A" * L
+def _fails(fn, needle):
+    try:
+        fn()
+    except SystemExit as e:
+        assert needle in str(e), e
+        return
+    raise AssertionError(f"expected failure containing {needle!r}")
 
-    # Geometry: OT dovetail (R2 starts 3 bp before R1), OB dovetail, contained, normal.
+
+def _selftest_units():
+    L, s = 10, "A" * 10
     ot1 = Mate(_sam("p", 99, 104, "10M", 101, 13, s, "Z.x......h", "0A9"))
     ot2 = Mate(_sam("p", 147, 101, "10M", 104, -13, s, "z.........", "10"))
     assert geometry(ot1, ot2) == ("dovetailed", 6), geometry(ot1, ot2)
-    # R1 overhang = R1 bases at ref > 110 = read idx 7..9; R2 overhang = ref < 104 = idx 0..2.
     assert overhang_bases(ot1, ot2) == ({7, 8, 9}, {0, 1, 2})
     ob1 = Mate(_sam("q", 83, 201, "10M", 205, -14, s, "..........", "10"))
     ob2 = Mate(_sam("q", 163, 205, "10M", 201, 14, s, "..........", "10"))
@@ -666,106 +599,195 @@ def _selftest():
     no1 = Mate(_sam("n", 99, 400, "10M", 420, 30, s, "..........", "10"))
     no2 = Mate(_sam("n", 147, 420, "10M", 400, -30, s, "..........", "10"))
     assert geometry(no1, no2) == ("normal", 0)
-
-    # Cycles, CIGAR walk, MD mismatches (called positions excluded by the tally).
     assert ot1.cycle(9) == 0 and ot2.cycle(0) == 0
     ind = Mate(_sam("i", 99, 10, "2S3M1I2M1D2M", 30, 20, s, "..........", "4A^G0C1"))
     assert list(ind.aligned()) == [(2, 10), (3, 11), (4, 12), (6, 13), (7, 14), (8, 16), (9, 17)]
     assert ind.mismatches() == {14, 16}, ind.mismatches()
     assert ind.span() == (10, 17)
     t = CycleTally()
-    mm = Mate(_sam("m", 99, 1, "10M", 20, 29, s, "X.........", "0A1C7"))
-    t.add(mm, lambda i: True)
+    t.add(Mate(_sam("m", 99, 1, "10M", 20, 29, s, "X.........", "0A1C7")), lambda i: True)
     assert t.t["chg_t"] == {9: 1} and t.t["chg_m"] == {9: 1}
     assert t.t["mm"] == {7: 1} and t.t["unc"][7] == 1 and 9 not in t.t["unc"], t.t
+    # Cycle matching re-weights the control to the sample's cycle mix; cycle 5 is unmatched.
+    ov = {"n": {0: 2}, "d": {0: 10, 1: 10, 5: 4}}
+    ct = {"n": {0: 10, 1: 30}, "d": {0: 100, 1: 100}}
+    assert matched(ov, ct, "n", "d") == (10.0, 20.0, 20, 4), matched(ov, ct, "n", "d")
+    assert quantile({1: 1, 5: 8, 9: 1}, 0.1) == 5 and quantile({1: 1, 5: 8, 9: 1}, 0.0) == 1
+    assert quantile({}, 0.5) is None
+    # M-bias windows: forward R1 reads its 3' end from the right; a 70 bp read fills both.
+    st = SetStats()
+    xm = "z" * 10 + "." * 50 + "Z" * 10
+    st.add(Mate(_sam("b", 99, 1, "70M", 100, 170, "A" * 70, xm, "70")),
+           Mate(_sam("b", 147, 100, "70M", 1, -170, "A" * 70, "." * 70, "70")))
+    assert st.mbias == {"3p": [10, 10], "mid": [0, 10]}, st.mbias
+    assert abs(mbias_shift(st.to_json()) - 100.0) < 1e-9
+    assert st.to_json()["tlen_500_800_fraction"] == 0.0 and st.to_json()["tlen"]["p50"] == 170
 
-    # Family key: swapped dual UMIs collapse; strand partner in the opposite molecule strand.
-    fa = family_key(ot1, ot2)
-    swapped = Mate(_sam("r", 83, 101, "10M", 104, -13, s, "..........", "10", "CACCTAC+CAGTAGT"))
-    assert family_key(swapped, ot1) == fa, (family_key(swapped, ot1), fa)
-    assert fa == "1\t100\t113\tCACCTAC+CAGTAGT"
 
-    # End-to-end on hand-built BAMs: rescued (dovetailed OT), changed, rest, lost.
-    sam_hdr = "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:1\tLN:100000\n"
+def _rj(**over):
+    """A synthetic rescued.json that passes every admitted criterion."""
+    calls = {"Z": 500, "z": 500, "X": 10, "x": 990, "H": 10, "h": 990}
+    mb = {"3p": [50, 100], "mid": [50, 100]}
+    base = {"calls": calls, "mbias_r1": mb, "tlen_500_800_fraction": 0.0,
+            "tlen": {"p10": 1, "p50": 2, "p90": 3}, "shape": {"dovetailed": 0, "contained": 0},
+            "pairs": 100}
+    adm = dict(base, tlen_500_800_fraction=0.97, pairs=5)
+    tally = {"unc": {"0": 20000}, "mm": {"0": 100}, "chg_t": {"0": 20000}, "chg_m": {"0": 200},
+             "chh_t": {"0": 20000}, "chh_m": {"0": 200}}
+    rj = {"new_pairs": 100, "lost_pairs": 0,
+          "sets": {"admitted": adm, "rest": base, "rest_long": base, "changed": base},
+          "per_base": {"admitted": tally, "control": tally},
+          "agreement": {"mean_diff": 0.0, "sites": 20000}}
+    for path, v in over.items():
+        node = rj
+        keys = path.split("__")
+        for k in keys[:-1]:
+            node = node[k]
+        node[keys[-1]] = v
+    return rj
+
+
+def _selftest_criteria():
+    def st(rj, prefix):
+        return [r[3] for r in admitted_criteria(rj) if r[0].startswith(prefix)]
+    assert all(r[3] in ("PASS", "INFO") for r in admitted_criteria(_rj())), admitted_criteria(_rj())
+    # Boundaries: each criterion passes at its edge and fails just beyond it.
+    assert st(_rj(sets__admitted__pairs=15), "A1") == ["PASS"]
+    assert st(_rj(sets__admitted__pairs=16), "A1") == ["FAIL"]
+    assert st(_rj(sets__admitted__pairs=0), "A1") == ["FAIL"]
+    assert st(_rj(sets__admitted__tlen_500_800_fraction=0.95), "A2") == ["PASS"]
+    assert st(_rj(sets__admitted__tlen_500_800_fraction=0.949), "A2") == ["FAIL"]
+    hi = {"Z": 500, "z": 500, "X": 16, "x": 984, "H": 10, "h": 990}  # CHG 1.6 vs 1.0
+    assert st(_rj(sets__admitted__calls=hi), "A3") == ["FAIL", "PASS"]
+    ok = {"Z": 550, "z": 450, "X": 10, "x": 990, "H": 10, "h": 990}  # CpG 55 vs 50
+    assert st(_rj(sets__admitted__calls=ok), "A4 admitted") == ["PASS"]
+    bad = {"Z": 551, "z": 449, "X": 10, "x": 990, "H": 10, "h": 990}
+    assert st(_rj(sets__admitted__calls=bad), "A4 admitted") == ["FAIL"]
+    mm = dict(_rj()["per_base"]["admitted"], mm={"0": 201})
+    assert st(_rj(per_base__admitted=mm), "A5 admitted mismatch") == ["FAIL"]
+    small = {k: {"0": v["0"] // 4} for k, v in _rj()["per_base"]["admitted"].items()}
+    assert st(_rj(per_base__admitted=small), "A5") == ["INSUFFICIENT"] * 3
+    assert st(_rj(agreement={"mean_diff": -0.02, "sites": 20000}), "A6") == ["PASS"]
+    assert st(_rj(agreement={"mean_diff": -0.021, "sites": 20000}), "A6") == ["FAIL"]
+    assert st(_rj(agreement={"mean_diff": 0.0, "sites": 9999}), "A6") == ["INSUFFICIENT"]
+    assert st(_rj(agreement={"mean_diff": None, "sites": 0}), "A6") == ["INSUFFICIENT"]
+    assert st(_rj(sets__admitted__mbias_r1={"3p": [53, 100], "mid": [50, 100]}), "A7") == ["PASS"]
+    assert st(_rj(sets__admitted__mbias_r1={"3p": [54, 100], "mid": [50, 100]}), "A7") == ["FAIL"]
+
+    # Secondary checks read the cells by arm name.
+    d = tempfile.mkdtemp(prefix="fbr_sec_")
+
+    def cell(name, chg_m, mapq0, prec):
+        p = os.path.join(d, name)
+        os.makedirs(p)
+        with open(os.path.join(p, "x_PE_report.txt"), "w") as fh:
+            for ctx, m in (("CpG", 500), ("CHG", chg_m), ("CHH", 10)):
+                fh.write(f"Total methylated C's in {ctx} context:\t{m}\n")
+                fh.write(f"Total unmethylated C's in {ctx} context:\t{1000 - m}\n")
+        with open(os.path.join(p, "metrics.tsv"), "w") as fh:
+            fh.write("mapq0\trecords\tmap_eff\n" f"{mapq0}\t1000\t90.0\n")
+        with open(os.path.join(p, "deconv.txt"), "w") as fh:
+            fh.write(f"  precision (any DRAGEN C>T/G>A):  {prec}/100 = x%\n")
+            fh.write("  recall:                          50/100 = 50.0%\n")
+        return p
+    old, new = cell("B", 10, 10, 90), cell("B-new", 12, 30, 89)
+    score = os.path.join(d, "score.tsv")
+    with open(score, "w") as fh:
+        fh.write("arm\tset\tcov\tn\tr\n")
+        fh.write("B\tcommon\t10\t5\t0.960\nB-new\tcommon\t10\t5\t0.959\n")
+        fh.write("B-new\town\t10\t9\t0.97\n")
+    rows = secondary_criteria("B", "B-new", old, new, score)
+    got = {r[0]: r[3] for r in rows}
+    assert got["S common-set delta r"] == "PASS"
+    assert got["S CHG %"] == "PASS" and got["S MAPQ-0 %"] == "PASS"
+    assert got["S deconvolution precision delta"] == "PASS"
+    assert got["report: B-new own-set cov>=10 n / r"] == "INFO"
+    new2 = cell("B-new2", 13, 31, 88)
+    with open(score, "a") as fh:
+        fh.write("B-new2\tcommon\t10\t5\t0.9579\n")
+    got = {r[0]: r[3] for r in secondary_criteria("B", "B-new2", old, new2, score)}
+    assert got["S common-set delta r"] == "FAIL" and got["S CHG %"] == "FAIL"
+    assert got["S MAPQ-0 %"] == "FAIL" and got["S deconvolution precision delta"] == "FAIL"
+    _fails(lambda: secondary_criteria("B-old", "B-new", old, new, score), "no common-set row")
+
+
+def _selftest_end_to_end():
+    global CONTROL_FRAC, ADMIT_FRAC, POOL_FRAC
+    CONTROL_FRAC = ADMIT_FRAC = POOL_FRAC = 1.0  # every pair is sampled at this size
+    d = tempfile.mkdtemp(prefix="fbr_selftest_")
+    L, s = 10, "A" * 10
     fq = os.path.join(d, "r1.fq")
-    names = ["dove", "chg", "keep", "lost", "partner", "keep2"]
+    names = ["long", "chg", "keep", "lost", "long2", "keep2"]
     with open(fq, "w") as fh:
         for n in names:
             fh.write(f"@{n} 1:N:0:ACGT\n{s}\n+\n{'I' * L}\n")
 
-    def pair(n, a, b, flags=(99, 147), rx="CAGTAGT+CACCTAC"):
-        (p1, c1, x1, m1), (p2, c2, x2, m2) = a, b
+    def pair(n, a, b, flags=(99, 147)):
+        (p1, x1, m1), (p2, x2, m2) = a, b
         span = max(p1, p2) + L - min(p1, p2)
         t1 = span if flags[0] == 99 else -span
-        return (_sam(n, flags[0], p1, c1, p2, t1, s, x1, m1, rx) +
-                _sam(n, flags[1], p2, c2, p1, -t1, s, x2, m2, rx))
-    keep = pair("keep", (1000, "10M", "Z.........", "10"), (1020, "10M", "z.........", "10"))
-    keep2 = pair("keep2", (2000, "10M", "X.........", "0A9"), (2020, "10M", "..........", "10"))
-    old_rows = [pair("chg", (500, "10M", "..........", "10"), (520, "10M", "..........", "10")),
-                keep, pair("lost", (700, "10M", "..........", "10"),
-                           (720, "10M", "..........", "10")), keep2]
-    new_rows = [pair("dove", (104, "10M", "Z.x......h", "0A9"), (101, "10M", "z.........", "10")),
-                pair("chg", (501, "10M", "..........", "10"), (520, "10M", "..........", "10")),
-                keep,
-                pair("partner", (101, "10M", "Z.........", "10"), (104, "10M", "..........", "10"),
-                     flags=(83, 163), rx="CACCTAC+CAGTAGT"),
-                keep2]
+        return (_sam(n, flags[0], p1, "10M", p2, t1, s, x1, m1) +
+                _sam(n, flags[1], p2, "10M", p1, -t1, s, x2, m2))
+    keep = pair("keep", (1000, "Z.........", "10"), (1020, "z.........", "10"))
+    keep2 = pair("keep2", (2000, "X.........", "0A9"), (2020, "..........", "10"))
+    old_rows = [pair("chg", (500, "..........", "10"), (520, "..........", "10")), keep,
+                pair("lost", (700, "..........", "10"), (720, "..........", "10")), keep2]
+    # Two admitted pairs with 600 bp fragments; one carries a mismatch at an uncalled base.
+    new_rows = [pair("long", (101, "Z.........", "3A6"), (691, "z.........", "10")),
+                pair("chg", (501, "..........", "10"), (520, "..........", "10")), keep,
+                pair("long2", (3591, "..........", "10"), (3001, "..........", "10"),
+                     flags=(83, 163)), keep2]
 
     def bam(name, rows):
         sam = os.path.join(d, name + ".sam")
         with open(sam, "w") as fh:
-            fh.write(sam_hdr + "".join(rows))
+            fh.write("@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:1\tLN:100000\n" + "".join(rows))
         out = os.path.join(d, name + ".bam")
         subprocess.run(["samtools", "view", "-b", "-o", out, sam], check=True)
         return out
     drg = os.path.join(d, "drg.txt")
     with open(drg, "w") as fh:
-        fh.write("chr1\t104\t+\t9\t1\tCG\tCGA\n")    # dove R1 Z at 104: score 0.9
-        fh.write("chr1\t101\t+\t2\t8\tCG\tCGA\n")    # dove R2 z at 101: score 0.8
-        fh.write("chr1\t1000\t+\t10\t0\tCG\tCGA\n")  # keep R1 Z: score 1.0
-        fh.write("chr1\t1020\t+\t3\t3\tCG\tCGA\n")   # cov 6: not used
+        fh.write("chr1\t101\t+\t9\t1\tCG\tCGA\n")    # long R1 Z: admitted score 0.9
+        fh.write("chr1\t1000\t+\t10\t0\tCG\tCGA\n")  # keep R1 Z: rest only, not shared
+        fh.write("chr1\t691\t+\t2\t8\tCG\tCGA\n")    # long R2 z: admitted only, not shared
     out = os.path.join(d, "out")
-    cmd_rescued(argparse.Namespace(fastq=fq, old=bam("old", old_rows), new=bam("new", new_rows),
-                                   dragen=drg, out=out, seed=1146))
+    old_bam, new_bam = bam("old", old_rows), bam("new", new_rows)
+    cmd_rescued(argparse.Namespace(fastq=fq, old=old_bam, new=new_bam, dragen=drg, out=out,
+                                   seed=1146, all_bases=True))
     rj = json.load(open(os.path.join(out, "rescued.json")))
     S = rj["sets"]
-    assert (S["rescued"]["pairs"], S["changed"]["pairs"], S["rest"]["pairs"]) == (2, 1, 2), S
+    assert (S["admitted"]["pairs"], S["changed"]["pairs"], S["rest"]["pairs"]) == (2, 1, 2), S
     assert rj["lost_pairs"] == 1 and rj["new_pairs"] == 5 and rj["old_pairs"] == 4
-    assert S["rescued"]["shape"]["dovetailed"] == 2
-    assert S["rescued"]["overhang"]["max"] == 6
-    assert S["rescued"]["calls"]["Z"] == 2 and S["rescued"]["calls"]["X"] == 0
-    # dove R1 is forward: its 3' cycle 0 is XM[-1] ('h'), cycle 9 is XM[0] ('Z').
-    assert S["rescued"]["mbias_r1_3p"][9] == [1, 1], S["rescued"]["mbias_r1_3p"]
-    o = rj["r4"]["overhang"]
-    # dove R1 idx 9 ('h') is cycle 0; R1 idx 7..9 overhang; partner R1 (OB) idx 0..2.
-    assert o["chh_t"] == {"0": 1} and o["chh_m"] == {}, o
-    r5 = rj["r5"]
-    assert r5["rescued"]["n"] == 2 and abs(r5["rescued"]["mean_score"] - 0.85) < 1e-9, r5
-    # The sample is both rest pairs: keep R1 Z at 1000 scores 1.0; keep R2 is cov 6.
-    assert r5["rest_sample"] == {"calls": 2, "n": 1, "mean_score": 1.0}, r5
-    c = rj["r4"]["control"]
-    # keep2 R1 'X' at idx 0 (cycle 9); its MD mismatch is at that called base, so no mm.
-    assert c["chg_t"] == {"9": 1} and c["chg_m"] == {"9": 1} and c["mm"] == {}, c
-    fams = rj["families"]
-    # dove (OT) and partner (OB, swapped UMI, same span) form one duplex family.
-    assert fams["families"] == {"total": 4, "duplex": 1, "simplex": 3}, fams
-    assert fams["partnered"]["rescued"] == {"partnered": 2, "pairs": 2, "fraction": 1.0}
+    assert rj["admitted_sampled"] == 2 and rj["control_sampled"] == 2
+    assert S["admitted"]["tlen"]["p50"] == 600 and S["admitted"]["tlen_500_800_fraction"] == 1.0
+    assert S["admitted"]["shape"]["normal"] == 2
+    # --all-bases tallies every base of the admitted pairs: the mismatch at ref 104 is uncalled.
+    pa = rj["per_base"]["admitted"]
+    assert sum(pa["unc"].values()) == 4 * L - 2 and pa["mm"] == {"6": 1}, pa
+    # No admitted site is shared with the rest pool, so the matched-site check has no sites.
+    ag = rj["agreement"]
+    assert (ag["sites"], ag["mean_diff"], ag["admitted_calls"], ag["pool_calls"]) == \
+        (0, None, 2, 2), ag
+    assert S["rest_long"]["pairs"] == 0
 
-    def fails(fn, needle):
-        try:
-            fn()
-        except SystemExit as e:
-            assert needle in str(e), e
-            return
-        raise AssertionError(f"expected failure containing {needle!r}")
-    # Cycle matching re-weights the control to the overhang's cycle mix; cycle 5 is unmatched.
-    ov = {"n": {0: 2}, "d": {0: 10, 1: 10, 5: 4}}
-    ct = {"n": {0: 10, 1: 30}, "d": {0: 100, 1: 100}}
-    assert matched(ov, ct, "n", "d") == (10.0, 20.0, 20, 4), matched(ov, ct, "n", "d")
-    swapped_order = bam("swap", [new_rows[2], new_rows[0]])
-    fails(lambda: cmd_rescued(argparse.Namespace(fastq=fq, old=bam("old", old_rows),
-                                                 new=swapped_order, dragen=drg, out=out,
-                                                 seed=1146)), "not in FASTQ order")
+    # Matched sites: admitted and pool calls at one shared site.
+    with open(drg, "a") as fh:
+        fh.write("chr1\t5000\t+\t8\t2\tCG\tCGA\n")
+    k = site_key("1", 5000, "+")
+    ag = matched_site_agreement(drg, array("q", [k << 1 | 1, k << 1]),
+                                array("q", [k << 1 | 1]))
+    assert ag["sites"] == 1 and abs(ag["mean_diff"] - (0.5 - 0.8)) < 1e-9, ag
+
+    _fails(lambda: cmd_rescued(argparse.Namespace(fastq=fq, old=old_bam,
+                                                  new=bam("swap", [new_rows[2], new_rows[0]]),
+                                                  dragen=drg, out=out, seed=1146,
+                                                  all_bases=True)), "not in FASTQ order")
+
+
+def _selftest():
+    _selftest_units()
+    _selftest_criteria()
+    _selftest_end_to_end()
     print("selftest OK")
 
 
@@ -778,20 +800,17 @@ def main():
     r.add_argument("--new", required=True)
     r.add_argument("--dragen", required=True)
     r.add_argument("--out", required=True)
+    r.add_argument("--all-bases", action="store_true",
+                   help="tally every base of a seeded sample of admitted pairs, not overhangs")
     r.add_argument("--seed", type=int, default=1146)
-    c = sub.add_parser("consensus")
-    c.add_argument("--bam", required=True)
-    c.add_argument("--log", required=True)
-    c.add_argument("--dragen", required=True)
-    c.add_argument("--out", required=True)
     v = sub.add_parser("verdict")
     v.add_argument("--sample", required=True)
     v.add_argument("--rescued", required=True)
+    v.add_argument("--old-arm", required=True)
+    v.add_argument("--new-arm", required=True)
     v.add_argument("--old-dir", required=True)
     v.add_argument("--new-dir", required=True)
     v.add_argument("--score", required=True)
-    v.add_argument("--old-consensus")
-    v.add_argument("--new-consensus")
     v.add_argument("--out", required=True)
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -799,8 +818,6 @@ def main():
         _selftest()
     elif args.cmd == "rescued":
         cmd_rescued(args)
-    elif args.cmd == "consensus":
-        cmd_consensus(args)
     elif args.cmd == "verdict":
         return cmd_verdict(args)
     else:

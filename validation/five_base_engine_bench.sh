@@ -11,21 +11,23 @@
 #   five_base_engine_bench.sh versions
 #       Record the tool versions and fail unless they match the #1146 run.
 #   five_base_engine_bench.sh repro-input <sample> <tag>
-#   five_base_engine_bench.sh repro <sample> <tag> <ref-dir>
-#       Trimmed-read md5s, then B-old against #1146's committed B-X results.
-#   five_base_engine_bench.sh rescued <sample> <tag>
-#   five_base_engine_bench.sh duplex <sample> <tag> <arm>
-#   five_base_engine_bench.sh verdict <sample> <tag>
-#       Rescued-pair sets, the duplex pass and the pre-registered criteria
+#   five_base_engine_bench.sh repro <sample> <tag> <arm> <ref-dir>
+#       Trimmed-read md5s, then an arm against #1146's committed B-X results.
+#   five_base_engine_bench.sh repro-compare <sample> <tag> <arm1> <arm2>
+#       Two cells must agree on every reproduced metric.
+#   five_base_engine_bench.sh rescued <sample> <tag> <old-arm> <new-arm>
+#   five_base_engine_bench.sh verdict <sample> <tag> <old-arm> <new-arm>
+#       Admitted-pair sets and the pre-registered criteria
 #       (plans/11012026_5base-bowtie2-defaults/PREREGISTRATION.md).
 #
-# Arms: A (minimap2), B (bowtie2 -X 500), B-loc (bowtie2 --local), B-X (bowtie2
-# -X 800), C (hisat2); the B arms pin --no_dovetail. B-old (-X 800 --no_dovetail)
-# and B-new (the shipped defaults) carry --five_base_umi_qname for the duplex pass.
+# Arms: A (minimap2), B (bowtie2 -X 500), B-loc (bowtie2 --local -X 500), B-X
+# (bowtie2 -X 800), B-new (bowtie2 defaults), C (hisat2). B-old names the rev 3
+# cross-check cells and cannot be re-run.
 # Layout: $ROOT/<sample>/{fastq,dragen}, results under $ROOT/runs.
-# Env: ROOT (default /var/tmp/5base_engines), RESULTS (persistent copy,
-# default ~/5base_results), REFS (shared indexes, default ~/references/GRCh38),
-# CPUS (default 0-31), THREADS (default 32), MIN_JOINED (score guard, default 0.5).
+# Env: ROOT (default /var/tmp/5base_engines), BIN (default $ROOT/bin), RESULTS
+# (persistent copy, default ~/5base_results), REFS (shared indexes, default
+# ~/references/GRCh38), CPUS (default 0-31), THREADS (default 32), MIN_JOINED
+# (score guard, default 0.5).
 
 set -euo pipefail
 
@@ -33,7 +35,7 @@ ROOT=${ROOT:-/var/tmp/5base_engines}
 RESULTS=${RESULTS:-$HOME/5base_results}
 CPUS=${CPUS:-0-31}
 THREADS=${THREADS:-32}
-BIN=$ROOT/bin
+BIN=${BIN:-$ROOT/bin}
 GENOME=$ROOT/genome
 REFS=${REFS:-$HOME/references/GRCh38}
 BT2_INDEX=$REFS/Bowtie2Index/Homo_sapiens.GRCh38
@@ -48,11 +50,11 @@ log() { echo "$(date -u +%FT%TZ) $*"; }
 arm_flags() {
   case $1 in
     A) echo "" ;;
-    B) echo "--bowtie2 --five_base_index $BT2_INDEX -X 500 --no_dovetail" ;;
-    B-loc) echo "--bowtie2 --five_base_index $BT2_INDEX --local --no_dovetail" ;;
-    B-X) echo "--bowtie2 --five_base_index $BT2_INDEX -X 800 --no_dovetail" ;;
+    B) echo "--bowtie2 --five_base_index $BT2_INDEX -X 500" ;;
+    B-loc) echo "--bowtie2 --five_base_index $BT2_INDEX --local -X 500" ;;
+    B-X) echo "--bowtie2 --five_base_index $BT2_INDEX -X 800" ;;
     B-old) echo "--bowtie2 --five_base_index $BT2_INDEX -X 800 --no_dovetail --five_base_umi_qname" ;;
-    B-new) echo "--bowtie2 --five_base_index $BT2_INDEX --five_base_umi_qname" ;;
+    B-new) echo "--bowtie2 --five_base_index $BT2_INDEX" ;;
     C) echo "--hisat2 --five_base_index $HT2_INDEX" ;;
     *) die "unknown arm '$1'" ;;
   esac
@@ -71,12 +73,12 @@ verify_options() {
     A) need=("Bismark was run with minimap2" " -t $THREADS " " -x sr ") ;;
     B) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --score-min L,0,-0.6 " " --maxins 500 ")
        deny=(" --local " " --dovetail ") ;;
-    B-loc) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --local " " --score-min G,20,8 ")
+    B-loc) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --local " " --score-min G,20,8 " " --maxins 500 ")
        deny=(" --dovetail ") ;;
     B-X|B-old) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --score-min L,0,-0.6 " " --maxins 800 ")
        deny=(" --local " " --dovetail ") ;;
-    B-new) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --score-min L,0,-0.6 " " --dovetail " " --maxins 800 ")
-       deny=(" --local " " --no-mixed " " --no-discordant ") ;;
+    B-new) need=("Bismark was run with Bowtie 2" " -p $THREADS " " --reorder " " --score-min L,0,-0.6 " " --maxins 800 ")
+       deny=(" --local " " --dovetail " " --no-mixed " " --no-discordant ") ;;
     C) need=("Bismark was run with HISAT2" " -p $THREADS " " --reorder " " --no-spliced-alignment ")
        deny=(" --local ") ;;
   esac
@@ -88,8 +90,7 @@ verify_options() {
   local once=()
   case $arm in
     C) once=(--no-spliced-alignment) ;;
-    B|B-X|B-old) once=(--maxins) ;;
-    B-new) once=(--maxins --dovetail) ;;
+    B|B-loc|B-X|B-old|B-new) once=(--maxins) ;;
   esac
   for t in "${once[@]}"; do
     [[ $(count_tok "$t" "$opts") -eq 1 ]] || die "$arm: '$t' not exactly once: $opts"
@@ -118,17 +119,6 @@ verify_pg() {
   header=$(samtools view -H "$2") || die "$1: cannot read the header of $2"
   line=$(grep -m1 $'^@PG\tID:Bismark' <<<"$header") || die "$1: no Bismark @PG in $2"
   check_pg_line "$1" "$line"
-}
-
-# The first 1000 trimmed read names keep the A+B UMI field and the first 1000 records carry RX.
-verify_umis() {
-  local arm=$1 r1=$2 bam=$3 n
-  n=$( { zcat -f "$r1" || true; } | awk 'NR % 4 == 1 { k = split($1, a, ":")
-         if (a[k] ~ /^[ACGTN]+\+[ACGTN]+$/) n++; if (++h == 1000) exit } END { print n + 0 }')
-  [[ $n -eq 1000 ]] || die "$arm: only $n of the first 1000 read names in $r1 end in an A+B UMI"
-  n=$( { samtools view "$bam" || true; } | awk -F'\t' '{ for (i = 12; i <= NF; i++)
-         if ($i ~ /^RX:Z:[ACGTN]+\+[ACGTN]+$/) { n++; break } if (NR == 1000) exit } END { print n + 0 }')
-  [[ $n -eq 1000 ]] || die "$arm: only $n of the first 1000 records in $bam carry RX:Z:A+B"
 }
 
 free_gb() { df -Pk "$ROOT" | awk 'NR==2{print int($4/1024/1024)}'; }
@@ -213,6 +203,7 @@ sample_tree() {
 cmd_cell() {
   local s=$1 tag=$2 arm=$3 rep=${4:-1}
   local in=$ROOT/runs/$s/$tag/input d=$ROOT/runs/$s/$tag/$arm.rep$rep
+  [[ $arm != B-old ]] || die "B-old is the rev 3 cross-check arm; not re-runnable"
   [[ -f $in/DONE ]] || die "run 'prep $s $tag' first"
   local commit; commit=$(bismark --version | grep -o '([0-9a-f]\{7,\}' | tr -d '(') || true
   [[ -n $commit ]] || die "no commit hash in 'bismark --version'"
@@ -243,7 +234,6 @@ cmd_cell() {
   bam=$(ls "$d"/*_pe.bam); report=$(ls "$d"/*_PE_report.txt); deconv=$(ls "$d"/*_pe.5base_deconvolution.txt)
   verify_options "$arm" "$report"
   verify_pg "$arm" "$bam"
-  if [[ $flags == *--five_base_umi_qname* ]]; then verify_umis "$arm" "$r1" "$bam"; fi
 
   log "cell $s/$tag/$arm.rep$rep: dedup + extract"
   deduplicate_bismark -p --bam --output_dir "$d" "$bam" > "$d/dedup.log" 2>&1
@@ -327,7 +317,10 @@ first_line() { "$@" 2>/dev/null | sed -n 1p; }
 
 cmd_versions() {
   mkdir -p "$RESULTS"
-  local out=$RESULTS/versions.txt bin b
+  local commit bin b out
+  commit=$(bismark --version | grep -o '([0-9a-f]\{7,\}' | tr -d '(') || true
+  [[ -n $commit ]] || die "no commit hash in 'bismark --version'"
+  out=$RESULTS/versions_$commit.txt
   bin=$(readlink -f "$(command -v bismark)")
   {
     printf 'bismark\t%s\t%s\n' "$(first_line bismark --version)" "$bin"
@@ -371,90 +364,95 @@ cmd_repro_input() {
   log "repro-input $s/$tag: trimmed reads match #1146"
 }
 
-# B-old against #1146's B-X: every committed metric, deconvolution counts and the own set.
-cmd_repro() {
-  local s=$1 tag=$2 ref=$3 d=$ROOT/runs/$1/$2/B-old.rep1
-  [[ -s $d/DONE ]] || die "cell $s/$tag/B-old.rep1 has not finished"
-  local rm=$ref/B-X.rep1/metrics.tsv
-  [[ -s $rm && -s $ref/B-X.rep1/deconv.txt && -s $ref/score.tsv ]] || die "no #1146 B-X results in $ref"
-  col() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == k) c = i } NR == 2 { print $c }' "$2"; }
-  local cols=(pairs_in unique_pairs map_eff cpg_pct chg_pct chh_pct dup_pct records mapq0 r1_records
-              readthrough tlen_p10 tlen_p50 tlen_p90 deconv_precision deconv_recall)
-  local out=$RESULTS/$s/$tag/repro.tsv bad=0 c a b
-  mkdir -p "$RESULTS/$s/$tag"
-  printf 'metric\tB-old\t#1146 B-X\n' > "$out"
-  for c in "${cols[@]}"; do
-    a=$(col "$c" "$d/metrics.tsv"); b=$(col "$c" "$rm")
+REPRO_COLS=(pairs_in unique_pairs map_eff cpg_pct chg_pct chh_pct dup_pct records mapq0 r1_records
+            readthrough tlen_p10 tlen_p50 tlen_p90 deconv_precision deconv_recall)
+
+col() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == k) c = i } NR == 2 { print $c }' "$2"; }
+deconv_fracs() { grep -E 'precision|recall' "$1" | grep -o '[0-9]*/[0-9]*' | paste -sd' ' -; }
+
+# Own-set cov>=10 "n r" of a finished cell, scored alone against DRAGEN.
+own_cov10() {
+  local s=$1 tag=$2 arm=$3 d=$ROOT/runs/$1/$2/$3.rep1 score cpg
+  score=$ROOT/runs/$s/$tag/repro_score_$arm.tsv
+  if [[ ! -s $score ]]; then
+    cpg=$(ls "$d"/*CpG_report.txt*)
+    python3 -I "$HERE/five_base_compare.py" compare --dragen "$ROOT/$s/dragen/dragen.cpg.txt" \
+      --arm "$arm=$cpg" --baseline "$arm" --out "$score" --min-joined "${MIN_JOINED:-0.5}" >&2
+    mkdir -p "$RESULTS/$s/$tag"
+    cp "$score" "$RESULTS/$s/$tag/"
+  fi
+  awk -F'\t' -v a="$arm" '$1 == a && $2 == "own" && $3 == 10 {print $4, $5}' "$score"
+}
+
+# Compare two (label, metrics, deconv, own-set) tuples row by row; writes <out>, returns 1 on any difference.
+compare_cells() {
+  local out=$1 la=$2 ma=$3 da=$4 oa=$5 lb=$6 mb=$7 db=$8 ob=$9 bad=0 c a b
+  printf 'metric\t%s\t%s\n' "$la" "$lb" > "$out"
+  for c in "${REPRO_COLS[@]}"; do
+    a=$(col "$c" "$ma"); b=$(col "$c" "$mb")
     printf '%s\t%s\t%s\n' "$c" "$a" "$b" >> "$out"
-    [[ -n $a && $a == "$b" ]] || { echo "repro: $c is $a, #1146 had $b"; bad=1; }
+    [[ -n $a && $a == "$b" ]] || { echo "$c: $la $a, $lb $b"; bad=1; }
   done
-  a=$(grep -E 'precision|recall' "$d/deconv.txt" | grep -o '[0-9]*/[0-9]*' | paste -sd' ')
-  b=$(grep -E 'precision|recall' "$ref/B-X.rep1/deconv.txt" | grep -o '[0-9]*/[0-9]*' | paste -sd' ')
+  a=$(deconv_fracs "$da"); b=$(deconv_fracs "$db")
   printf 'deconv_counts\t%s\t%s\n' "$a" "$b" >> "$out"
-  [[ -n $a && $a == "$b" ]] || { echo "repro: deconvolution counts $a, #1146 had $b"; bad=1; }
-  local cpg score=$ROOT/runs/$s/$tag/repro_score.tsv
-  cpg=$(ls "$d"/*CpG_report.txt*)
-  python3 -I "$HERE/five_base_compare.py" compare --dragen "$ROOT/$s/dragen/dragen.cpg.txt" \
-    --arm "B-old=$cpg" --baseline B-old --out "$score" --min-joined "${MIN_JOINED:-0.5}"
-  a=$(awk -F'\t' '$1 == "B-old" && $2 == "own" && $3 == 10 {print $4, $5}' "$score")
-  b=$(awk -F'\t' '$1 == "B-X" && $2 == "own" && $3 == 10 {print $4, $5}' "$ref/score.tsv")
-  printf 'own_cov10_n_r\t%s\t%s\n' "$a" "$b" >> "$out"
-  [[ -n $a && $a == "$b" ]] || { echo "repro: own-set cov>=10 is $a, #1146 had $b"; bad=1; }
-  cp "$score" "$RESULTS/$s/$tag/"
-  [[ $bad -eq 0 ]] || die "B-old does not reproduce #1146 B-X (see $out)"
-  log "repro $s/$tag: B-old reproduces #1146 B-X"
+  [[ -n $a && $a == "$b" ]] || { echo "deconvolution counts: $la $a, $lb $b"; bad=1; }
+  printf 'own_cov10_n_r\t%s\t%s\n' "$oa" "$ob" >> "$out"
+  [[ -n $oa && $oa == "$ob" ]] || { echo "own-set cov>=10: $la $oa, $lb $ob"; bad=1; }
+  return "$bad"
+}
+
+# An arm against #1146's committed B-X: every committed metric, deconvolution counts and the own set.
+cmd_repro() {
+  local s=$1 tag=$2 arm=$3 ref=$4 d=$ROOT/runs/$1/$2/$3.rep1
+  [[ -s $d/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
+  [[ -s $ref/B-X.rep1/metrics.tsv && -s $ref/B-X.rep1/deconv.txt && -s $ref/score.tsv ]] \
+    || die "no #1146 B-X results in $ref"
+  local own ref_own out=$RESULTS/$s/$tag/repro_$arm.tsv
+  own=$(own_cov10 "$s" "$tag" "$arm")
+  ref_own=$(awk -F'\t' '$1 == "B-X" && $2 == "own" && $3 == 10 {print $4, $5}' "$ref/score.tsv")
+  mkdir -p "$RESULTS/$s/$tag"
+  compare_cells "$out" "$arm" "$d/metrics.tsv" "$d/deconv.txt" "$own" \
+    "#1146 B-X" "$ref/B-X.rep1/metrics.tsv" "$ref/B-X.rep1/deconv.txt" "$ref_own" \
+    || die "$arm does not reproduce #1146 B-X (see $out)"
+  log "repro $s/$tag: $arm reproduces #1146 B-X"
+}
+
+cmd_repro_compare() {
+  local s=$1 tag=$2 a1=$3 a2=$4 d1=$ROOT/runs/$1/$2/$3.rep1 d2=$ROOT/runs/$1/$2/$4.rep1
+  [[ -s $d1/DONE && -s $d2/DONE ]] || die "cells $s/$tag/$a1 and $a2 must both have finished"
+  local o1 o2 out=$RESULTS/$s/$tag/repro_compare_${a1}_$a2.tsv
+  o1=$(own_cov10 "$s" "$tag" "$a1"); o2=$(own_cov10 "$s" "$tag" "$a2")
+  mkdir -p "$RESULTS/$s/$tag"
+  compare_cells "$out" "$a1" "$d1/metrics.tsv" "$d1/deconv.txt" "$o1" \
+    "$a2" "$d2/metrics.tsv" "$d2/deconv.txt" "$o2" || die "$a1 and $a2 differ (see $out)"
+  log "repro-compare $s/$tag: $a1 and $a2 agree"
 }
 
 cmd_rescued() {
-  local s=$1 tag=$2 base=$ROOT/runs/$1/$2 arm
-  for arm in B-old B-new; do
+  local s=$1 tag=$2 old=$3 new=$4 base=$ROOT/runs/$1/$2 arm
+  for arm in "$old" "$new"; do
     [[ -s $base/$arm.rep1/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
   done
-  local reads r1 r2 out=$base/rescued
+  local reads r1 r2 out=$base/rescued_${old}_$new keep=$RESULTS/$s/$tag/rescued_${old}_$new
   reads=$(trimmed "$base/input") || die "no trimmed reads in $base/input"
   read -r r1 r2 <<<"$reads"
   rm -rf "$out"; mkdir -p "$out"
-  log "rescued $s/$tag"
-  python3 -I "$HERE/five_base_rescued.py" rescued --fastq "$r1" \
-    --old "$(ls "$base"/B-old.rep1/*_pe.bam)" --new "$(ls "$base"/B-new.rep1/*_pe.bam)" \
+  log "rescued $s/$tag $old -> $new"
+  python3 -I "$HERE/five_base_rescued.py" rescued --fastq "$r1" --all-bases \
+    --old "$(ls "$base/$old.rep1"/*_pe.bam)" --new "$(ls "$base/$new.rep1"/*_pe.bam)" \
     --dragen "$ROOT/$s/dragen/dragen.cpg.txt" --out "$out" > "$out/rescued.log" 2>&1 \
     || die "rescued $s/$tag failed (see $out/rescued.log)"
-  mkdir -p "$RESULTS/$s/$tag"
-  cp "$out/rescued.json" "$out/rescued.log" "$RESULTS/$s/$tag/"
+  mkdir -p "$keep"
+  cp "$out/rescued.json" "$out/rescued.log" "$keep/"
   log "rescued $s/$tag done: $(tail -1 "$out/rescued.log")"
 }
 
-# Duplex/simplex consensus over an arm's raw BAM, at the default --five_base_min_mapq.
-cmd_duplex() {
-  local s=$1 tag=$2 arm=$3 d=$ROOT/runs/$1/$2/$3.rep1 out=$ROOT/runs/$1/$2/$3.duplex
-  [[ -s $d/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
-  local help; help=$(bismark align --help)
-  [[ $(grep -A8 -- '--five_base_min_mapq' <<<"$help") == *"[default: 0]"* ]] \
-    || die "--five_base_min_mapq no longer defaults to 0"
-  rm -rf "$out"; mkdir -p "$out"
-  log "duplex $s/$tag/$arm"
-  taskset -c "$CPUS" /usr/bin/time -v -o "$out/time.txt" \
-    bismark --illumina_5base --genome "$GENOME" --five_base_umi_qname \
-      --five_base_emit_multiplicity both --five_base_consensus_from_bam "$(ls "$d"/*_pe.bam)" \
-      -o "$out" > "$out/consensus.log" 2>&1 || die "consensus $s/$tag/$arm failed (see $out/consensus.log)"
-  printf 'five_base_min_mapq\t0 (default)\nemit_multiplicity\tboth\n' > "$out/settings.tsv"
-  python3 -I "$HERE/five_base_rescued.py" consensus --bam "$out/five_base_consensus.bam" \
-    --log "$out/consensus.log" --dragen "$ROOT/$s/dragen/dragen.cpg.txt" --out "$out/consensus.json"
-  local keep=$RESULTS/$s/$tag/$arm.duplex
-  mkdir -p "$keep"
-  cp "$out"/consensus.json "$out"/consensus.log "$out"/settings.tsv "$out"/time.txt "$keep"/
-  log "duplex $s/$tag/$arm done"
-}
-
 cmd_verdict() {
-  local s=$1 tag=$2 r=$RESULTS/$1/$2 cons=()
-  if [[ -s $r/B-new.duplex/consensus.json || $s == NA12878 ]]; then
-    cons=(--old-consensus "$r/B-old.duplex/consensus.json" --new-consensus "$r/B-new.duplex/consensus.json")
-  fi
-  local rc=0
-  python3 -I "$HERE/five_base_rescued.py" verdict --sample "$s" --rescued "$r/rescued.json" \
-    --old-dir "$r/B-old.rep1" --new-dir "$r/B-new.rep1" --score "$r/score.tsv" "${cons[@]}" \
-    --out "$r/verdict.tsv" || rc=$?
+  local s=$1 tag=$2 old=$3 new=$4 r=$RESULTS/$1/$2 rc=0
+  python3 -I "$HERE/five_base_rescued.py" verdict --sample "$s" \
+    --rescued "$r/rescued_${old}_$new/rescued.json" --old-arm "$old" --new-arm "$new" \
+    --old-dir "$r/$old.rep1" --new-dir "$r/$new.rep1" --score "$r/score.tsv" \
+    --out "$r/verdict_${old}_$new.tsv" || rc=$?
   [[ $rc -eq 0 ]] && log "verdict $s/$tag: every criterion passes" || log "verdict $s/$tag: NOT all criteria pass"
   return "$rc"
 }
@@ -477,44 +475,65 @@ cmd_selftest() {
   expect fail A "-a --MD --secondary=no -t 8 -x sr -K 250K" "bismark $i5 $p --genome /g"
   expect fail A "-a --MD --secondary=no -t $THREADS -x sr -K 250K" "bismark $i5 -p 8 --genome /g"
   local nd=--no_dovetail uq=--five_base_umi_qname
-  expect pass B "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $nd $p"
-  expect fail B "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS" "bismark $i5 $bt -X 500 $nd $p"
-  expect fail B "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $nd $p"
-  expect fail B "-q --score-min L,0,-0.6 --dovetail --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $nd $p"
+  expect pass B "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $p"
+  expect fail B "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS" "bismark $i5 $bt -X 500 $p"
+  expect fail B "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $p"
+  expect fail B "-q --score-min L,0,-0.6 --dovetail --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $p"
+  expect fail B "-q --score-min L,0,-0.6 --maxins 500 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt -X 500 $p"
   expect fail B "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt $p"
-  expect pass B-loc "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt --local $nd $p"
-  expect fail B-loc "-q --local --score-min G,20,8 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt --local $nd $p"
+  expect pass B-loc "-q --local --score-min G,20,8 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt --local -X 500 $p"
+  expect fail B-loc "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt --local -X 500 $p"
+  expect fail B-loc "-q --local --score-min G,20,8 --dovetail --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt --local -X 500 $p"
+  expect fail B-loc "-q --local --score-min G,20,8 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt --local $p"
   expect fail B-loc "-q --score-min L,0,-0.6 -p $THREADS --reorder" "bismark $i5 $bt $p"
-  expect pass B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $nd $p"
+  expect pass B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $p"
   expect fail B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
-  expect fail B-X "-q --score-min L,0,-0.6 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $nd $p"
+  expect fail B-X "-q --score-min L,0,-0.6 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $p"
   local old="-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder"
   expect pass B-old "$old" "bismark $i5 $bt -X 800 $nd $uq $p"
   expect fail B-old "$old" "bismark $i5 $bt -X 800 $nd $p"
   expect fail B-old "-q --score-min L,0,-0.6 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $nd $uq $p"
   expect fail B-old "-q --score-min L,0,-0.6 --maxins 800 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $nd $uq $p"
-  local new="-q --score-min L,0,-0.6 --dovetail --maxins 800 -p $THREADS --reorder"
-  expect pass B-new "$new" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --score-min L,0,-0.6 --dovetail --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --score-min L,0,-0.6 --dovetail --maxins 800 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --score-min L,0,-0.6 --dovetail --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --score-min L,0,-0.6 --no-mixed --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "-q --local --score-min G,20,8 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $uq $p"
-  expect fail B-new "$new" "bismark $i5 $bt $uq $p -X 800"
-  expect fail B-new "$new" "bismark $i5 $bt $uq $p --dovetail"
-  expect fail B-new "$new" "bismark $i5 $bt $uq $p --no_dovetail"
-  expect fail B-new "$new" "bismark $i5 $bt $p"
+  local new="-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder"
+  expect pass B-new "$new" "bismark $i5 $bt $p"
+  expect fail B-new "-q --score-min L,0,-0.6 --dovetail --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "-q --score-min L,0,-0.6 --maxins 800 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "-q --score-min L,0,-0.6 --maxins 500 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "-q --score-min L,0,-0.6 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "-q --score-min L,0,-0.6 --no-mixed --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt $p"
+  expect fail B-new "$new" "bismark $i5 $bt $p -X 800"
+  expect fail B-new "$new" "bismark $i5 $bt $p --maxins 800"
+  expect fail B-new "$new" "bismark $i5 $bt $p --dovetail"
+  expect fail B-new "$new" "bismark $i5 $bt $p --no_dovetail"
+  expect fail B-new "$new" "bismark $i5 --hisat2 --five_base_index $HT2_INDEX $p"
   expect pass C "-q --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
   expect fail C "-q --score-min L,0,-0.6 --no-spliced-alignment --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
   expect fail C "-q --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $ht $p"
   expect fail A "-a --MD --secondary=no -t $THREADS -x map-ont -K 250K" "bismark $i5 $p --genome /g"
-  expect fail B-loc "-q --local --score-min G,20,8 --maxins 800 -p $THREADS" "bismark $i5 $bt --local $nd $p"
-  expect fail B-X "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $nd $p"
+  expect fail B-loc "-q --local --score-min G,20,8 --maxins 500 -p $THREADS" "bismark $i5 $bt --local -X 500 $p"
+  expect fail B-X "-q --local --score-min G,20,8 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 800 $p"
   expect fail C "-q --local --score-min L,0,-0.6 --no-spliced-alignment -p $THREADS --reorder" "bismark $i5 $ht $p"
-  expect fail B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 8000 $nd $p"
-  [[ $(count_tok --maxins "-q --maxins 800 --maxins") -eq 2 && $(count_tok --dovetail "--dovetail --dovetail") -eq 2 \
-     && $(count_tok --dovetail "-q --no_dovetail") -eq 0 ]] && ok=$((ok + 1)) || { bad=$((bad + 1)); echo "selftest: count_tok"; }
+  expect fail B-X "-q --score-min L,0,-0.6 --maxins 800 -p $THREADS --reorder" "bismark $i5 $bt -X 8000 $p"
+  check() { if "$@"; then ok=$((ok + 1)); else bad=$((bad + 1)); echo "selftest: $*"; fi; }
+  check [ "$(count_tok --maxins "-q --maxins 800 --maxins")" -eq 2 ]
+  check [ "$(count_tok --dovetail "--dovetail --dovetail")" -eq 2 ]
+  check [ "$(count_tok --dovetail "-q --no_dovetail")" -eq 0 ]
+  # B-old can never be re-run, so its cross-check cells cannot be wiped.
+  local msg; msg=$( (cmd_cell NA12878 screen B-old) 2>&1 ) && bad=$((bad + 1))
+  check [ "$msg" = "ERROR: B-old is the rev 3 cross-check arm; not re-runnable" ]
+  # compare_cells: equal tuples pass; any one differing metric, count or own-set fails.
+  local c; for c in "${REPRO_COLS[@]}"; do printf '%s\t' "$c"; done > "$t/m1.tsv"
+  { echo; for c in "${REPRO_COLS[@]}"; do printf '1\t'; done; echo; } >> "$t/m1.tsv"
+  sed 's/^1\t1\t/1\t2\t/' "$t/m1.tsv" > "$t/m2.tsv"
+  printf '  precision (any DRAGEN C>T/G>A):  9/10 = 90%%\n  recall:   5/10 = 50%%\n' > "$t/d1.txt"
+  sed 's|9/10|8/10|' "$t/d1.txt" > "$t/d2.txt"
+  check compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d1.txt" "5 0.9"
+  check [ "$(grep -c . "$t/o")" -eq $(( ${#REPRO_COLS[@]} + 3 )) ]
+  check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m2.tsv" "$t/d1.txt" "5 0.9" > /dev/null'
+  check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d2.txt" "5 0.9" > /dev/null'
+  check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d1.txt" "6 0.9" > /dev/null'
+  check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "" b "$t/m1.tsv" "$t/d1.txt" "" > /dev/null'
   rm -r "$t"
   echo "selftest: $ok passed, $bad failed"
   [[ $bad -eq 0 ]]
@@ -527,8 +546,8 @@ case ${1:-} in
   versions) cmd_versions ;;
   repro-input) shift; cmd_repro_input "$@" ;;
   repro) shift; cmd_repro "$@" ;;
+  repro-compare) shift; cmd_repro_compare "$@" ;;
   rescued) shift; cmd_rescued "$@" ;;
-  duplex) shift; cmd_duplex "$@" ;;
   verdict) shift; cmd_verdict "$@" ;;
   selftest) cmd_selftest ;;
   *) sed -n '2,30p' "$0"; exit 2 ;;
