@@ -279,18 +279,19 @@ pub(crate) fn build_five_base_aligner_options(
             "--known-splicesite-infile is not supported with --illumina_5base: 5-Base alignment is unspliced.".into(),
         ));
     }
-    // Bowtie 2 defaults to --dovetail and an 800 bp insert cap; HISAT2 has no --dovetail.
-    let bowtie2 = aligner == Aligner::Bowtie2;
-    if bowtie2 && !cli.no_dovetail {
-        opts.push("--dovetail".into());
-    }
+    // Bowtie 2 defaults to an 800 bp insert cap; --dovetail stays off (its overhangs are not genomic).
+    let maxins = cli.maxins.or((aligner == Aligner::Bowtie2).then_some(800));
     if let Some(i) = cli.minins {
+        // Bowtie 2 accepts -I > -X and reports every pair non-concordant.
+        if let Some(x) = maxins.filter(|&x| aligner == Aligner::Bowtie2 && i > x) {
+            return Err(AlignerError::Validation(format!(
+                "-I/--minins ({i}) is larger than the maximum insert size ({x}); raise -X/--maxins"
+            )));
+        }
         opts.push(format!("--minins {i}"));
     }
-    match cli.maxins {
-        Some(x) => opts.push(format!("--maxins {x}")),
-        None if bowtie2 => opts.push("--maxins 800".into()),
-        None => {}
+    if let Some(x) = maxins {
+        opts.push(format!("--maxins {x}"));
     }
     if cli.quiet {
         opts.push("--quiet".into());
@@ -548,7 +549,7 @@ mod tests {
             assert_eq!(
                 opts,
                 if engine == Aligner::Bowtie2 {
-                    "-q --score-min L,0,-0.6 --dovetail --maxins 800"
+                    "-q --score-min L,0,-0.6 --maxins 800"
                 } else {
                     "-q --score-min L,0,-0.6 --no-spliced-alignment"
                 }
@@ -604,7 +605,7 @@ mod tests {
         assert_eq!(
             five_base(Aligner::Bowtie2, &tuning).unwrap(),
             "-q --phred64 -N 1 -L 10 -D 20 -R 4 --score-min L,0,-0.6 --rdg 6,2 --rfg 7,3 \
-             --dovetail --minins 10 --maxins 1000 --quiet"
+             --minins 10 --maxins 1000 --quiet"
         );
         assert_eq!(
             five_base(Aligner::Hisat2, &tuning).unwrap(),
@@ -613,50 +614,46 @@ mod tests {
         );
         assert_eq!(
             five_base(Aligner::Bowtie2, &["-I", "10"]).unwrap(),
-            "-q --score-min L,0,-0.6 --dovetail --minins 10 --maxins 800"
+            "-q --score-min L,0,-0.6 --minins 10 --maxins 800"
         );
         assert_eq!(
             five_base(Aligner::Bowtie2, &["-X", "1000"]).unwrap(),
-            "-q --score-min L,0,-0.6 --dovetail --maxins 1000"
+            "-q --score-min L,0,-0.6 --maxins 1000"
         );
     }
 
     #[test]
-    fn five_base_bowtie2_defaults_to_dovetail_and_maxins_800() {
+    fn five_base_bowtie2_defaults_to_maxins_800() {
         let bt2 = |args: &[&str]| five_base(Aligner::Bowtie2, args).unwrap();
         for (args, expected) in [
-            (&[][..], "-q --score-min L,0,-0.6 --dovetail --maxins 800"),
-            (
-                &["-X", "500"][..],
-                "-q --score-min L,0,-0.6 --dovetail --maxins 500",
-            ),
-            (
-                &["-X", "1200"][..],
-                "-q --score-min L,0,-0.6 --dovetail --maxins 1200",
-            ),
+            (&[][..], "-q --score-min L,0,-0.6 --maxins 800"),
+            (&["-X", "500"][..], "-q --score-min L,0,-0.6 --maxins 500"),
+            (&["-X", "1200"][..], "-q --score-min L,0,-0.6 --maxins 1200"),
             (
                 &["-I", "600"][..],
-                "-q --score-min L,0,-0.6 --dovetail --minins 600 --maxins 800",
+                "-q --score-min L,0,-0.6 --minins 600 --maxins 800",
+            ),
+            (
+                &["-I", "800"][..],
+                "-q --score-min L,0,-0.6 --minins 800 --maxins 800",
+            ),
+            (
+                &["-I", "900", "-X", "1000"][..],
+                "-q --score-min L,0,-0.6 --minins 900 --maxins 1000",
             ),
             (
                 &["--no_dovetail"][..],
                 "-q --score-min L,0,-0.6 --maxins 800",
             ),
-            (
-                &["--dovetail"][..],
-                "-q --score-min L,0,-0.6 --dovetail --maxins 800",
-            ),
+            (&["--dovetail"][..], "-q --score-min L,0,-0.6 --maxins 800"),
             (
                 &["--dovetail", "--no_dovetail"][..],
                 "-q --score-min L,0,-0.6 --maxins 800",
             ),
-            (
-                &["--old_flag"][..],
-                "-q --score-min L,0,-0.6 --dovetail --maxins 800",
-            ),
+            (&["--old_flag"][..], "-q --score-min L,0,-0.6 --maxins 800"),
             (
                 &["--local"][..],
-                "-q --local --score-min G,20,8 --dovetail --maxins 800",
+                "-q --local --score-min G,20,8 --maxins 800",
             ),
             (
                 &["-X", "500", "--no_dovetail", "--quiet"][..],
@@ -669,6 +666,11 @@ mod tests {
             let opts = five_base(Aligner::Hisat2, args).unwrap();
             assert_eq!(opts, "-q --score-min L,0,-0.6 --no-spliced-alignment");
         }
+        // HISAT2 keeps the engine's own handling of -I.
+        assert_eq!(
+            five_base(Aligner::Hisat2, &["-I", "900"]).unwrap(),
+            "-q --score-min L,0,-0.6 --minins 900 --no-spliced-alignment"
+        );
         let cli = cli_from(&["--illumina_5base"]);
         let (opts, _) =
             build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, true, None).unwrap();
@@ -676,14 +678,33 @@ mod tests {
     }
 
     #[test]
+    fn five_base_bowtie2_rejects_minins_above_the_insert_cap() {
+        for (args, i, x) in [
+            (&["-I", "900"][..], 900, 800),
+            (&["-I", "801"][..], 801, 800),
+            (&["-I", "900", "-X", "800"][..], 900, 800),
+            (&["-I", "600", "-X", "500"][..], 600, 500),
+        ] {
+            let err = five_base(Aligner::Bowtie2, args).unwrap_err().to_string();
+            assert!(
+                err.contains(&format!(
+                    "-I/--minins ({i}) is larger than the maximum insert size ({x}); raise \
+                     -X/--maxins"
+                )),
+                "{args:?}: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn five_base_local_scoring_is_engine_specific() {
         assert_eq!(
             five_base(Aligner::Bowtie2, &["--local"]).unwrap(),
-            "-q --local --score-min G,20,8 --dovetail --maxins 800"
+            "-q --local --score-min G,20,8 --maxins 800"
         );
         assert_eq!(
             five_base(Aligner::Bowtie2, &["--local", "--score_min", "G,15,7"]).unwrap(),
-            "-q --local --score-min G,15,7 --dovetail --maxins 800"
+            "-q --local --score-min G,15,7 --maxins 800"
         );
         assert!(five_base(Aligner::Bowtie2, &["--local", "--score_min", "L,0,-0.2"]).is_err());
         assert_eq!(
@@ -702,6 +723,7 @@ mod tests {
                         "--ignore-quals",
                         "--no-mixed",
                         "--no-discordant",
+                        "--dovetail",
                         "-p",
                         "--reorder"
                     ]
@@ -709,8 +731,6 @@ mod tests {
                     "{engine:?}: {opts}"
                 );
             }
-            let dovetails = opts.matches("--dovetail").count();
-            assert_eq!(dovetails, usize::from(engine == Aligner::Bowtie2), "{opts}");
         }
         let opts = five_base(Aligner::Hisat2, &["--no-spliced-alignment"]).unwrap();
         assert_eq!(opts.matches("--no-spliced-alignment").count(), 1, "{opts}");

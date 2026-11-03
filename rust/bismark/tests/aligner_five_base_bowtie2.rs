@@ -180,11 +180,17 @@ impl SmallGenome {
         Self { dir, reference }
     }
 
-    /// Align one pair through `--illumina_5base --bowtie2` and return its BAM records.
-    fn align(&self, r1: &[u8], r2: &[u8], extra: &[&str]) -> Vec<bismark::io::BismarkRecord> {
+    /// Align named pairs through `--illumina_5base --bowtie2` and return the BAM records.
+    fn align(
+        &self,
+        pairs: &[(&str, &[u8], &[u8])],
+        extra: &[&str],
+    ) -> Vec<bismark::io::BismarkRecord> {
         let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
-        fastq_record(&mut fq1, "pair", r1);
-        fastq_record(&mut fq2, "pair", r2);
+        for (name, r1, r2) in pairs {
+            fastq_record(&mut fq1, name, r1);
+            fastq_record(&mut fq2, name, r2);
+        }
         let reads = TempDir::new().unwrap();
         let read1 = reads.path().join("reads_1.fq");
         let read2 = reads.path().join("reads_2.fq");
@@ -240,7 +246,7 @@ fn five_base_pe_bowtie2_default_max_insert_is_800() {
         (&mid1, &mid2, &[][..], Some(600)),
         (&mid1, &mid2, &["-X", "500"][..], None),
     ] {
-        let records = g.align(r1, r2, extra);
+        let records = g.align(&[("pair", r1, r2)], extra);
         assert_eq!(
             records.len(),
             if tlen.is_some() { 2 } else { 0 },
@@ -254,41 +260,30 @@ fn five_base_pe_bowtie2_default_max_insert_is_800() {
 }
 
 #[test]
-fn five_base_pe_bowtie2_keeps_dovetailed_pairs_unless_no_dovetail() {
+fn five_base_pe_bowtie2_drops_dovetailed_pairs() {
     if !have_bowtie2() {
         eprintln!("skipping: bowtie2 not on PATH (5-Base dovetail gate)");
         return;
     }
     let g = SmallGenome::new(0x1134_D0E7_A110_0001);
     let rf = &g.reference;
+    let (c1, c2) = (rf[6000..6100].to_vec(), revcomp(&rf[6100..6200]));
     // OT: R2 (reverse) starts 20 bp before R1; OB: R1 (reverse) starts 20 bp before R2.
-    let ot = (
-        rf[2020..2120].to_vec(),
-        revcomp(&rf[2000..2100]),
-        [99, 147],
-        [120, -120],
-    );
-    let ob = (
-        revcomp(&rf[4000..4100]),
-        rf[4020..4120].to_vec(),
-        [83, 163],
-        [-120, 120],
-    );
-    for (r1, r2, flags, tlens) in [ot, ob] {
-        let records = g.align(&r1, &r2, &[]);
-        assert_eq!(
-            records.len(),
-            2,
-            "{flags:?}: dovetailed pair kept by default"
-        );
-        for (i, rec) in records.iter().enumerate() {
-            assert_eq!(u16::from(rec.inner().flags()), flags[i]);
-            assert_eq!(rec.inner().template_length(), tlens[i], "{flags:?}");
-            assert_eq!(rec.xm().len(), 100);
+    let (ot1, ot2) = (rf[2020..2120].to_vec(), revcomp(&rf[2000..2100]));
+    let (ob1, ob2) = (revcomp(&rf[4000..4100]), rf[4020..4120].to_vec());
+    let pairs: [(&str, &[u8], &[u8]); 3] = [
+        ("control", &c1, &c2),
+        ("dovetail_ot", &ot1, &ot2),
+        ("dovetail_ob", &ob1, &ob2),
+    ];
+    for extra in [&[][..], &["--dovetail"][..], &["--no_dovetail"][..]] {
+        let records = g.align(&pairs, extra);
+        assert_eq!(records.len(), 2, "{extra:?}: only the control pair is kept");
+        for (rec, (flag, tlen)) in records.iter().zip([(99, 200), (147, -200)]) {
+            let name = rec.inner().name().map(|n| n.to_vec());
+            assert_eq!(name.as_deref(), Some(&b"control"[..]), "{extra:?}");
+            assert_eq!(u16::from(rec.inner().flags()), flag);
+            assert_eq!(rec.inner().template_length(), tlen);
         }
-        assert!(
-            g.align(&r1, &r2, &["--no_dovetail"]).is_empty(),
-            "{flags:?}"
-        );
     }
 }
