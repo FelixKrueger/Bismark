@@ -368,7 +368,7 @@ REPRO_COLS=(pairs_in unique_pairs map_eff cpg_pct chg_pct chh_pct dup_pct record
             readthrough tlen_p10 tlen_p50 tlen_p90 deconv_precision deconv_recall)
 
 col() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == k) c = i } NR == 2 { print $c }' "$2"; }
-deconv_fracs() { grep -E 'precision|recall' "$1" | grep -o '[0-9]*/[0-9]*' | paste -sd' ' -; }
+deconv_fracs() { grep -E 'precision|recall' "$1" | grep -o '[0-9]\+/[0-9]\+' | paste -sd' ' -; }
 
 # Own-set cov>=10 "n r" of a finished cell, scored alone against DRAGEN.
 own_cov10() {
@@ -534,6 +534,7 @@ cmd_selftest() {
   check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d2.txt" "5 0.9" > /dev/null'
   check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d1.txt" "6 0.9" > /dev/null'
   check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "" b "$t/m1.tsv" "$t/d1.txt" "" > /dev/null'
+  check [ "$(deconv_fracs "$t/d1.txt")" = "9/10 5/10" ]
   rm -r "$t"
   echo "selftest: $ok passed, $bad failed"
   [[ $bad -eq 0 ]]
