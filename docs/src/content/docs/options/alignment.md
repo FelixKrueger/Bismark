@@ -97,7 +97,7 @@ accepted, as they were in Perl Bismark.
 
 - `-X <int>` / `--maxins <int>`
 
-  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.
+  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500 (800 for `--illumina_5base --bowtie2`).
 
 - `--parallel <int>`
 
@@ -265,6 +265,8 @@ For reads that have multiple alignments a random alignment is written out to a s
   Dovetailing is considered inconsistent with concordant alignment, but by default Bismark calls Bowtie 2 with `--dovetail`, causing it to consider dovetailing alignments as concordant. This becomes relevant whenever reads are clipped from their 5' end prior to mapping, e.g. because of quality or bias issues such as in PBAT or EM-seq libraries.
 
   Specify `--no_dovetail` to turn off this behaviour for paired-end libraries. Default: OFF.
+
+  With `--illumina_5base`, Bowtie 2 never receives `--dovetail`, whatever is specified (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bowtie-2-and-hisat2-tuning)).
 
 
 ##### HISAT2 SPECIFIC OPTIONS:
