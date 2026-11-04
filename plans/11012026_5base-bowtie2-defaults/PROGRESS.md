@@ -2,16 +2,16 @@
 
 **Type:** standalone
 **Plan:** `PLAN.md`
-**Last updated:** 2026-11-02
+**Last updated:** 2026-11-04
 
 | Step | Status | Notes |
 |---|---|---|
-| Plan | ✅ Complete | rev 3: quick recheck (PLAN_REVIEW_R2.md) applied; Felix approved rev 2 subject to the recheck |
-| Plan Review | ✅ Complete | PLAN_REVIEW_reviewer-A.md, PLAN_REVIEW_reviewer-B.md (rev 1) |
+| Plan | ✅ Complete | rev 6 (`--maxins 800` only; rev 3 kept as history) |
+| Plan Review | ✅ Complete | rev 1: `PLAN_REVIEW_reviewer-A/B.md`; rev 2: `PLAN_REVIEW_R2.md`; rev 4: `PLAN_REVIEW_R4_A/B.md`; rev 5: `PLAN_REVIEW_R5_A/B.md` |
 | Impl Plan | ✅ Complete | Outline in PLAN.md |
-| Implementation | 🚧 Implementing | rev 6: builder `d27b11e`, harness `1c126c3`, PREREGISTRATION rev 2 `6e0aa32`; run PASS (RESULTS.md); docs/CHANGELOG await Felix |
-| Code Review | 📋 Planned | |
-| Coverage | 📋 Planned | |
+| Implementation | ✅ Complete | builder `d27b11e`, harness `1c126c3`, PREREGISTRATION rev 2 `6e0aa32`; run PASS (RESULTS.md); docs `7295720`; review cleanup |
+| Code Review | ✅ Complete | `CODE_REVIEW_A/B.md`: no Critical or High findings; Medium and Low items applied in the cleanup commit |
+| Coverage | 🚧 Implementing | `COVERAGE.md` verdict INCOMPLETE (4 small gaps), all addressed in the cleanup commit; not re-audited |
 
 ## History
 
@@ -25,3 +25,4 @@
 - 2026-11-03: Dual review of rev 5 (PLAN_REVIEW_R5_A/B.md); rev 6 written.
 - 2026-11-03: Rev 6 implementation: builder `d27b11e`, harness `1c126c3`, PREREGISTRATION rev 2 `6e0aa32`; oxy streams launched.
 - 2026-11-04: Run complete, every pre-registered check PASS (NA12878 gate, both cross-checks, HG002 A1–A7 and genome-wide). RESULTS.md written.
+- 2026-11-04: Docs, CHANGELOG and README; dual code review (no Critical or High) and coverage audit (4 gaps); one cleanup commit; PR into dev.

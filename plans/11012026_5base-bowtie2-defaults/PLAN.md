@@ -687,6 +687,25 @@ Open: none.
   - #7: the Δr boundary failed on float error (0.959 − 0.960 < −0.001), so the difference is now rounded to 6 decimals, matching `score.tsv`;
   - #8: an OB fixture had its mates swapped; corrected;
   - #9: BSD `paste` needs `-`.
+- **Results and docs:**
+  - `f6068ce`: `RESULTS.md` and `bench_results/`. Every pre-registered check passes.
+  - `7295720`: docs, CHANGELOG and the `rust/README.md` Milestones line.
+- **Full suite:** 2,329 passed and 0 failed on Linux (oxy, `d27b11e`; the Rust is identical to HEAD). On macOS, 31 bisulfite FIFO-streaming tests in `aligner_cli` fail. They are environmental: the same code passed 140/140 there the day before.
+- **Deviation from rev 5's docs wording:** the engine-table rows read "Bowtie 2 `-X 500`" and "Bowtie 2 `--local -X 500`", not "before this change (500 bp cap)". They name the flag a user would pass, and the meaning is the same.
+- **Review cleanup** (`CODE_REVIEW_A/B.md` and `COVERAGE.md`; no Critical or High findings; the harness changes alter no pre-registered definition):
+  - **Docs:** the engine comparison is said to be NA12878 only; the `--no_dovetail` line is narrowed to OB pairs whose mates cover the same span.
+  - **Harness:**
+    - the own-set score is cached inside the cell, so a re-run wipes it;
+    - `verdict` requires `score.tsv` to hold exactly the two arms;
+    - A6 is labelled "admitted − pool".
+  - **Self-tests:**
+    - A3 edge pass case and A5 CHG/CHH pass and fail cases;
+    - minus-strand CpG site keys;
+    - the per-arm `repro` filenames.
+  - **Small fixes:**
+    - the comment at `options.rs:282` trimmed;
+    - an unrelated trailing comma restored;
+    - the `rust/README.md` aligner row updated.
 - **oxy (2026-11-03 16:13Z):** binary `d27b11e` in `bin5`, harness `1c126c3` in `~/5base_harness_bt2_r6`.
   - Stream 1: NA12878 B-new, then `repro`, then `repro-compare` against B-old.
   - Stream 2: HG002 B, B-new, `repro-compare`, `rescued`, `score`, then `verdict`.

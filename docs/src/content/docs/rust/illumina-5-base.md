@@ -77,7 +77,7 @@ and 500 bp for HISAT2, which can cut off the longest fragments of a 5-Base libra
 [Choosing an engine](#choosing-an-engine)). With Bowtie 2, an `-I` above the maximum
 insert is an error. `--dovetail` has no effect in 5-Base mode, because dovetailed overhangs
 carry non-genomic bases that read as methylation; `--no_dovetail` only flips the TLEN sign
-of OB pairs whose mates start at the same position. For short fragments, for example:
+of OB pairs whose mates cover the same span. For short fragments, for example:
 
 ```sh
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
@@ -117,7 +117,8 @@ than the full-depth figure in the stability contract. A 500 bp insert cap costs 
 about 7 points of mapping efficiency and a third of its well-covered CpGs on this library;
 at its 800 bp default (minimap2's own limit) it is level with minimap2. On HG002 the 800 bp
 default raised mapping from 90.5% to 94.5% and CpGs at cov ≥ 10 by 30%. minimap2 used about
-twice the peak memory. The comparison covers two 5-Base WGS gDNA libraries; short-fragment
+twice the peak memory. The engine comparison covers one 5-Base WGS gDNA library (NA12878),
+and the Bowtie 2 insert-cap result was repeated on a second (HG002); short-fragment
 libraries such as cfDNA were not tested.
 
 The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extractor,

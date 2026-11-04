@@ -496,7 +496,7 @@ def admitted_criteria(rj):
                      "<= control + 1.0", status(ov <= cv + 1.0, n >= MIN_N)))
     ag = rj["agreement"]
     d = ag["mean_diff"]
-    rows.append(("A6 matched-site DRAGEN agreement, admitted - rest",
+    rows.append(("A6 matched-site DRAGEN agreement, admitted - pool",
                  f"{d} (sites {ag['sites']})", ">= -0.02",
                  status(d is not None and d >= -0.02, ag["sites"] >= MIN_N)))
     a, b = mbias_shift(adm), mbias_shift(rest)
@@ -522,6 +522,11 @@ def secondary_criteria(old_arm, new_arm, old_dir, new_dir, score):
     for arm in (old_arm, new_arm):
         if (arm, "common", "10") not in sc:
             raise SystemExit(f"five_base_rescued: no common-set row for {arm} in {score}")
+    # The common set depends on every arm scored, so the file must hold exactly these two.
+    arms = {k[0] for k in sc if k[1] == "common"}
+    if arms != {old_arm, new_arm}:
+        raise SystemExit(f"five_base_rescued: {score} scores {sorted(arms)}, expected "
+                         f"{old_arm} and {new_arm} only")
     r_old, r_new = float(sc[(old_arm, "common", "10")][4]), float(sc[(new_arm, "common", "10")][4])
     dr = round(r_new - r_old, 6)  # score.tsv carries r to 6 decimals
     rows.append(("S common-set delta r", f"{dr:.6f}", ">= -0.001", status(dr >= -0.001)))
@@ -590,6 +595,14 @@ def _selftest_units():
     ob1 = Mate(_sam("q", 83, 201, "10M", 205, -14, s, "..........", "10"))
     ob2 = Mate(_sam("q", 163, 205, "10M", 201, 14, s, "..........", "10"))
     assert geometry(ob1, ob2) == ("dovetailed", 8), geometry(ob1, ob2)
+    # CpG calls of an OB pair (R1 reverse) key on the minus strand at their reference position.
+    obz = Mate(_sam("q", 83, 201, "10M", 205, -14, s, ".Z........", "10"))
+    calls = array("q")
+    cpg_calls(obz, ob2, calls)
+    assert list(calls) == [site_key("1", 202, "-") << 1 | 1], list(calls)
+    calls = array("q")
+    cpg_calls(ot1, ot2, calls)  # R1 forward: plus strand; 'Z' at ref 104, 'z' at ref 101
+    assert sorted(calls) == sorted([site_key("1", 101, "+") << 1, site_key("1", 104, "+") << 1 | 1])
     co1 = Mate(_sam("c", 99, 300, "10M", 300, 16, s, "..........", "10"))
     co2 = Mate(_sam("c", 147, 300, "16M", 300, -16, "A" * 16, "." * 16, "16"))
     assert geometry(co1, co2) == ("contained", 0)
@@ -657,6 +670,8 @@ def _selftest_criteria():
     assert st(_rj(sets__admitted__pairs=0), "A1") == ["FAIL"]
     assert st(_rj(sets__admitted__tlen_500_800_fraction=0.95), "A2") == ["PASS"]
     assert st(_rj(sets__admitted__tlen_500_800_fraction=0.949), "A2") == ["FAIL"]
+    edge = {"Z": 500, "z": 500, "X": 15, "x": 985, "H": 15, "h": 985}  # 1.5 vs 1.0
+    assert st(_rj(sets__admitted__calls=edge), "A3") == ["PASS", "PASS"]
     hi = {"Z": 500, "z": 500, "X": 16, "x": 984, "H": 10, "h": 990}  # CHG 1.6 vs 1.0
     assert st(_rj(sets__admitted__calls=hi), "A3") == ["FAIL", "PASS"]
     ok = {"Z": 550, "z": 450, "X": 10, "x": 990, "H": 10, "h": 990}  # CpG 55 vs 50
@@ -665,6 +680,14 @@ def _selftest_criteria():
     assert st(_rj(sets__admitted__calls=bad), "A4 admitted") == ["FAIL"]
     mm = dict(_rj()["per_base"]["admitted"], mm={"0": 201})
     assert st(_rj(per_base__admitted=mm), "A5 admitted mismatch") == ["FAIL"]
+    mm = dict(_rj()["per_base"]["admitted"], mm={"0": 200})
+    assert st(_rj(per_base__admitted=mm), "A5 admitted mismatch") == ["PASS"]
+    for ctx in ("chg", "chh"):  # control 1.0%: 2.0% passes, 2.005% fails
+        ok_t = dict(_rj()["per_base"]["admitted"], **{f"{ctx}_m": {"0": 400}})
+        bad_t = dict(_rj()["per_base"]["admitted"], **{f"{ctx}_m": {"0": 401}})
+        name = f"A5 admitted {ctx.upper()}"
+        assert st(_rj(per_base__admitted=ok_t), name) == ["PASS"], ctx
+        assert st(_rj(per_base__admitted=bad_t), name) == ["FAIL"], ctx
     small = {k: {"0": v["0"] // 4} for k, v in _rj()["per_base"]["admitted"].items()}
     assert st(_rj(per_base__admitted=small), "A5") == ["INSUFFICIENT"] * 3
     assert st(_rj(agreement={"mean_diff": -0.02, "sites": 20000}), "A6") == ["PASS"]
@@ -703,12 +726,18 @@ def _selftest_criteria():
     assert got["S deconvolution precision delta"] == "PASS"
     assert got["report: B-new own-set cov>=10 n / r"] == "INFO"
     new2 = cell("B-new2", 13, 31, 88)
-    with open(score, "a") as fh:
-        fh.write("B-new2\tcommon\t10\t5\t0.9579\n")
-    got = {r[0]: r[3] for r in secondary_criteria("B", "B-new2", old, new2, score)}
+    score2 = os.path.join(d, "score2.tsv")
+    with open(score2, "w") as fh:
+        fh.write("arm\tset\tcov\tn\tr\n")
+        fh.write("B\tcommon\t10\t5\t0.960\nB-new2\tcommon\t10\t5\t0.9579\n")
+    got = {r[0]: r[3] for r in secondary_criteria("B", "B-new2", old, new2, score2)}
     assert got["S common-set delta r"] == "FAIL" and got["S CHG %"] == "FAIL"
     assert got["S MAPQ-0 %"] == "FAIL" and got["S deconvolution precision delta"] == "FAIL"
     _fails(lambda: secondary_criteria("B-old", "B-new", old, new, score), "no common-set row")
+    # A third scored arm changes the common set, so the check refuses the file.
+    with open(score2, "a") as fh:
+        fh.write("B-new\tcommon\t10\t5\t0.959\n")
+    _fails(lambda: secondary_criteria("B", "B-new2", old, new2, score2), "only")
 
 
 def _selftest_end_to_end():

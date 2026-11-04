@@ -279,7 +279,7 @@ pub(crate) fn build_five_base_aligner_options(
             "--known-splicesite-infile is not supported with --illumina_5base: 5-Base alignment is unspliced.".into(),
         ));
     }
-    // Bowtie 2 defaults to an 800 bp insert cap; --dovetail stays off (its overhangs are not genomic).
+    // Bowtie 2 defaults to an 800 bp insert cap.
     let maxins = cli.maxins.or((aligner == Aligner::Bowtie2).then_some(800));
     if let Some(i) = cli.minins {
         // Bowtie 2 accepts -I > -X and reports every pair non-concordant.
@@ -725,7 +725,7 @@ mod tests {
                         "--no-discordant",
                         "--dovetail",
                         "-p",
-                        "--reorder"
+                        "--reorder",
                     ]
                     .contains(&tok),
                     "{engine:?}: {opts}"

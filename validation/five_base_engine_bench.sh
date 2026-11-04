@@ -370,12 +370,15 @@ REPRO_COLS=(pairs_in unique_pairs map_eff cpg_pct chg_pct chh_pct dup_pct record
 col() { awk -F'\t' -v k="$1" 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == k) c = i } NR == 2 { print $c }' "$2"; }
 deconv_fracs() { grep -E 'precision|recall' "$1" | grep -o '[0-9]\+/[0-9]\+' | paste -sd' ' -; }
 
-# Own-set cov>=10 "n r" of a finished cell, scored alone against DRAGEN.
+repro_file() { echo "$RESULTS/$1/$2/repro_$3.tsv"; }
+repro_compare_file() { echo "$RESULTS/$1/$2/repro_compare_${3}_${4}.tsv"; }
+
+# Own-set cov>=10 "n r" of a finished cell, scored alone against DRAGEN; cached inside the cell.
 own_cov10() {
   local s=$1 tag=$2 arm=$3 d=$ROOT/runs/$1/$2/$3.rep1 score cpg
-  score=$ROOT/runs/$s/$tag/repro_score_$arm.tsv
+  score=$d/repro_score_$arm.tsv
   if [[ ! -s $score ]]; then
-    cpg=$(ls "$d"/*CpG_report.txt*)
+    cpg=$(ls "$d"/*CpG_report.txt* | head -1)
     python3 -I "$HERE/five_base_compare.py" compare --dragen "$ROOT/$s/dragen/dragen.cpg.txt" \
       --arm "$arm=$cpg" --baseline "$arm" --out "$score" --min-joined "${MIN_JOINED:-0.5}" >&2
     mkdir -p "$RESULTS/$s/$tag"
@@ -407,7 +410,7 @@ cmd_repro() {
   [[ -s $d/DONE ]] || die "cell $s/$tag/$arm.rep1 has not finished"
   [[ -s $ref/B-X.rep1/metrics.tsv && -s $ref/B-X.rep1/deconv.txt && -s $ref/score.tsv ]] \
     || die "no #1146 B-X results in $ref"
-  local own ref_own out=$RESULTS/$s/$tag/repro_$arm.tsv
+  local own ref_own out; out=$(repro_file "$s" "$tag" "$arm")
   own=$(own_cov10 "$s" "$tag" "$arm")
   ref_own=$(awk -F'\t' '$1 == "B-X" && $2 == "own" && $3 == 10 {print $4, $5}' "$ref/score.tsv")
   mkdir -p "$RESULTS/$s/$tag"
@@ -420,7 +423,7 @@ cmd_repro() {
 cmd_repro_compare() {
   local s=$1 tag=$2 a1=$3 a2=$4 d1=$ROOT/runs/$1/$2/$3.rep1 d2=$ROOT/runs/$1/$2/$4.rep1
   [[ -s $d1/DONE && -s $d2/DONE ]] || die "cells $s/$tag/$a1 and $a2 must both have finished"
-  local o1 o2 out=$RESULTS/$s/$tag/repro_compare_${a1}_$a2.tsv
+  local o1 o2 out; out=$(repro_compare_file "$s" "$tag" "$a1" "$a2")
   o1=$(own_cov10 "$s" "$tag" "$a1"); o2=$(own_cov10 "$s" "$tag" "$a2")
   mkdir -p "$RESULTS/$s/$tag"
   compare_cells "$out" "$a1" "$d1/metrics.tsv" "$d1/deconv.txt" "$o1" \
@@ -535,6 +538,8 @@ cmd_selftest() {
   check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "5 0.9" b "$t/m1.tsv" "$t/d1.txt" "6 0.9" > /dev/null'
   check eval '! compare_cells "$t/o" a "$t/m1.tsv" "$t/d1.txt" "" b "$t/m1.tsv" "$t/d1.txt" "" > /dev/null'
   check [ "$(deconv_fracs "$t/d1.txt")" = "9/10 5/10" ]
+  check [ "$(RESULTS=/r repro_file HG002 screen B-new)" = /r/HG002/screen/repro_B-new.tsv ]
+  check [ "$(RESULTS=/r repro_compare_file HG002 screen B-old B-new)" = /r/HG002/screen/repro_compare_B-old_B-new.tsv ]
   rm -r "$t"
   echo "selftest: $ok passed, $bad failed"
   [[ $bad -eq 0 ]]
