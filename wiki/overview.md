@@ -5,26 +5,29 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-02
+updated: 2026-11-04
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: b4f901b
+    commit: 94faf8d
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/options.rs
+    commit: 94faf8d
 ---
 
 # Bismark overview
@@ -58,7 +61,7 @@ The developer gave this order. Most workflows run these steps:
 - Reads are FastQ (default) or FastA; `--pbat` accepts only FastQ and no `--gzip` (`resolve_library` in `aligner/config.rs`).
 - minimap2 and rammap align single-end reads only, except minimap2 in 5-Base runs; paired-end input, including a positional paired uBAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
 - Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
-- `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`).
+- `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`). With Bowtie 2 it caps inserts at 800 bp unless `-X` is given, and rejects an `-I` above the cap (`build_five_base_aligner_options` in `aligner/options.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).

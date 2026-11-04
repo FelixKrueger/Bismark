@@ -5,35 +5,35 @@ description: Run the aligner on single-end or paired-end reads, choose the libra
 tags: [alignment, bowtie2, hisat2, minimap2, library-type, 5-base]
 page_id: align-reads
 subject_status: current
-updated: 2026-11-02
+updated: 2026-11-04
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: b4f901b
+    commit: 94faf8d
 ---
 
 # Align reads
@@ -130,7 +130,7 @@ bismark --illumina_5base --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
 
 - Paired-end, directional, FastQ only (`resolve` in `aligner/config.rs`).
 - minimap2 `-x sr` against the genome FASTA is the default. For Bowtie 2 or HISAT2, add `--bowtie2` or `--hisat2` with `--five_base_index <basename>` of a normal, unconverted index. A bisulfite `BS_CT`/`BS_GA` index is rejected.
-- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`, `--phred33-quals`, `--phred64-quals`, and `--local` for Bowtie 2). The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local`. HISAT2 always gets `--no-spliced-alignment` and never `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
+- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`, `--phred33-quals`, `--phred64-quals`, and `--local` for Bowtie 2). The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local`. Bowtie 2 gets `--maxins 800` unless `-X` is given, rejects an `-I` above that maximum, and never gets `--dovetail`. HISAT2 always gets `--no-spliced-alignment` and never `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
 - Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 - Optional outputs, each next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`).
 - `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning.

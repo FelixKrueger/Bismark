@@ -5,44 +5,44 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-02
+updated: 2026-11-04
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: b4f901b
+    commit: 94faf8d
 ---
 
 # Troubleshooting
@@ -97,6 +97,7 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
 | `--include_overlap requires --paired-end` | Overlap option without `-p` | Add `-p` |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
+| `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
 | `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
 | `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |
 | `… (streamed run; if an aligner wrapper … use --no_stream_converted)` | An aligner instance failed in a streamed run; the suffix is added to such an error unless it already names `--no_stream_converted` (`with_wrapper_hint` in `aligner/stream.rs`) | Read the message before the suffix first. If a wrapper or another process reads the input before the aligner, re-run with `--no_stream_converted`; for gzipped input, also check it with `gzip -t` |
