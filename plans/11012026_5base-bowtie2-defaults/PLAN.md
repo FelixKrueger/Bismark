@@ -668,6 +668,28 @@ Open: none.
   - Failed: R2, R4, R5 and R6. R1, R3, every genome-wide secondary check and D0–D3 pass.
   - This is the dilution the plan predicted: the genome-wide checks cannot see the harm.
   - **Stopped before any screen B-new cell, and brought to Felix.** The B-old streams (NA12878 reproduction, HG002 baseline) keep running.
+- #6 rev 3 B-old streams finished. NA12878 B-old (`72bbf7b`) reproduced #1146 B-X exactly, so `repro` passed. HG002 B-old: 94.5% mapping, TLEN p90 456.
+
+**Rev 6 implementation:**
+
+| Commit | What |
+|---|---|
+| `d27b11e` | builder: no `--dovetail` and `-I` above the cap rejected (Bowtie 2), plus tests; the run's binary |
+| `7847aa5` | harness re-aimed; `five_base_rescued.py` rewritten (admitted sets, A1–A7, duplex code removed) |
+| `1c126c3` | `deconv_fracs` matches only digit/digit (it had picked up a `/` from "C>T/G>A"); before the freeze |
+| `6e0aa32` | PREREGISTRATION rev 2 and this plan |
+
+- **Tests:** `--lib aligner::` 614, `aligner_cli` 140, `aligner_five_base_bowtie2` 3, and the 5-Base suites 11/8/10 all pass, as do release Clippy and fmt.
+  - The real-Bowtie 2 dovetail test keeps only the control pair under no flag, `--dovetail` and `--no_dovetail`.
+  - Under the rev 3 builder it would see 6 records, not 2.
+- **Self-tests:** bench 52/52; helper OK. The helper covers the criteria boundaries, the secondary checks by arm name, `--all-bases`, the TLEN quantiles, matched-site scoring and the M-bias shift.
+- **Iteration log:**
+  - #7: the Δr boundary failed on float error (0.959 − 0.960 < −0.001), so the difference is now rounded to 6 decimals, matching `score.tsv`;
+  - #8: an OB fixture had its mates swapped; corrected;
+  - #9: BSD `paste` needs `-`.
+- **oxy (2026-11-03 16:13Z):** binary `d27b11e` in `bin5`, harness `1c126c3` in `~/5base_harness_bt2_r6`.
+  - Stream 1: NA12878 B-new, then `repro`, then `repro-compare` against B-old.
+  - Stream 2: HG002 B, B-new, `repro-compare`, `rescued`, `score`, then `verdict`.
 
 ## Revision history
 

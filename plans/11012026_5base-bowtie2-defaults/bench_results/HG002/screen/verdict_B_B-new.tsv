@@ -1,0 +1,24 @@
+sample	criterion	value	threshold	status
+HG002	A1 admitted % of new pairs	4.2773	1-15	PASS
+HG002	A2 admitted with 500 < |TLEN| <= 800 %	99.9145	>= 95	PASS
+HG002	A3 admitted CHG %	1.3360 vs rest 1.2091	<= rest + 0.5	PASS
+HG002	A3 admitted CHH %	1.1863 vs rest 1.0758	<= rest + 0.5	PASS
+HG002	A4 admitted CpG %	63.4582 vs rest 63.5868	within 5	PASS
+HG002	A4 report: rest 450-500 bp CpG %	63.4703	report only	INFO
+HG002	A5 admitted mismatch %	0.7421 vs control 0.5019 (n 86362711, unmatched 0)	<= 2x control	PASS
+HG002	A5 admitted CHG %	1.3327 vs control 1.2056 (n 4896375, unmatched 0)	<= control + 1.0	PASS
+HG002	A5 admitted CHH %	1.1882 vs control 1.0773 (n 16752917, unmatched 0)	<= control + 1.0	PASS
+HG002	A6 matched-site DRAGEN agreement, admitted - rest	-0.00042309013416531334 (sites 1670876)	>= -0.02	PASS
+HG002	A7 R1 3' M-bias shift (cycles 0-9 minus 60-69)	0.3816 vs rest 0.4365	within 3	PASS
+HG002	report: admitted |TLEN| p10/p50/p90	506/535/610	report only	INFO
+HG002	report: admitted dovetailed/contained	0/5	report only	INFO
+HG002	report: changed / lost pairs	359431 / 205	report only	INFO
+HG002	S common-set delta r	0.000912	>= -0.001	PASS
+HG002	S CHG %	1.2171 vs B 1.2133	<= B + 0.2	PASS
+HG002	S CHH %	1.0836 vs B 1.0807	<= B + 0.2	PASS
+HG002	S MAPQ-0 %	1.1820 vs B 1.2074	<= B + 2	PASS
+HG002	S deconvolution precision delta	0.1493	>= -1	PASS
+HG002	S deconvolution recall delta	1.9895	>= -1	PASS
+HG002	report: B-new own-set cov>=10 n / r	704973 / 0.958502	report only	INFO
+HG002	report: B-new gain-set cov>=10 n / r	165147 / 0.967721	report only	INFO
+HG002	report: map_eff	94.5 vs B 90.5	report only	INFO

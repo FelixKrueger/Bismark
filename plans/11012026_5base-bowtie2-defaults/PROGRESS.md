@@ -9,7 +9,7 @@
 | Plan | ✅ Complete | rev 3: quick recheck (PLAN_REVIEW_R2.md) applied; Felix approved rev 2 subject to the recheck |
 | Plan Review | ✅ Complete | PLAN_REVIEW_reviewer-A.md, PLAN_REVIEW_reviewer-B.md (rev 1) |
 | Impl Plan | ✅ Complete | Outline in PLAN.md |
-| Implementation | 🚧 Implementing | Outline 1 builder `72bbf7b`; 2 harness `909182d`; 3 PREREGISTRATION.md; 4–6 oxy run pending |
+| Implementation | 🚧 Implementing | rev 6: builder `d27b11e`, harness `1c126c3`, PREREGISTRATION rev 2 `6e0aa32`; run PASS (RESULTS.md); docs/CHANGELOG await Felix |
 | Code Review | 📋 Planned | |
 | Coverage | 📋 Planned | |
 
@@ -23,3 +23,5 @@
 - 2026-11-02: 10M dry run: the harness works, but the `--dovetail` overhang bases look non-genomic (R2/R4/R5/R6 fail). Paused before the screen B-new cells, awaiting Felix.
 - 2026-11-02: Felix chose to drop `--dovetail` (rev 4); Q5 resolved as a no-op. Dual review of rev 4 (PLAN_REVIEW_R4_A/B.md); rev 5 written.
 - 2026-11-03: Dual review of rev 5 (PLAN_REVIEW_R5_A/B.md); rev 6 written.
+- 2026-11-03: Rev 6 implementation: builder `d27b11e`, harness `1c126c3`, PREREGISTRATION rev 2 `6e0aa32`; oxy streams launched.
+- 2026-11-04: Run complete, every pre-registered check PASS (NA12878 gate, both cross-checks, HG002 A1–A7 and genome-wide). RESULTS.md written.

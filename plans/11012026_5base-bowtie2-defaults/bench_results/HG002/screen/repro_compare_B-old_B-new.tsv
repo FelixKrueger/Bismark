@@ -1,0 +1,19 @@
+metric	B-old	B-new
+pairs_in	95165937	95165937
+unique_pairs	89955665	89955665
+map_eff	94.5	94.5
+cpg_pct	63.6	63.6
+chg_pct	1.2	1.2
+chh_pct	1.1	1.1
+dup_pct	3.42	3.42
+records	179910650	179910650
+mapq0	2126594	2126594
+r1_records	89955325	89955325
+readthrough	2452	2452
+tlen_p10	240	240
+tlen_p50	341	341
+tlen_p90	456	456
+deconv_precision	93.5	93.5
+deconv_recall	61.0	61.0
+deconv_counts	168052/179708 95785/156944	168052/179708 95785/156944
+own_cov10_n_r	704973 0.958502	704973 0.958502

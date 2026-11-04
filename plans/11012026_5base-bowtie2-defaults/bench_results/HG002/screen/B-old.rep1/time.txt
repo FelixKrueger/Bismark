@@ -1,0 +1,23 @@
+	Command being timed: "bismark --illumina_5base --bowtie2 --five_base_index /home/fkrueger/references/GRCh38/Bowtie2Index/Homo_sapiens.GRCh38 -X 800 --no_dovetail --five_base_umi_qname --five_base_deconvolution -p 32 --genome /var/tmp/5base_engines/genome -o /var/tmp/5base_engines/runs/HG002/screen/B-old.rep1 --temp_dir /var/tmp/5base_engines/runs/HG002/screen/B-old.rep1/tmp -1 /var/tmp/5base_engines/runs/HG002/screen/input/sub_R1_val_1.fq -2 /var/tmp/5base_engines/runs/HG002/screen/input/sub_R2_val_2.fq"
+	User time (seconds): 79154.24
+	System time (seconds): 3845.14
+	Percent of CPU this job got: 862%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:40:27
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 8756364
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 86
+	Minor (reclaiming a frame) page faults: 67952259
+	Voluntary context switches: 10081658
+	Involuntary context switches: 463292210
+	Swaps: 0
+	File system inputs: 172488016
+	File system outputs: 50751600
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
