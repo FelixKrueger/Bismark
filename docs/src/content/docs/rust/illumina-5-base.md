@@ -72,9 +72,12 @@ bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
 Both engines accept `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `--score_min`,
 `-I`/`--minins`, and `-X`/`--maxins` in 5-Base mode. Quality-encoding flags
 (`--phred33-quals` or `--phred64-quals`) and `--quiet` are also passed through. The default
-linear score threshold is `L,0,-0.6`; the engine's default maximum insert is 500 bp,
-which can cut off the longest fragments of a 5-Base library (see
-[Choosing an engine](#choosing-an-engine)). For short fragments, for example:
+linear score threshold is `L,0,-0.6`. The default maximum insert is 800 bp for Bowtie 2
+and 500 bp for HISAT2, which can cut off the longest fragments of a 5-Base library (see
+[Choosing an engine](#choosing-an-engine)). With Bowtie 2, an `-I` above the maximum
+insert is an error. `--dovetail` has no effect in 5-Base mode, because dovetailed overhangs
+carry non-genomic bases that read as methylation; `--no_dovetail` only flips the TLEN sign
+of OB pairs whose mates cover the same span. For short fragments, for example:
 
 ```sh
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
@@ -104,17 +107,19 @@ column counts each engine's own CpGs at cov ≥ 10 in both it and DRAGEN.
 | Engine | Mapping efficiency | Pearson r vs DRAGEN | CpGs at cov ≥ 10 | Peak memory |
 |---|---|---|---|---|
 | minimap2 (default) | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
-| Bowtie 2 | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
-| Bowtie 2 `-X 800` | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
-| Bowtie 2 `--local` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
+| Bowtie 2 (default, 800 bp) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
+| Bowtie 2 `-X 500` | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
+| Bowtie 2 `--local -X 500` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
 | HISAT2 | 91.3% | 0.9631 | 664,790 | 8.3 GiB |
 
 This depth is about 5× per strand, so cov ≥ 10 is the high-coverage tail and r is lower
-than the full-depth figure in the stability contract. Bowtie 2's 500 bp insert cap cost it
+than the full-depth figure in the stability contract. A 500 bp insert cap costs Bowtie 2
 about 7 points of mapping efficiency and a third of its well-covered CpGs on this library;
-`-X 800` (minimap2's own limit) brings it level with minimap2, so raise the cap when you
-use Bowtie 2 on 5-Base data. minimap2 used about twice the peak memory. The comparison
-covers one 5-Base WGS gDNA library; short-fragment libraries such as cfDNA were not tested.
+at its 800 bp default (minimap2's own limit) it is level with minimap2. On HG002 the 800 bp
+default raised mapping from 90.5% to 94.5% and CpGs at cov ≥ 10 by 30%. minimap2 used about
+twice the peak memory. The engine comparison covers one 5-Base WGS gDNA library (NA12878),
+and the Bowtie 2 insert-cap result was repeated on a second (HG002); short-fragment
+libraries such as cfDNA were not tested.
 
 The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extractor,
 `bismark2bedGraph`, `coverage2cytosine`, and the reports consume it unchanged.

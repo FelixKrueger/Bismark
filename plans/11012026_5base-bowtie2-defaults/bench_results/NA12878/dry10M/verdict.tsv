@@ -1,0 +1,21 @@
+sample	criterion	value	threshold	status
+NA12878	R1 rescued % of B-new pairs	2.0654	0.1-3	PASS
+NA12878	R2 rescued CHG %	2.1256 vs rest 1.2961	<= rest + 0.5	FAIL
+NA12878	R2 rescued CHH %	1.8997 vs rest 1.1562	<= rest + 0.5	FAIL
+NA12878	R3 rescued CpG %	43.8079 vs rest 48.6683	within 5	PASS
+NA12878	R4 overhang CHG %	26.0820 vs control 1.8856 (n 67951, unmatched 0)	<= control + 1.0	FAIL
+NA12878	R4 overhang CHH %	22.0408 vs control 1.3853 (n 249646, unmatched 0)	<= control + 1.0	FAIL
+NA12878	R4 overhang mismatch %	35.3773 vs control 0.6104 (n 2485866, unmatched 0)	<= 2x control	FAIL
+NA12878	R5 per-call DRAGEN agreement	0.7613393544405482 vs rest sample 0.7843569874321257 (n 377783)	>= rest - 0.02	FAIL
+NA12878	R6 R1 3' M-bias CpG %	27.6092 vs rest 50.7899	within 3	FAIL
+NA12878	S common-set delta r	0.000703	>= -0.001	PASS
+NA12878	S CHG %	1.3111 vs B-old 1.2983	<= B-old + 0.2	PASS
+NA12878	S CHH %	1.1703 vs B-old 1.1585	<= B-old + 0.2	PASS
+NA12878	S MAPQ-0 %	1.1229 vs B-old 0.9216	<= B-old + 2	PASS
+NA12878	S deconvolution precision delta	-0.0248	>= -1	PASS
+NA12878	S deconvolution recall delta	0.0629	>= -1	PASS
+NA12878	D0 helper duplex families vs tool	1179 vs 1179 (0.0000%)	within 0.1%	PASS
+NA12878	D1 rescued partnered %	0.0441 vs rest 0.0251	>= rest - 5	PASS
+NA12878	D2 consensus CpG %	45.4152 vs B-old 45.6566	within 0.5	PASS
+NA12878	D3 consensus CHG %	0.2363 vs B-old 0.2031	<= B-old + 0.2	PASS
+NA12878	D3 consensus CHH %	0.1783 vs B-old 0.1495	<= B-old + 0.2	PASS

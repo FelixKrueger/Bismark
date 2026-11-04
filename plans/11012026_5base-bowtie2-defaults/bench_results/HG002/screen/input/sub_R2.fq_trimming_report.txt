@@ -1,0 +1,203 @@
+SUMMARISING RUN PARAMETERS
+=========================
+Input filename: sub_R2.fq
+Trimming mode: paired-end
+Trim Galore version: 2.2.0 (Oxidized Edition)
+Quality Phred score cutoff: 20
+Quality encoding type selected: ASCII+33
+Adapter sequence: 'CTGTCTCTTATA' (user-specified or auto-detected)
+Maximum trimming error rate: 0.1
+Minimum required adapter overlap (stringency): 1 bp
+Minimum required sequence length for both reads before a sequence pair gets removed: 20 bp
+Poly-G trimming enabled: removing poly-G tails from 3' end of R1/SE reads, and poly-C heads from 5' end of R2 reads
+
+
+Trim Galore 2.2.0 (Oxidized Edition) — adapter trimming built in
+This is cutadapt 4.0 (compatible; for MultiQC backwards compatibility)
+Command line parameters: -j 1 -e 0.1 -q 20 -O 1 -a CTGTCTCTTATA sub_R2.fq
+Processing reads on 1 core in single-end mode ...
+
+=== Summary ===
+
+Total reads processed:           100,000,000
+Reads with adapters:             11,588,986 (11.6%)
+Reads written (passing filters): 100,000,000 (100.0%)
+
+Total basepairs processed:   13,755,320,834 bp
+Quality-trimmed:              217,045,697 bp (1.6%)
+Total written (filtered):    13,472,768,813 bp (97.9%)
+
+=== Adapter 1 ===
+
+Sequence: CTGTCTCTTATA; Type: regular 3'; Length: 12; Trimmed: 11588986 times.
+
+No. of allowed errors:
+1-9 bp: 0; 10-12 bp: 1
+
+Overview of removed sequences
+length	count	expect	max.err	error counts
+1	7953713	25000000.0	0	7953713
+2	2544290	6250000.0	0	2544290
+3	628334	1562500.0	0	628334
+4	32255	390625.0	0	32255
+5	38201	97656.2	0	38201
+6	3989	24414.1	0	3989
+7	5762	6103.5	0	5762
+8	3679	1525.9	0	3679
+9	13308	381.5	0	13308
+10	3874	95.4	1	3874
+11	2712	23.8	1	2712
+12	906	6.0	1	906
+13	1902	1.5	1	1902
+14	1070	0.4	1	1070
+15	1752	0.1	1	1752
+16	3039	0.0	1	3039
+17	1370	0.0	1	1370
+18	1865	0.0	1	1865
+19	1576	0.0	1	1576
+20	3027	0.0	2	3027
+21	2076	0.0	2	2076
+22	3568	0.0	2	3568
+23	1337	0.0	2	1337
+24	1317	0.0	2	1317
+25	1542	0.0	2	1542
+26	1528	0.0	2	1528
+27	1222	0.0	2	1222
+28	1646	0.0	2	1646
+29	1877	0.0	2	1877
+30	1159	0.0	3	1159
+31	1434	0.0	3	1434
+32	1458	0.0	3	1458
+33	1821	0.0	3	1821
+34	1135	0.0	3	1135
+35	1446	0.0	3	1446
+36	1415	0.0	3	1415
+37	1479	0.0	3	1479
+38	1430	0.0	3	1430
+39	1370	0.0	3	1370
+40	1348	0.0	4	1348
+41	1310	0.0	4	1310
+42	1311	0.0	4	1311
+43	1272	0.0	4	1272
+44	1335	0.0	4	1335
+45	1277	0.0	4	1277
+46	1340	0.0	4	1340
+47	1312	0.0	4	1312
+48	1373	0.0	4	1373
+49	1259	0.0	4	1259
+50	1686	0.0	5	1686
+51	1071	0.0	5	1071
+52	1135	0.0	5	1135
+53	951	0.0	5	951
+54	1146	0.0	5	1146
+55	1275	0.0	5	1275
+56	1247	0.0	5	1247
+57	1196	0.0	5	1196
+58	1172	0.0	5	1172
+59	1313	0.0	5	1313
+60	1024	0.0	6	1024
+61	1355	0.0	6	1355
+62	1084	0.0	6	1084
+63	1007	0.0	6	1007
+64	1175	0.0	6	1175
+65	1101	0.0	6	1101
+66	1043	0.0	6	1043
+67	1206	0.0	6	1206
+68	972	0.0	6	972
+69	1071	0.0	6	1071
+70	1082	0.0	7	1082
+71	1103	0.0	7	1103
+72	1112	0.0	7	1112
+73	993	0.0	7	993
+74	995	0.0	7	995
+75	1074	0.0	7	1074
+76	996	0.0	7	996
+77	1016	0.0	7	1016
+78	1002	0.0	7	1002
+79	977	0.0	7	977
+80	942	0.0	8	942
+81	1000	0.0	8	1000
+82	1022	0.0	8	1022
+83	1012	0.0	8	1012
+84	961	0.0	8	961
+85	930	0.0	8	930
+86	972	0.0	8	972
+87	984	0.0	8	984
+88	989	0.0	8	989
+89	947	0.0	8	947
+90	948	0.0	9	948
+91	882	0.0	9	882
+92	939	0.0	9	939
+93	966	0.0	9	966
+94	923	0.0	9	923
+95	867	0.0	9	867
+96	888	0.0	9	888
+97	859	0.0	9	859
+98	890	0.0	9	890
+99	941	0.0	9	941
+100	915	0.0	10	915
+101	924	0.0	10	924
+102	881	0.0	10	881
+103	874	0.0	10	874
+104	857	0.0	10	857
+105	906	0.0	10	906
+106	953	0.0	10	953
+107	883	0.0	10	883
+108	979	0.0	10	979
+109	901	0.0	10	901
+110	889	0.0	11	889
+111	911	0.0	11	911
+112	909	0.0	11	909
+113	921	0.0	11	921
+114	906	0.0	11	906
+115	940	0.0	11	940
+116	931	0.0	11	931
+117	876	0.0	11	876
+118	883	0.0	11	883
+119	925	0.0	11	925
+120	957	0.0	12	957
+121	912	0.0	12	912
+122	880	0.0	12	880
+123	916	0.0	12	916
+124	994	0.0	12	994
+125	951	0.0	12	951
+126	898	0.0	12	898
+127	868	0.0	12	868
+128	914	0.0	12	914
+129	944	0.0	12	944
+130	926	0.0	13	926
+131	1006	0.0	13	1006
+132	924	0.0	13	924
+133	915	0.0	13	915
+134	934	0.0	13	934
+135	1046	0.0	13	1046
+136	23747	0.0	13	23747
+137	59442	0.0	13	59442
+138	53047	0.0	13	53047
+139	23533	0.0	13	23533
+140	8645	0.0	14	8645
+141	5702	0.0	14	5702
+142	4626	0.0	14	4626
+143	34632	0.0	14	34632
+
+
+RUN STATISTICS FOR INPUT FILE: sub_R2.fq
+=============================================
+100000000 sequences processed in total
+Sequences removed because they became shorter than the length cutoff of 20 bp:	4834063 (4.8%)
+Sequences removed because they were longer than the upper length cutoff:	0 (0.0%)
+Sequences removed because of too many N bases:	0 (0.0%)
+Reads with poly-G/C trimmed:	1798957 (1.8%); 11,677,640 bp removed
+
+=== Paired-end validation ===
+
+Number of sequence pairs analysed:  100,000,000
+
+Number of sequence pairs removed because at least one read was shorter than the length cutoff (4.83%):
+                              4,834,063
+Number of pairs removed for N content (0.00%):
+                                      0
+
+Unpaired read 1 kept:           222,292
+Unpaired read 2 kept:           125,384
+

@@ -7109,7 +7109,7 @@ fn five_base_bowtie2_unconverted_index_end_to_end() {
     let report =
         fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
     assert!(report.contains("Bismark was run with Bowtie 2 against"));
-    assert!(report.contains("-q --score-min L,0,-0.6")); // the plain 5-Base bowtie2 opts
+    assert!(report.contains("-q --score-min L,0,-0.6 --maxins 800")); // the plain 5-Base bowtie2 opts
     assert!(!report.contains("--norc")); // NOT the bisulfite strand-restricted options
 
     let bam_path = outdir.path().join("reads_1_bismark_bt2_pe.bam");
@@ -7537,7 +7537,10 @@ type OptionCase<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
 #[test]
 fn five_base_1134_default_argv_is_exact() {
     for (engine, expected) in [
-        ("bowtie2", "-q --score-min L,0,-0.6 -p 4 --reorder"),
+        (
+            "bowtie2",
+            "-q --score-min L,0,-0.6 --maxins 800 -p 4 --reorder",
+        ),
         (
             "hisat2",
             "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
@@ -7563,6 +7566,35 @@ fn five_base_1134_default_argv_is_exact() {
             "{notice}"
         );
         assert!(!stderr.contains("aligned with minimap2"), "{stderr}");
+        f.check_report(&out.get_output().stderr);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_maxins_default_reaches_argv() {
+    let cases: &[(&str, &[&str], Option<&str>)] = &[
+        ("bowtie2", &[], Some("800")),
+        ("bowtie2", &["--dovetail"], Some("800")),
+        ("bowtie2", &["--no_dovetail"], Some("800")),
+        ("bowtie2", &["-X", "500"], Some("500")),
+        ("bowtie2", &["-X", "1200", "--no_dovetail"], Some("1200")),
+        ("hisat2", &[], None),
+        ("hisat2", &["-X", "500"], Some("500")),
+    ];
+    for (engine, cli, maxins) in cases {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
+        let args = f.argv();
+        let count = |tok: &str| args.iter().filter(|a| *a == tok).count();
+        assert_eq!(count("--dovetail"), 0, "{cli:?}: {args:?}");
+        match maxins {
+            Some(x) => assert_option(&args, "--maxins", x),
+            None => assert_eq!(count("--maxins"), 0, "{args:?}"),
+        }
+        for tok in ["--no-mixed", "--no-discordant", "--local"] {
+            assert_eq!(count(tok), 0, "{args:?}");
+        }
         f.check_report(&out.get_output().stderr);
     }
 }
@@ -7625,6 +7657,7 @@ fn five_base_1134_tuning_reaches_each_aligner_and_report() {
             for (flag, value) in *expected {
                 assert_option(&args, flag, value);
             }
+            assert!(!args.iter().any(|a| a == "--dovetail"), "{args:?}");
             if cli.contains(&"--quiet") {
                 assert_eq!(args.iter().filter(|a| *a == "--quiet").count(), 1);
             }
@@ -7788,5 +7821,10 @@ fn five_base_1134_invalid_tuning_fails_before_output_creation() {
         "bowtie2",
         &["--local", "--score_min", "L,0,-0.2"],
         "<G,value,value>",
+    );
+    rejects(
+        "bowtie2",
+        &["-I", "900"],
+        "-I/--minins (900) is larger than the maximum insert size (800); raise -X/--maxins",
     );
 }

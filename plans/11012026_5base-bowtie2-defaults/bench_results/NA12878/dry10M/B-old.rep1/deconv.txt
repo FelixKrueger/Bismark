@@ -1,0 +1,4 @@
+our 'variant' CpGs:        7428
+  precision (any DRAGEN C>T/G>A):  6208/7428 = 83.6%
+DRAGEN hom CpG-SNVs we cover: 58034
+  recall:                          3851/58034 = 6.6%

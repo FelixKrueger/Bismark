@@ -153,47 +153,61 @@ fn five_base_pe_bowtie2_multithreaded_keeps_every_pair_in_order() {
     assert_eq!(r1_names, expected, "pairs come back in FASTQ order");
 }
 
-#[test]
-fn five_base_pe_bowtie2_max_insert_override_admits_long_fragment() {
-    if !have_bowtie2() {
-        eprintln!("skipping: bowtie2 not on PATH (5-Base insert-size gate)");
-        return;
+/// A random 10 kb `chr1` with its Bowtie 2 index.
+struct SmallGenome {
+    dir: TempDir,
+    reference: Vec<u8>,
+}
+
+impl SmallGenome {
+    fn new(seed: u64) -> Self {
+        let mut rng = Lcg(seed);
+        let reference: Vec<u8> = (0..10_000).map(|_| b"ACGT"[rng.next(4) as usize]).collect();
+        let dir = TempDir::new().unwrap();
+        let mut fa = b">chr1\n".to_vec();
+        fa.extend_from_slice(&reference);
+        fa.push(b'\n');
+        fs::write(dir.path().join("genome.fa"), fa).unwrap();
+        assert!(
+            StdCommand::new("bowtie2-build")
+                .arg("-q")
+                .arg(dir.path().join("genome.fa"))
+                .arg(dir.path().join("genome"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        Self { dir, reference }
     }
-    let mut rng = Lcg(0x1134_5BA5_E000_0001);
-    let reference: Vec<u8> = (0..10_000).map(|_| b"ACGT"[rng.next(4) as usize]).collect();
-    let genome = TempDir::new().unwrap();
-    let mut fa = b">chr1\n".to_vec();
-    fa.extend_from_slice(&reference);
-    fa.push(b'\n');
-    fs::write(genome.path().join("genome.fa"), fa).unwrap();
-    let index = genome.path().join("genome");
-    assert!(
-        StdCommand::new("bowtie2-build")
-            .arg("-q")
-            .arg(genome.path().join("genome.fa"))
-            .arg(&index)
-            .status()
-            .unwrap()
-            .success()
-    );
-    let (mut r1, mut r2) = (Vec::new(), Vec::new());
-    fastq_record(&mut r1, "long_pair", &reference[1000..1090]);
-    fastq_record(&mut r2, "long_pair", &revcomp(&reference[1710..1800]));
-    let read1 = genome.path().join("reads_1.fq");
-    let read2 = genome.path().join("reads_2.fq");
-    fs::write(&read1, r1).unwrap();
-    fs::write(&read2, r2).unwrap();
-    for maxins in [None, Some("1000")] {
+
+    /// Align named pairs through `--illumina_5base --bowtie2` and return the BAM records.
+    fn align(
+        &self,
+        pairs: &[(&str, &[u8], &[u8])],
+        extra: &[&str],
+    ) -> Vec<bismark::io::BismarkRecord> {
+        let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
+        for (name, r1, r2) in pairs {
+            fastq_record(&mut fq1, name, r1);
+            fastq_record(&mut fq2, name, r2);
+        }
+        let reads = TempDir::new().unwrap();
+        let read1 = reads.path().join("reads_1.fq");
+        let read2 = reads.path().join("reads_2.fq");
+        fs::write(&read1, fq1).unwrap();
+        fs::write(&read2, fq2).unwrap();
         let outdir = TempDir::new().unwrap();
         let temp = TempDir::new().unwrap();
-        let mut cmd = Command::cargo_bin("bismark").unwrap();
-        cmd.arg("--illumina_5base")
+        Command::cargo_bin("bismark")
+            .unwrap()
+            .arg("--illumina_5base")
             .arg("--bowtie2")
             .arg("--genome")
-            .arg(genome.path())
+            .arg(self.dir.path())
             .arg("--five_base_index")
-            .arg(&index)
+            .arg(self.dir.path().join("genome"))
             .args(["-p", "2"])
+            .args(extra)
             .arg("-1")
             .arg(&read1)
             .arg("-2")
@@ -201,19 +215,75 @@ fn five_base_pe_bowtie2_max_insert_override_admits_long_fragment() {
             .arg("--output_dir")
             .arg(outdir.path())
             .arg("--temp_dir")
-            .arg(temp.path());
-        if let Some(x) = maxins {
-            cmd.args(["-X", x]);
-        }
-        cmd.assert().success();
+            .arg(temp.path())
+            .assert()
+            .success();
         let mut reader =
             bismark::io::BamReader::from_path(&outdir.path().join("reads_1_bismark_bt2_pe.bam"))
                 .unwrap();
-        let records: Vec<_> = reader.records().map(Result::unwrap).collect();
-        assert_eq!(records.len(), if maxins.is_some() { 2 } else { 0 });
+        reader.records().map(Result::unwrap).collect()
+    }
+}
+
+#[test]
+fn five_base_pe_bowtie2_default_max_insert_is_800() {
+    if !have_bowtie2() {
+        eprintln!("skipping: bowtie2 not on PATH (5-Base insert-size gate)");
+        return;
+    }
+    let g = SmallGenome::new(0x1134_5BA5_E000_0001);
+    let fragment = |start: usize, len: usize| {
+        (
+            g.reference[start..start + 90].to_vec(),
+            revcomp(&g.reference[start + len - 90..start + len]),
+        )
+    };
+    let (long1, long2) = fragment(1000, 1000);
+    let (mid1, mid2) = fragment(3000, 600);
+    for (r1, r2, extra, tlen) in [
+        (&long1, &long2, &[][..], None),
+        (&long1, &long2, &["-X", "1200"][..], Some(1000)),
+        (&mid1, &mid2, &[][..], Some(600)),
+        (&mid1, &mid2, &["-X", "500"][..], None),
+    ] {
+        let records = g.align(&[("pair", r1, r2)], extra);
+        assert_eq!(
+            records.len(),
+            if tlen.is_some() { 2 } else { 0 },
+            "{extra:?}"
+        );
         for rec in records {
             assert_ne!(u16::from(rec.inner().flags()) & 0x2, 0);
-            assert_eq!(rec.inner().template_length().abs(), 800);
+            assert_eq!(Some(rec.inner().template_length().abs()), tlen);
+        }
+    }
+}
+
+#[test]
+fn five_base_pe_bowtie2_drops_dovetailed_pairs() {
+    if !have_bowtie2() {
+        eprintln!("skipping: bowtie2 not on PATH (5-Base dovetail gate)");
+        return;
+    }
+    let g = SmallGenome::new(0x1134_D0E7_A110_0001);
+    let rf = &g.reference;
+    let (c1, c2) = (rf[6000..6100].to_vec(), revcomp(&rf[6100..6200]));
+    // OT: R2 (reverse) starts 20 bp before R1; OB: R1 (reverse) starts 20 bp before R2.
+    let (ot1, ot2) = (rf[2020..2120].to_vec(), revcomp(&rf[2000..2100]));
+    let (ob1, ob2) = (revcomp(&rf[4000..4100]), rf[4020..4120].to_vec());
+    let pairs: [(&str, &[u8], &[u8]); 3] = [
+        ("control", &c1, &c2),
+        ("dovetail_ot", &ot1, &ot2),
+        ("dovetail_ob", &ob1, &ob2),
+    ];
+    for extra in [&[][..], &["--dovetail"][..], &["--no_dovetail"][..]] {
+        let records = g.align(&pairs, extra);
+        assert_eq!(records.len(), 2, "{extra:?}: only the control pair is kept");
+        for (rec, (flag, tlen)) in records.iter().zip([(99, 200), (147, -200)]) {
+            let name = rec.inner().name().map(|n| n.to_vec());
+            assert_eq!(name.as_deref(), Some(&b"control"[..]), "{extra:?}");
+            assert_eq!(u16::from(rec.inner().flags()), flag);
+            assert_eq!(rec.inner().template_length(), tlen);
         }
     }
 }

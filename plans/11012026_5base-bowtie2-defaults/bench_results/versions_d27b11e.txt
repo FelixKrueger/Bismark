@@ -1,0 +1,7 @@
+bismark	bismark (Bismark Rust suite) v3.1.0 (d27b11e — linux/x86_64 — built 2026-11-03T16:11:50Z)	/var/tmp/5base_engines/bin5/bismark
+deduplicate_bismark	/var/tmp/5base_engines/bin5/bismark
+bismark_methylation_extractor	/var/tmp/5base_engines/bin5/bismark
+trim_galore	2.2.0
+bowtie2	/home/fkrueger/micromamba/envs/bismark-test/bin/bowtie2-align-s version 2.5.5
+cutadapt	2.6
+samtools	samtools 1.23.1
