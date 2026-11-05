@@ -5,26 +5,26 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-02
+updated: 2026-11-04
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: b4f901b
+    commit: 94faf8d
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: b4f901b
+    commit: 94faf8d
 ---
 
 # Aligner options
@@ -67,8 +67,8 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--score_min <func>` | `L,0,-0.2`; `G,20,8` with Bowtie 2 `--local` | Minimum alignment score |
 | `--local` | off | Local alignment; Bowtie 2 and HISAT2 only |
 | `--rdg <a,b>` / `--rfg <a,b>` | `5,3` | Read and reference gap penalties |
-| `-I <n>` / `-X <n>` (`--minins` / `--maxins`) | `-X 500` | Insert size; paired-end only, including a positional uBAM or BINSEQ file that holds pairs |
-| `--no_dovetail` | dovetail on | Paired-end Bowtie 2 gets `--dovetail` unless this is set |
+| `-I <n>` / `-X <n>` (`--minins` / `--maxins`) | `-X 500` (5-Base: see below) | Insert size; paired-end only, including a positional uBAM or BINSEQ file that holds pairs |
+| `--no_dovetail` | dovetail on | Paired-end Bowtie 2 gets `--dovetail` unless this is set; 5-Base runs never get it |
 | `-p <n>` / `--threads <n>` | off | Threads per instance, 2 or more |
 | `--multicore <n>` / `--parallel <n>` | 1 | Input chunks run in parallel; 1 or more |
 | `--known-splicesite-infile <file>`, `--no-spliced-alignment` | | HISAT2 only; not both |
@@ -97,7 +97,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 
 All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other.
 
-With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, and `--phred33-quals` / `--phred64-quals`. The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`build_five_base_aligner_options`, `default_linear_score`). They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant`, `--dovetail` or a default `--maxins 500`. HISAT2 never gets `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected.
+With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, and `--phred33-quals` / `--phred64-quals`. The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`build_five_base_aligner_options`, `default_linear_score`). Bowtie 2 gets `--maxins 800` unless `-X` is given; HISAT2 gets no `--maxins` unless `-X` is given. With Bowtie 2, an `-I` larger than that maximum is rejected. They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant` or `--dovetail`, whatever `--dovetail` or `--no_dovetail` say. HISAT2 never gets `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected.
 
 ## Rejected options and combinations
 
@@ -111,6 +111,7 @@ With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above,
 | `--combined_index` with `--multicore` > 1, or with minimap2 / rammap | `reject_combined_index_unsupported` |
 | `--hisat2` with both `--multicore` and `-p` (outside 5-Base; in 5-Base `-p` wins) | `resolve` |
 | `-p 1` | `build_aligner_options` |
+| 5-Base Bowtie 2 with `-I` larger than the maximum insert (`-X`, or 800) | `build_five_base_aligner_options` |
 | `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
 
 `--nucleotide_coverage` and `--old_flag` are accepted, print a note that they are not active, and change nothing (`deferred_flags`). `--most_valid_alignments` and `--dovetail` have no effect.
