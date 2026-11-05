@@ -6,3 +6,4 @@
 ## [2026-11-01] update | bismark @ b4f901b, review fixes, overview.md, troubleshooting.md, usage/align-reads.md, usage/extract-methylation-calls.md, reference/aligner-cli.md, reference/run-reports.md
 ## [2026-11-02] update | bismark @ b4f901b, wording fixes, overview.md, troubleshooting.md, usage/align-reads.md, reference/aligner-cli.md, reference/run-reports.md
 ## [2026-11-04] update | bismark @ 94faf8d, #1147 5-Base Bowtie 2 --maxins 800 default and -I check: reference/aligner-cli.md, usage/align-reads.md, troubleshooting.md, overview.md
+## [2026-11-05] update | bismark @ 4659679, #1148 suite version in the extractor header: reference/methylation-call-files.md

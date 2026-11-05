@@ -5,11 +5,11 @@ description: Columns and file names of the extractor call files, M-bias.txt, the
 tags: [format, call-files, m-bias, bedgraph, coverage, cytosine-report]
 page_id: methylation-call-files
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-05
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: f6a21fd
+    commit: 4659679
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
     commit: f6a21fd
@@ -35,7 +35,7 @@ These are the files that `bismark extract`, `bismark bedgraph` and `bismark cov2
 
 ## Call files
 
-`{context}_{strand}_<name>.txt[.gz]`; other layouts are in [usage/extract-methylation-calls.md](../usage/extract-methylation-calls.md). The first line is `Bismark methylation extractor version v0.25.1` unless `--no_header` was given (`SPLIT_FILE_HEADER` in `extractor/output.rs`).
+`{context}_{strand}_<name>.txt[.gz]`; other layouts are in [usage/extract-methylation-calls.md](../usage/extract-methylation-calls.md). The first line is `Bismark methylation extractor version v<suite version>` (for example `v3.1.0`) unless `--no_header` was given (`SPLIT_FILE_HEADER` in `extractor/output.rs`). Perl Bismark writes `v0.25.1` there.
 
 | Column | Content |
 |---|---|
@@ -111,7 +111,3 @@ Positions with fewer reads than `--cutoff` are left out of the bedGraph and the 
 
 - [usage/make-coverage-and-cytosine-reports.md](../usage/make-coverage-and-cytosine-reports.md): how to make the bedGraph, coverage and cytosine report.
 - [reference/bam-output.md](bam-output.md): the `XM` characters.
-
-## Open questions
-
-- The call-file header line names Perl version `v0.25.1`, not the Rust suite version. This keeps the files byte-identical to Perl output; no code comment says whether that will change.
