@@ -184,7 +184,11 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
         let content = fs::read_to_string(&p).unwrap();
         let first_line = content.lines().next().unwrap_or("");
         assert_eq!(
-            first_line, "Bismark methylation extractor version v0.25.1",
+            first_line,
+            format!(
+                "Bismark methylation extractor version v{}",
+                bismark::meta::SUITE_VERSION
+            ),
             "header drift in {ctx}_OT_se_smoke.txt"
         );
         assert!(
@@ -225,10 +229,13 @@ fn smoke_se_directional_produces_all_12_files_and_report() {
     // Splitting report must exist + parse.
     // Phase C.2 (#864): line 1 of the report is the BAM basename (matches
     // Perl), not the version banner. The version is on line 4 with the
-    // phrasing "Bismark Extractor Version: v0.25.1".
+    // phrasing "Bismark Extractor Version: v<suite>".
     let report = fs::read_to_string(output_dir.join("se_smoke_splitting_report.txt")).unwrap();
     assert!(
-        report.contains("Bismark Extractor Version: v0.25.1"),
+        report.contains(&format!(
+            "Bismark Extractor Version: v{}",
+            bismark::meta::SUITE_VERSION
+        )),
         "expected Perl-format version line; got:\n{report}"
     );
     // For SE: records_processed == call_strings_processed == sequence count.

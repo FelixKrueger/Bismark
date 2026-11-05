@@ -1,9 +1,9 @@
 ---
 title: "Installation"
-description: "Bismark is the Rust bisulfite aligner and methylation suite — a single binary, byte-identical to Perl v0.25.1. Install via conda/bioconda, cargo, a container image, or prebuilt binaries."
+description: "Bismark is the Rust bisulfite aligner and methylation suite — a single binary, byte-identical to Perl v0.25.1 apart from the version string. Install via conda/bioconda, cargo, a container image, or prebuilt binaries."
 ---
 
-Bismark is the Rust bisulfite aligner and methylation suite, executed from the command line. It ships as a **single `bismark` binary**: run `bismark <subcommand>` (e.g. `bismark align`, `bismark extract`) or use the classic tool names (`deduplicate_bismark`, `bismark_methylation_extractor`, …), which are supported aliases of the same binary. Output is **byte-identical** to Perl Bismark `v0.25.1` on the faithful default path. The original Perl scripts are now archived as tagged legacy (see [Legacy: the Perl Bismark](#legacy-the-perl-bismark) below).
+Bismark is the Rust bisulfite aligner and methylation suite, executed from the command line. It ships as a **single `bismark` binary**: run `bismark <subcommand>` (e.g. `bismark align`, `bismark extract`) or use the classic tool names (`deduplicate_bismark`, `bismark_methylation_extractor`, …), which are supported aliases of the same binary. Output is **byte-identical** to Perl Bismark `v0.25.1` on the faithful default path, apart from the version string. The original Perl scripts are now archived as tagged legacy (see [Legacy: the Perl Bismark](#legacy-the-perl-bismark) below).
 
 ## The Bismark Rust suite
 

@@ -13,6 +13,8 @@ mod vcs_info;
 
 /// The suite version, e.g. `2.0.0-beta.1` (the user-facing version).
 pub const SUITE_VERSION: &str = env!("BISMARK_SUITE_VERSION");
+/// The version tag written into report headers, BAM `@PG` and file headers.
+pub const VERSION_TAG: &str = concat!("v", env!("BISMARK_SUITE_VERSION"));
 /// Git short-hash of the build commit (or `unknown` when neither a `.git`
 /// checkout, an embedded `.cargo_vcs_info.json`, nor `$BISMARK_GIT_HASH` was
 /// available at build time — e.g. a bare `cargo install` from a source tree).

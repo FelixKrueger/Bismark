@@ -160,7 +160,11 @@ fn smoke_pe_auto_detect_produces_all_12_files_and_report() {
     let content = fs::read_to_string(&p).unwrap();
     let first_line = content.lines().next().unwrap_or("");
     assert_eq!(
-        first_line, "Bismark methylation extractor version v0.25.1",
+        first_line,
+        format!(
+            "Bismark methylation extractor version v{}",
+            bismark::meta::SUITE_VERSION
+        ),
         "header drift in CpG_OT_pe_smoke.txt"
     );
 

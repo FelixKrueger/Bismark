@@ -4,7 +4,7 @@ description: "Runtime, CPU and memory measurements for the Bismark Rust suite ve
 ---
 
 The [Bismark Rust suite](/Bismark/installation/#the-bismark-rust-suite) reimplements the Bismark
-tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1`, so the two implementations can
+tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1` apart from the version string, so the two implementations can
 be compared on runtime and memory alone.
 
 This page covers a rough default-mode comparison with Perl, how the aligner scales with the number of
@@ -167,8 +167,8 @@ gets a different, equally-valid placement). **The sequential default is the pick
 reach for `--combined_index_single_pass` only for its marginal extra speed at small scale, when the
 non-decision-equivalence is acceptable.
 
-The aligner's `--multicore` / `--parallel` model is also worker-invariant: the output does not depend
-on the number of workers.
+With Bowtie 2, minimap2 and rammap, the aligner's `--multicore` / `--parallel` model is also
+worker-invariant: the output does not depend on the number of workers.
 
 ## Methylation extractor
 

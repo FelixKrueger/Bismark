@@ -32,15 +32,15 @@ use crate::extractor::cli::{OutputMode, ResolvedConfig};
 use crate::extractor::error::BismarkExtractorError;
 use crate::extractor::output_mode::{OutputKey, mode_keys, route_to_key, write_yacht_row};
 
-/// Bismark version string. Hardcoded to lock byte-identity with Perl's
-/// `$version` variable. Update in lockstep with Perl `bismark_methylation_extractor`
-/// at release time.
-pub const BISMARK_VERSION: &str = "v0.25.1";
+/// The version tag in the splitting report.
+pub const BISMARK_VERSION: &str = crate::meta::VERSION_TAG;
 
-/// The literal header line Perl writes as the first line of every split
-/// file (when `!--no_header && !--mbias_only`). Verified at Perl lines
-/// 5159, 5182, 5205, 5228, 5429, 5452, 5475, 5498, etc.
-pub const SPLIT_FILE_HEADER: &str = "Bismark methylation extractor version v0.25.1\n";
+/// The first line of every split file (when `!--no_header && !--mbias_only`).
+pub const SPLIT_FILE_HEADER: &str = concat!(
+    "Bismark methylation extractor version v",
+    env!("BISMARK_SUITE_VERSION"),
+    "\n"
+);
 
 /// A per-split-file writer: plain `File` or a gzp parallel-gzip
 /// `ParCompress<Gzip>`, each fronted by an 8-KiB `BufWriter`.

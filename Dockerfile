@@ -34,7 +34,7 @@ RUN cargo build --release --locked --manifest-path rust/Cargo.toml -p bismark --
 FROM mambaorg/micromamba:1.5.8-bookworm-slim
 
 LABEL org.opencontainers.image.source="https://github.com/FelixKrueger/Bismark"
-LABEL org.opencontainers.image.description="Bismark Rust suite — bisulfite aligner + methylation tools; faithful core byte-identical to Perl v0.25.1"
+LABEL org.opencontainers.image.description="Bismark Rust suite — bisulfite aligner + methylation tools; faithful core byte-identical to Perl v0.25.1 apart from the version string"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
 # The micromamba base ends on `USER mambauser` (an unprivileged user); installing into the

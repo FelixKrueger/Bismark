@@ -99,8 +99,8 @@ use crate::aligner::report::ReportHeader;
 pub use config::{RunConfig, resolve};
 pub use error::{AlignerError, Result};
 
-/// The Bismark version this port reproduces in `@PG`/reports/banners.
-pub const BISMARK_VERSION: &str = "v0.25.1";
+/// The version tag in `@PG VN` and report headers.
+pub const BISMARK_VERSION: &str = crate::meta::VERSION_TAG;
 
 /// `--version` banner (reports the SUITE version via `bismark_meta`; not byte-gated).
 pub fn version_string() -> String {

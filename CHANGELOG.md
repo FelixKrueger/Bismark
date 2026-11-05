@@ -9,10 +9,12 @@
 
 ### All tools
 
+- **Reports, BAM `@PG` lines, extractor file headers and the summary HTML now name the suite version instead of `v0.25.1` ([#1148](https://github.com/FelixKrueger/Bismark/issues/1148)).** Reported by @bounlu.
 - **Short options are accepted in either letter case again, matching Perl Bismark ([#1084](https://github.com/FelixKrueger/Bismark/issues/1084)).** Perl's `Getopt::Long` is case-insensitive by default, so Perl Bismark accepted `-N`/`-L` *and* `-n`/`-l` for the Bowtie 2 seed settings — and its own help documents the uppercase spellings (`-n`/`-l` are described there as retired Bowtie 1's flags). The Rust CLI copied Perl's lowercase declarations verbatim, but clap is case-sensitive, so `bismark -N 1 -L 20` — the form the documentation shows — was rejected. Both spellings now work, so existing command lines and scripts port unchanged. Likewise `-v` is accepted alongside `-V` for `--version` across the suite, as Perl accepted it via single-dash abbreviation. Reported by @alexg9010.
 
 ### bismark (aligner)
 
+- **The docs now say which aligners give the same output for any `--multicore` value, and why a Perl `--multicore` BAM makes deduplication keep different copies ([#1149](https://github.com/FelixKrueger/Bismark/pull/1149)).**
 - **The converted reads are now streamed to the aligner through named pipes instead of written to `--temp_dir` ([#1120](https://github.com/FelixKrueger/Bismark/issues/1120))**, with byte-identical output; `--no_stream_converted` restores the files, and runs that cannot stream (`--hisat2`, `--combined_index`, `--rammap_subprocess`, or a `--temp_dir` without FIFO support) fall back to files and say why.
 - **Illumina 5-Base now honours Bowtie 2/HISAT2 tuning options and requested threads, and its report identifies the unconverted reference ([#1134](https://github.com/FelixKrueger/Bismark/issues/1134)).**
 - **Illumina 5-Base with `--bowtie2` now defaults to a maximum insert of 800 bp instead of Bowtie 2's 500 bp, and rejects an `-I` above it ([#1147](https://github.com/FelixKrueger/Bismark/pull/1147)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bowtie-2-and-hisat2-tuning).**

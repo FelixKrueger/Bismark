@@ -1623,10 +1623,13 @@ mod tests {
         let g = genome_of(&[("chr1", b"ACGTACGT"), ("chr2", b"ACG")]);
         let header = generate_sam_header(&g, "--genome /g reads.fq");
         let text = header_text(&header);
-        let expected = "@HD\tVN:1.0\tSO:unsorted\n\
-                        @SQ\tSN:chr1\tLN:8\n\
-                        @SQ\tSN:chr2\tLN:3\n\
-                        @PG\tID:Bismark\tVN:v0.25.1\tCL:\"bismark --genome /g reads.fq\"\n";
+        let expected = format!(
+            "@HD\tVN:1.0\tSO:unsorted\n\
+             @SQ\tSN:chr1\tLN:8\n\
+             @SQ\tSN:chr2\tLN:3\n\
+             @PG\tID:Bismark\tVN:v{}\tCL:\"bismark --genome /g reads.fq\"\n",
+            crate::meta::SUITE_VERSION
+        );
         assert_eq!(text, expected);
     }
 
