@@ -24,7 +24,7 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       - name: Check out Bismark source-code repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up conda
         uses: conda-incubator/setup-miniconda@v3
@@ -32,7 +32,8 @@ jobs:
           miniforge-version: latest
           channels: conda-forge,bioconda
           channel-priority: strict
-          python-version: 3.9
+          conda-remove-defaults: "true"
+          python-version: "3.12"
 
       - name: Install conda dependencies
         shell: bash -l {0}
