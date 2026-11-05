@@ -45,9 +45,9 @@ All twelve Bismark tools are reimplemented in Rust as a single `bismark` crate â
 with the shared BAM/SAM/CRAM I/O in its `bismark::io` module â€” and validated to be byte-identical to
 Perl `v0.25.1`. The aligner faithfully wraps the **same** external
 Bowtie 2 / HISAT2 / minimap2 binaries, so read mapping is unchanged; the Rust work is the per-read
-in-silico bisulfite conversion and methylation-call tagging that surrounds the mapper. Its
-`--multicore` parallelism is worker-invariant, meaning the output does not depend on the number of
-workers (see below).
+in-silico bisulfite conversion and methylation-call tagging that surrounds the mapper. With Bowtie 2,
+minimap2 and rammap, its `--multicore` parallelism is worker-invariant, meaning the output does not
+depend on the number of workers (see below); with HISAT2 the output depends on the `--multicore` value.
 
 ## What the rewrite additionally enables
 
@@ -84,9 +84,11 @@ end of this section.
    and coverage2cytosine in memory, in the same process, instead of launching separate Perl
    subprocesses and re-reading intermediate files. This is part of why the post-alignment stage is
    faster; see the [extractor benchmarks](/Bismark/rust/benchmarks/#methylation-extractor).
-4. **Worker-invariant `--multicore`.** The output is independent of the worker count: the same input
-   produces the same bytes whether it is run on one worker or many. Perl's fork-and-modulo scheme does
-   not have this property.
+4. **Worker-invariant `--multicore`.** With Bowtie 2, minimap2 and rammap, the output is independent
+   of the worker count: the same input produces the same bytes whether it is run on one worker or many.
+   Perl's fork-and-modulo scheme does not have this property: with Bowtie 2, a Perl `--multicore` BAM
+   holds the same records in another order, so
+   [deduplication keeps different copies](/Bismark/usage/deduplication/#which-duplicate-is-kept).
 5. **Graceful handling of empty input.** A sample where nothing aligned (a header-only BAM) flows
    through deduplication, methylation extraction and coverage2cytosine without crashing: each tool
    emits valid empty or all-zero output and exits cleanly. This is a deliberate, documented divergence

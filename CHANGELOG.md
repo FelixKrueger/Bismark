@@ -14,6 +14,7 @@
 
 ### bismark (aligner)
 
+- **The docs now say which aligners give the same output for any `--multicore` value, and why a Perl `--multicore` BAM makes deduplication keep different copies ([#1149](https://github.com/FelixKrueger/Bismark/pull/1149)).**
 - **The converted reads are now streamed to the aligner through named pipes instead of written to `--temp_dir` ([#1120](https://github.com/FelixKrueger/Bismark/issues/1120))**, with byte-identical output; `--no_stream_converted` restores the files, and runs that cannot stream (`--hisat2`, `--combined_index`, `--rammap_subprocess`, or a `--temp_dir` without FIFO support) fall back to files and say why.
 - **Illumina 5-Base now honours Bowtie 2/HISAT2 tuning options and requested threads, and its report identifies the unconverted reference ([#1134](https://github.com/FelixKrueger/Bismark/issues/1134)).**
 - **Illumina 5-Base with `--bowtie2` now defaults to a maximum insert of 800 bp instead of Bowtie 2's 500 bp, and rejects an `-I` above it ([#1147](https://github.com/FelixKrueger/Bismark/pull/1147)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bowtie-2-and-hisat2-tuning).**
