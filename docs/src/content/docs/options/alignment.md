@@ -101,17 +101,17 @@ accepted, as they were in Perl Bismark.
 
 - `--parallel <int>`
 
-  (May also be `--multicore <int>`). Sets how many parts of the alignment run at once. What that means depends on the aligner:
+  (May also be `--multicore <int>`). Runs the alignment on more cores. How depends on the aligner:
 
-  - **Bowtie 2, and minimap2 single-end:** each read file (or mate pair) is split into `<int>` contiguous chunks that are aligned in parallel. The BAM file, mapping report and unmapped or ambiguous files are merged back in input order, so the output is the same as with `--parallel 1`.
-  - **HISAT2:** one HISAT2 instance runs with `-p <int>`. Its output is the same from run to run for a given value, but changes with the value.
+  - **Bowtie 2, minimap2, and rammap through the external binary** (`--rammap_subprocess`, FastA input, or a build without the in-process backend): each read file (or mate pair) is split into `<int>` contiguous chunks that are aligned at the same time. The BAM file, mapping report and unmapped or ambiguous files are merged back in input order, so the alignments are the same as with `--parallel 1`.
+  - **HISAT2:** the input is not split; each HISAT2 instance gets `-p <int>`. The output is the same from run to run for a given value, but changes with the value.
   - **rammap (in-process) and `--illumina_5base`:** `<int>` sets the number of threads.
   - **`--combined_index`:** values above 1 are rejected.
 
-  Perl Bismark v0.25.1 handed reads to its workers in turn and joined the worker outputs one after another, so its record order depends on `<int>`. This changes which copy [deduplication keeps](/Bismark/usage/deduplication/#which-duplicate-is-kept).
+  Perl Bismark v0.25.1 hands reads to its workers in turn and joins the worker outputs one after another, so its record order depends on `<int>`. This changes which copy [deduplication keeps](/Bismark/usage/deduplication/#which-duplicate-is-kept).
 
-If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
-**WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
+On the chunked path (Bowtie 2, minimap2, external rammap), if system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
+**WARNING:** On the chunked path, Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
 
 - `--local`
 
