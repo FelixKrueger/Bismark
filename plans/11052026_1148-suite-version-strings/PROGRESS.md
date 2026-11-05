@@ -19,4 +19,5 @@
 - 2026-11-05: Rev 1: Q1 (drop the banner's "last modified" clause), Q2 (nf-core extractor md5 snapshots affected) and Q3 (reply when the PR opens) resolved.
 - 2026-11-05: Dual plan review; rev 2 folds in all items. Q4 (keeping `unknown` out of outputs: `build.rs` treats it as unset) resolved.
 - 2026-11-05: Implemented. 13 CI oracles and the summary oracle pass with Perl. Linux: 2341/0. Real-data gate and phase_h_smoke pass on oxy.
-- 2026-11-05: Dual code review and coverage audit; guard fixed to skip `#[cfg(test)]` items wherever they are, smoke-script and docs fixes applied. Next: commit, PR into `dev`, #1148 reply.
+- 2026-11-05: Dual code review and coverage audit; guard fixed to skip `#[cfg(test)]` items wherever they are, smoke-script and docs fixes applied. 
+- 2026-11-05: Committed `7e49547`, PR [#1151](https://github.com/FelixKrueger/Bismark/pull/1151) into `dev` opened, #1148 replied. Awaiting CI + review.
