@@ -110,10 +110,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// SUITE version: `$BISMARK_SUITE_VERSION` (CI/Docker) → `../VERSION` (`rust/VERSION`,
 /// workspace/local) → crate-local vendored `VERSION` (registry `cargo install`) →
 /// `"unknown"`. (The vendored tier was re-added in the Phase-4 packaging rework.)
+/// `$BISMARK_SUITE_VERSION=unknown` (the Dockerfile default) counts as unset.
 fn suite_version() -> String {
     if let Ok(v) = env::var("BISMARK_SUITE_VERSION") {
         let v = v.trim();
-        if !v.is_empty() {
+        if !v.is_empty() && v != "unknown" {
             return v.to_string();
         }
     }

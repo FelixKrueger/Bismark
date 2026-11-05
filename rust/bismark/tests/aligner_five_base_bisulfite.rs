@@ -258,6 +258,13 @@ fn bisulfite_input_reports_a_zero_flip_rate() {
         report.contains("methylation calls\t150"),
         "report:\n{report}"
     );
+    assert!(
+        report.starts_with(&format!(
+            "Bismark 5-Base -> bisulfite-convention re-encode (v{})\n",
+            bismark::meta::SUITE_VERSION
+        )),
+        "report:\n{report}"
+    );
 }
 
 /// `XM` is never modified — that is what keeps the output readable by Bismark's own extractor
@@ -316,6 +323,13 @@ fn appends_a_pg_with_a_distinct_id() {
     assert!(
         ids.contains(&"ID:bismark-five-base-bisulfite"),
         "converter @PG missing; got {ids:?}"
+    );
+    let vn = format!("VN:v{}", bismark::meta::SUITE_VERSION);
+    assert!(
+        hdr.lines()
+            .filter(|l| l.contains("ID:bismark-five-base-bisulfite"))
+            .any(|l| l.split('\t').any(|f| f == vn)),
+        "converter @PG lacks {vn}:\n{hdr}"
     );
     let mut sorted = ids.clone();
     sorted.sort_unstable();

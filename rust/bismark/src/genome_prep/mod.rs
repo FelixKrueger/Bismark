@@ -34,9 +34,8 @@ pub mod pipeline;
 pub use error::GenomePrepError;
 pub use pipeline::run;
 
-/// The Bismark version string this port reproduces in diagnostic banners.
-/// It is *not* injected into any FASTA bytes (FASTA carries no version).
-pub const BISMARK_VERSION: &str = "v0.25.1";
+/// The version tag in the diagnostic banner; FASTA output carries no version.
+pub const BISMARK_VERSION: &str = crate::meta::VERSION_TAG;
 
 /// `--version` banner. Reports the SUITE version (via `bismark_meta`, single
 /// source `rust/VERSION`); not part of the byte-identity gate.

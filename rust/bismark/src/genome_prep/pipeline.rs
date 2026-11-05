@@ -33,7 +33,7 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
     logger.info("Bismark Genome Preparation - Step I: Preparing folders");
     let files = discovery::find_fasta_files(&config.genome_folder)?;
     logger.note(&format!(
-        "Bisulfite Genome Indexer version {BISMARK_VERSION} (last modified: 19 May 2022)"
+        "Bisulfite Genome Indexer version {BISMARK_VERSION}"
     ));
     // Validate an explicit --path_to_aligner EARLY (before conversion), so a
     // bad path fails before any FASTA is written. No `which`-fallback here.

@@ -7,7 +7,7 @@
 > [!IMPORTANT]
 > **Bismark is now the Rust suite, generally available.** The bisulfite aligner and
 > methylation tools have been rewritten from Perl to Rust: **byte-identical** to Perl `v0.25.1` on the
-> faithful default path, faster, and lower-memory — and this is the **supported default**. Get it via
+> faithful default path (apart from the version string), faster, and lower-memory — and this is the **supported default**. Get it via
 > [Installation](#installation) (`mamba install -c bioconda bismark`, cargo, container, or prebuilt binaries) and see the
 > **[Rust suite overview](https://felixkrueger.github.io/Bismark/rust/overview/)**.
 > The original **Perl `v0.25.x`** (now in [`legacy_perl/`](legacy_perl)) is **legacy / maintenance-freeze**

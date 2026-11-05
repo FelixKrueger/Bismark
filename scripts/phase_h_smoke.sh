@@ -297,9 +297,20 @@ fi
 # splitting-report + M-bias are STRICT raw-byte; data files accept sorted-
 # content equivalence (line ordering may differ but content matches).
 SORTED=0    # count of files that matched sorted-content (≈ verdict)
+# The Rust extractor writes the suite version where Perl writes v0.25.1 (#1148);
+# only those two extractor lines are mapped back.
+perl_version() {
+  sed -E -e '1s/^(Bismark methylation extractor version v)[0-9][0-9A-Za-z.+-]*$/\10.25.1/' \
+         -e '1,10s/^(Bismark Extractor Version: v)[0-9][0-9A-Za-z.+-]*$/\10.25.1/'
+}
 for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
   TOTAL=$((TOTAL + 1))
-  if cmp -s "$PERL_OUT/$f" "$RUST_OUT/$f"; then
+  if [[ "$f" == *.gz ]]; then
+    RAW_MATCH=$(cmp -s "$PERL_OUT/$f" "$RUST_OUT/$f" && echo 1 || echo 0)
+  else
+    RAW_MATCH=$(cmp -s "$PERL_OUT/$f" <(perl_version < "$RUST_OUT/$f") && echo 1 || echo 0)
+  fi
+  if [[ "$RAW_MATCH" == 1 ]]; then
     echo "  ✓ $f — byte-identical ($(wc -c < "$PERL_OUT/$f") bytes)" >> "$SUMMARY"
   else
     case "$f" in
@@ -312,11 +323,11 @@ for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
         # human/driver decide in seconds whether it is rounding-only and safe to resume.
         DIFFS=$((DIFFS + 1))
         SIZE_P=$(wc -c < "$PERL_OUT/$f")
-        SIZE_R=$(wc -c < "$RUST_OUT/$f")
-        FIRST_DIFF=$(cmp "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -1 || true)
+        SIZE_R=$(perl_version < "$RUST_OUT/$f" | wc -c)
+        FIRST_DIFF=$(cmp "$PERL_OUT/$f" <(perl_version < "$RUST_OUT/$f") 2>&1 | head -1 || true)
         echo "  ✗ $f DIFFERS — perl=${SIZE_P}B rust=${SIZE_R}B ($FIRST_DIFF)" >> "$SUMMARY"
         echo "    ── triage diff (first 8 differing lines; check for rounding-only deltas) ──" >> "$SUMMARY"
-        diff "$PERL_OUT/$f" "$RUST_OUT/$f" 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
+        diff "$PERL_OUT/$f" <(perl_version < "$RUST_OUT/$f") 2>&1 | head -8 | sed 's/^/      /' >> "$SUMMARY" || true
         ;;
       # ── Phase 4 (sub-gate 2): downstream bedGraph / c2c outputs. ORDER IS the
       # byte-identity contract here (the sorted chromosome emission order is the
@@ -347,7 +358,7 @@ for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
       *.gz)
         # Decompress before sort (sorting raw gzip bytes is meaningless).
         PMD=$(zcat "$PERL_OUT/$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
-        RMD=$(zcat "$RUST_OUT/$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
+        RMD=$(zcat "$RUST_OUT/$f" | perl_version | LC_ALL=C sort | md5sum | cut -d' ' -f1)
         if [[ "$PMD" == "$RMD" ]]; then
           SORTED=$((SORTED + 1))
           echo "  ≈ $f — gzip-sorted-equivalent (raw differs by ordering only; md5 $PMD)" >> "$SUMMARY"
@@ -359,7 +370,7 @@ for f in $(comm -12 <(echo "$PERL_FILES") <(echo "$RUST_FILES")); do
       *)
         # Plain data file: accept sorted-content equivalence.
         PMD=$(LC_ALL=C sort "$PERL_OUT/$f" | md5sum | cut -d' ' -f1)
-        RMD=$(LC_ALL=C sort "$RUST_OUT/$f" | md5sum | cut -d' ' -f1)
+        RMD=$(perl_version < "$RUST_OUT/$f" | LC_ALL=C sort | md5sum | cut -d' ' -f1)
         if [[ "$PMD" == "$RMD" ]]; then
           SORTED=$((SORTED + 1))
           echo "  ≈ $f — sorted-equivalent (raw differs by ordering only; md5 $PMD)" >> "$SUMMARY"

@@ -382,10 +382,10 @@ mod tests {
             assert_eq!(
                 s(&bytes),
                 format!(
-                    "Bismark report for: r_1.fq and r_2.fq (version: {})\n\
+                    "Bismark report for: r_1.fq and r_2.fq (version: v{})\n\
                  Bismark was run with {} against the unconverted genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.6 -p 4 --reorder\n\
                  Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n",
-                    crate::aligner::BISMARK_VERSION,
+                    crate::meta::SUITE_VERSION,
                     aligner.name()
                 )
             );
@@ -404,9 +404,12 @@ mod tests {
         };
         assert_eq!(
             s(&header_bytes(&h)),
-            "Bismark report for: reads.fq (version: v0.25.1)\n\
-             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
-             Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals\n\n"
+            format!(
+                "Bismark report for: reads.fq (version: v{})\n\
+                 Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
+                 Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals\n\n",
+                crate::meta::SUITE_VERSION
+            )
         );
     }
 
@@ -423,9 +426,12 @@ mod tests {
         };
         assert_eq!(
             s(&header_bytes(&h)),
-            "Bismark report for: reads.fq (version: v0.25.1)\n\
-             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
-             Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq\n\n"
+            format!(
+                "Bismark report for: reads.fq (version: v{})\n\
+                 Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\
+                 Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-softclip --omit-sec-seq\n\n",
+                crate::meta::SUITE_VERSION
+            )
         );
     }
 
@@ -580,9 +586,12 @@ C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
         // on the last line.
         assert_eq!(
             s(&header_bytes(&h)),
-            "Bismark report for: r_1.fq and r_2.fq (version: v0.25.1)\n\
-             Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500\n\
-             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n"
+            format!(
+                "Bismark report for: r_1.fq and r_2.fq (version: v{})\n\
+                 Bismark was run with Bowtie 2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail --maxins 500\n\
+                 Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n",
+                crate::meta::SUITE_VERSION
+            )
         );
     }
 
@@ -600,9 +609,12 @@ C methylated in Unknown context (CN or CHN):\t20.0%\n\n\n";
         };
         assert_eq!(
             s(&header_bytes(&h)),
-            "Bismark report for: r_1.fq and r_2.fq (version: v0.25.1)\n\
-             Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq\n\
-             Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n"
+            format!(
+                "Bismark report for: r_1.fq and r_2.fq (version: v{})\n\
+                 Bismark was run with HISAT2 against the bisulfite genome of /abs/genome/ with the specified options: -q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --maxins 500 --no-softclip --omit-sec-seq\n\
+                 Option '--directional' specified (default mode): alignments to complementary strands (CTOT, CTOB) were ignored (i.e. not performed)\n\n",
+                crate::meta::SUITE_VERSION
+            )
         );
     }
 

@@ -4,7 +4,7 @@ description: "Runtime, CPU and memory measurements for the Bismark Rust suite ve
 ---
 
 The [Bismark Rust suite](/Bismark/installation/#the-bismark-rust-suite) reimplements the Bismark
-tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1`, so the two implementations can
+tools in Rust. Its output is byte-identical to Perl Bismark `v0.25.1` apart from the version string, so the two implementations can
 be compared on runtime and memory alone.
 
 This page covers a rough default-mode comparison with Perl, how the aligner scales with the number of

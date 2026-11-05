@@ -27,11 +27,6 @@ use std::path::Path;
 
 pub use error::ReportError;
 
-/// The Bismark version this port belongs to (diagnostic banners only — never
-/// injected into HTML bytes; the report's `{{bismark_version}}` is parsed from
-/// the input alignment report).
-pub const BISMARK_VERSION: &str = "v0.25.1";
-
 /// `--version` banner (dedup/genomeprep precedent). Not part of the gate.
 pub fn version_string() -> String {
     crate::meta::version_line("bismark2report")
