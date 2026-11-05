@@ -167,8 +167,8 @@ gets a different, equally-valid placement). **The sequential default is the pick
 reach for `--combined_index_single_pass` only for its marginal extra speed at small scale, when the
 non-decision-equivalence is acceptable.
 
-The aligner's `--multicore` / `--parallel` model is also worker-invariant: the output does not depend
-on the number of workers.
+With Bowtie 2, minimap2 and rammap, the aligner's `--multicore` / `--parallel` model is also
+worker-invariant: the output does not depend on the number of workers.
 
 ## Methylation extractor
 
