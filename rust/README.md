@@ -21,7 +21,7 @@ During the beta the host binaries carried an `_rs` suffix (`deduplicate_bismark_
 
 - **BAM/SAM/CRAM I/O via pure-Rust `noodles`** — no `rust-htslib` (no htslib C build-time dep), no `samtools` subprocess (no external runtime dep).
 - **One cargo workspace** with a binary crate per Bismark tool plus the shared `bismark-io` library. Library+binary split per crate so pure logic is unit-testable.
-- **Byte-equal output to Perl Bismark v0.25.1** is a CI gate for the tools we have validated.
+- **Byte-equal output to Perl Bismark v0.25.1**, apart from the version string, is a CI gate for the tools we have validated.
 - Edition 2024; MSRV pinned in the workspace manifest.
 
 ## Installing
@@ -178,6 +178,7 @@ The per-tool crate/version columns are the historical/frozen record: since the P
 
 Reverse-chronological log of the main Rust-rewrite shipping events. One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-11-05** — **outputs name the suite version, not `v0.25.1`** ([#1148](https://github.com/FelixKrueger/Bismark/issues/1148); `plans/11052026_1148-suite-version-strings/`) — aligner report, BAM `@PG`, extractor split files and splitting report, summary HTML and the genome-prep banner; the Perl oracles map only that token back.
 - **2026-11-04** — `bismark` aligner **5-Base `--bowtie2` defaults to `--maxins 800`** ([#1147](https://github.com/FelixKrueger/Bismark/pull/1147); `plans/11012026_5base-bowtie2-defaults/`) — reproduces #1146's `-X 800` arm exactly on NA12878 and lifts HG002 mapping from 90.5% to 94.5%; `--dovetail` stays off because its overhangs are not genomic, and an `-I` above the cap is rejected.
 - **2026-10-09** — `bismark` aligner **5-Base PE rejects a CIGAR that does not cover its read** ([#1125](https://github.com/FelixKrueger/Bismark/issues/1125)) — the per-mate genomic-window guard clamps at the contig end, so a CIGAR 2 bp longer than its read could pass it and fail later in the BAM writer; the check now fails loudly first, naming the read (the third safeguard from @ryancey1's [#1126](https://github.com/FelixKrueger/Bismark/pull/1126)).
 - **2026-10-07** — `bismark` aligner **5-Base `--bowtie2`/`--hisat2` keep FASTQ order** ([#1125](https://github.com/FelixKrueger/Bismark/issues/1125); `plans/10072026_1125-five-base-hardening/`) — the 5-Base option string threaded with `-p` but lacked `--reorder`, so pairs came back out of order and were silently dropped or mispaired; adds `--reorder`, a FASTQ↔SAM QNAME lockstep check, record-naming write errors, a real-bowtie2 CI gate, and wires up `--strandID` (`YS:Z:`).

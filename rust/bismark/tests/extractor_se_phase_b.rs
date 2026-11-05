@@ -561,12 +561,16 @@ fn output_file_map_omits_header_when_no_header_true() {
 
 #[test]
 fn output_file_header_matches_perl_format() {
-    // The literal Perl header bytes — byte-identity-critical (Phase H gate).
-    assert_eq!(
-        SPLIT_FILE_HEADER, "Bismark methylation extractor version v0.25.1\n",
-        "header drift would break Phase H byte-identity"
+    // Perl's header bytes, with the suite version.
+    let expected = format!(
+        "Bismark methylation extractor version v{}\n",
+        bismark::meta::SUITE_VERSION
     );
-    assert_eq!(BISMARK_VERSION, "v0.25.1");
+    assert_eq!(SPLIT_FILE_HEADER, expected);
+    assert_eq!(
+        BISMARK_VERSION,
+        format!("v{}", bismark::meta::SUITE_VERSION)
+    );
 
     // And verify it actually reaches disk (lazy-open: after the first write).
     let dir = tempfile::tempdir().unwrap();
@@ -582,7 +586,7 @@ fn output_file_header_matches_perl_format() {
     map.flush_all().unwrap();
     drop(map);
     let content = fs::read_to_string(dir.path().join("CpG_OT_x.txt")).unwrap();
-    assert!(content.starts_with("Bismark methylation extractor version v0.25.1\n"));
+    assert!(content.starts_with(&expected));
 }
 
 #[test]

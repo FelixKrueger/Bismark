@@ -70,8 +70,7 @@ impl Logger {
         let _ = err.write_all(s.as_bytes());
     }
 
-    /// Startup banner — the SUITE version (matches `--version`), NOT the
-    /// v0.25.1-locked `BISMARK_VERSION` used for output-file headers.
+    /// Startup banner — the SUITE version (matches `--version`).
     pub fn banner(&self) {
         self.info(&format!(
             "\n*** Bismark methylation extractor (Rust port) version {} ***\n\n",

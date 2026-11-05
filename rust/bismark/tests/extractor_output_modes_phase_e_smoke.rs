@@ -550,7 +550,10 @@ fn smoke_gzip_comprehensive_emits_3_gz_files() {
         assert!(path.exists(), "missing {}", path.display());
         // Decompresses cleanly:
         let s = read_gz(&path);
-        assert!(s.starts_with("Bismark methylation extractor version v0.25.1"));
+        assert!(s.starts_with(&format!(
+            "Bismark methylation extractor version v{}\n",
+            bismark::meta::SUITE_VERSION
+        )));
     }
 }
 

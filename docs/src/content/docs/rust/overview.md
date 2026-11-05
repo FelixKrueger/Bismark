@@ -31,7 +31,8 @@ without turning it into throughput. (Full timings are on the
 [benchmarks page](/Bismark/rust/benchmarks/#profiling-the-perl-pipeline).)
 
 The goals of the rewrite follow from this profile: faster and lower-memory post-alignment processing,
-on a maintainable modern codebase, while producing output that is **byte-identical to Perl `v0.25.1`**.
+on a maintainable modern codebase, while producing output that is **byte-identical to Perl `v0.25.1`**. The one difference is the version
+string: reports, BAM `@PG` lines and extractor file headers name the Rust suite version.
 Byte-identity is the correctness contract that lets the Rust suite stand in for the Perl one without
 revalidating an established pipeline. The measured speed-ups for each tool are on the
 [benchmarks page](/Bismark/rust/benchmarks/). The Perl version is in maintenance
@@ -98,6 +99,6 @@ end of this section.
 :::note[Byte-identical versus concordance-gated]
 The combined-index modes and rammap are **opt-in and concordance-gated**: they trade byte-identity for
 speed or memory and are never selected by default. The faithful per-strand alignment path, and every
-other tool in the suite, remain **byte-identical to Perl `v0.25.1`**. That is the path to use when
+other tool in the suite, remain **byte-identical to Perl `v0.25.1`**, apart from the version string. That is the path to use when
 reproducing published results or feeding a strictly validated pipeline.
 :::
