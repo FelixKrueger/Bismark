@@ -9,6 +9,7 @@
 
 ### All tools
 
+- **A container built without `--build-arg BISMARK_SUITE_VERSION` now reports the suite version from `bismark -v` instead of `vunknown` ([#1152](https://github.com/FelixKrueger/Bismark/issues/1152)).**
 - **Reports, BAM `@PG` lines, extractor file headers and the summary HTML now name the suite version instead of `v0.25.1` ([#1148](https://github.com/FelixKrueger/Bismark/issues/1148)).** Reported by @bounlu.
 - **Short options are accepted in either letter case again, matching Perl Bismark ([#1084](https://github.com/FelixKrueger/Bismark/issues/1084)).** Perl's `Getopt::Long` is case-insensitive by default, so Perl Bismark accepted `-N`/`-L` *and* `-n`/`-l` for the Bowtie 2 seed settings — and its own help documents the uppercase spellings (`-n`/`-l` are described there as retired Bowtie 1's flags). The Rust CLI copied Perl's lowercase declarations verbatim, but clap is case-sensitive, so `bismark -N 1 -L 20` — the form the documentation shows — was rejected. Both spellings now work, so existing command lines and scripts port unchanged. Likewise `-v` is accepted alongside `-V` for `--version` across the suite, as Perl accepted it via single-dash abbreviation. Reported by @alexg9010.
 

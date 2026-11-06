@@ -80,21 +80,27 @@ RUN set -eu; cd /usr/local/bin; for b in \
 # methylseq calls the Bismark tools by canonical name and captures the suite
 # version from the `bismark` binary via `bismark -v`/`--version`. The 11 tools
 # above already carry their canonical names; only `bismark` needs special
-# handling, because methylseq scrapes its version banner in a shape the real
-# aligner binary does NOT emit (`Bismark Aligner (Rust port) Version: …`):
+# handling, because methylseq scrapes its version banner in a shape the binary's
+# own `--version` (`bismark (Bismark Rust suite) v<suite> (…)`) does not have:
 #   - `/usr/local/bin/bismark` is the version-probe WRAPPER — its `-v`/`--version`
 #     prints the methylseq-parseable `Bismark Version: v<suite>` banner carrying
-#     the TRUE GA suite version; every other invocation execs the real aligner
+#     the TRUE suite version; every other invocation execs the real binary
 #     (`bismark.bin`). See docker/bismark-canonical-wrapper.sh.
 #   - the other 11 tools ARE the real binaries (methylseq scrapes ONLY `bismark`,
 #     so their `--version` stays the truthful Rust-suite banner).
-ARG BISMARK_SUITE_VERSION=unknown
+# The wrapper's version is read from `bismark.bin --version`, so the two always agree.
 COPY docker/bismark-canonical-wrapper.sh /tmp/bismark-wrapper.sh
 RUN set -eu; \
-    sed "s|__SUITE_VERSION__|${BISMARK_SUITE_VERSION}|" /tmp/bismark-wrapper.sh \
-        > /usr/local/bin/bismark; \
+    banner=$(/usr/local/bin/bismark.bin --version || true); \
+    v=$(printf '%s\n' "$banner" | sed -n 's/^bismark (Bismark Rust suite) v\([^ ]*\) .*/\1/p'); \
+    printf '%s\n' "$v" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' \
+        || { echo "cannot read a suite version from bismark.bin --version: '$banner'" >&2; exit 1; }; \
+    sed "s|__SUITE_VERSION__|$v|" /tmp/bismark-wrapper.sh > /usr/local/bin/bismark; \
     chmod +x /usr/local/bin/bismark; \
-    rm /tmp/bismark-wrapper.sh
+    rm /tmp/bismark-wrapper.sh; \
+    got=$(/usr/local/bin/bismark -v | head -n1); \
+    [ "$got" = "Bismark Version: v$v" ] \
+        || { echo "the bismark wrapper does not report v$v: '$got'" >&2; exit 1; }
 
 # License + third-party notices.
 COPY license.txt /usr/local/share/bismark/LICENSE
