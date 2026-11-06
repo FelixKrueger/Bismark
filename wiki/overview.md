@@ -5,29 +5,29 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-04
+updated: 2026-11-06
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 94faf8d
+    commit: da431b7
 ---
 
 # Bismark overview

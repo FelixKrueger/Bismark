@@ -5,38 +5,38 @@ description: Turn a Bismark BAM into per-cytosine call files and an M-bias table
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-06
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/overlap.rs
-    commit: b4f901b
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
-    commit: b4f901b
+    commit: da431b7
 ---
 
 # Extract methylation calls
