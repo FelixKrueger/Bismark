@@ -187,13 +187,13 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `--no_stream_converted`
 
-  Write the in-silico converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir` as files instead of streaming them to the aligner through named pipes.
+  Write the in-silico converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir` as files instead of streaming them to the aligner through named pipes. These are temporary files: each one is deleted once its input file has been aligned, and a run that fails or is killed leaves them in `--temp_dir`.
 
   Bismark converts your reads before aligning them, and by default those converted reads now go straight into the aligner through a FIFO and are never written to disk. They have exactly one consumer — the aligner — so nothing is lost by not keeping them: the methylation call re-reads your *original* FastQ. On a disk-constrained scratch this is the difference between a run that starts and one that does not; the converted set is typically around 5x the size of a gzipped input, and `--gzip` only ever made it smaller, never absent. Wall time is unchanged — conversion no longer has to finish before the aligner starts, but that serial phase was small to begin with.
 
-  Output is byte-identical either way. Use this flag if you want to inspect the converted reads, or to bisect a suspected streaming problem. `--gzip` has no effect on the streamed reads — there is no file to compress.
+  Output is byte-identical either way. Use this flag to bisect a suspected streaming problem, or to look at the converted reads while a run is in progress; Bismark has no option to keep them afterwards. `--gzip` has no effect on the streamed reads — there is no file to compress.
 
-  `--rammap`'s default in-process backend goes one better: it aligns inside the Bismark process, so it receives the converted reads in memory with neither a file nor a pipe in between. `--rammap_subprocess` runs the external binary and keeps files.
+  `--rammap`'s default in-process backend goes one better: it aligns inside the Bismark process, so it receives the converted reads in memory with neither a file nor a pipe in between. `--rammap_subprocess` runs the external binary and uses files.
 
   Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap_subprocess`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
 
