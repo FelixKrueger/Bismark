@@ -5,44 +5,44 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-04
+updated: 2026-11-06
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 94faf8d
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: 94faf8d
+    commit: da431b7
 ---
 
 # Troubleshooting

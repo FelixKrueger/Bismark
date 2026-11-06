@@ -5,20 +5,20 @@ description: The header, FLAG values and the XM, XR, XG, NM, MD, YS, CB and UR t
 tags: [bam, xm-tag, methylation-call-string, format]
 page_id: bam-output
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-06
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/output.rs
-    commit: f6a21fd
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: f6a21fd
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: f6a21fd
+    commit: da431b7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: f6a21fd
+    commit: da431b7
 ---
 
 # Bismark BAM records
