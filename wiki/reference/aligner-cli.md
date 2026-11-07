@@ -5,26 +5,26 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-06
+updated: 2026-11-07
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: da431b7
+    commit: f64426c
 ---
 
 # Aligner options
@@ -84,7 +84,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 |---|---|---|
 | `-o <dir>` (`--output_dir`) | current folder | Created with parents if missing |
 | `--temp_dir <dir>` | current folder | Where the converted-read FIFOs or files, `--multicore` input chunks, and decoded uBAM/BINSEQ input go during the run |
-| `--no_stream_converted` | off | Write the converted reads to `--temp_dir` as files instead of streaming them (`resolve_stream_converted`); see [usage/align-reads.md](../usage/align-reads.md) |
+| `--no_stream_converted` | off | Write the converted reads to `--temp_dir` as files instead of streaming them (`resolve_stream_converted`); each file is deleted once its input has been aligned; see [usage/align-reads.md](../usage/align-reads.md) |
 | `-B <name>` (`--basename`) | from read file | Output basename |
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
 | `--bam` | on | Accepted; BAM is the only output |

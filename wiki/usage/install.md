@@ -5,23 +5,23 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-06
+updated: 2026-11-07
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: da431b7
+    commit: f64426c
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
-    commit: da431b7
+    commit: f64426c
 ---
 
 # Install Bismark
@@ -38,7 +38,7 @@ Bismark is one binary, `bismark`, that holds all 12 tools. The developer says pe
 | crates.io | `cargo install bismark` | One crate, `bismark` (`rust/bismark/Cargo.toml`). The `rammap-inprocess` and `binseq-input` features are off by default; add `--features rammap-inprocess,binseq-input` to get them. |
 | Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2 and minimap2 2.31, and builds with both optional features (`Dockerfile`). |
 | Prebuilt binaries | GitHub release assets | Built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin` (`release.yml`). |
-| nf-core/methylseq | Pipeline modules | The developer gave this channel. The container's `bismark --version` prints the `Bismark Version: v<version>` line that methylseq parses (`docker/bismark-canonical-wrapper.sh`). |
+| nf-core/methylseq | Pipeline modules | The developer gave this channel. The container's `bismark --version` prints the `Bismark Version: v<version>` line that methylseq parses (`docker/bismark-canonical-wrapper.sh`). The image build reads that version from the binary's own `--version`, and fails if it cannot (`Dockerfile`). |
 
 ## Steps
 
