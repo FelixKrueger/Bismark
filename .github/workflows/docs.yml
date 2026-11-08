@@ -2,15 +2,15 @@ name: Docs site (Astro + Starlight)
 
 on:
   push:
-    branches: [master]
+    branches: [dev]
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'
-  # Build-only validation on PRs (deploy is gated to a push, below) so a docs
-  # change is verified to build before it merges — BismarkCI does not build the
-  # Astro site, so dependency bumps under docs/ were previously unchecked.
+  # Build-only validation on PRs (deploy is gated to a dev push, below) so a
+  # docs change is verified to build before it merges — BismarkCI does not build
+  # the Astro site.
   pull_request:
-    branches: [master]
+    branches: [dev, master]
     paths:
       - 'docs/**'
       - '.github/workflows/docs.yml'
@@ -21,8 +21,8 @@ permissions:
   pages: write
   id-token: write
 
-# Per-ref so a PR build never cancels an in-flight deploy (only a push to
-# master and workflow_dispatch actually deploy).
+# Per-ref so a PR build never cancels an in-flight deploy (only a dev push
+# and workflow_dispatch actually deploy).
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
@@ -52,7 +52,7 @@ jobs:
 
   deploy:
     needs: build
-    # Never deploy from a PR — build-only there; publish only on push / dispatch.
+    # Never deploy from a PR — build-only there; publish only on dev push / dispatch.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
