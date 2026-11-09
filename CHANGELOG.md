@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Unreleased
+## Bismark 3.2.0 (released 2026-11-09)
 
 ### Repository layout
 
