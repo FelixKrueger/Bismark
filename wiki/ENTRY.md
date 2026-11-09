@@ -11,6 +11,7 @@ Bismark aligns bisulfite, EM-seq and Illumina 5-Base sequencing reads to a genom
 | align, map reads, paired-end, Bowtie 2, HISAT2, minimap2, threads | `usage/align-reads.md`, `reference/aligner-cli.md` |
 | directional, non-directional, PBAT, library type | `usage/align-reads.md`, `troubleshooting.md` |
 | 5-Base, `--illumina_5base`, duplex, consensus | `usage/align-reads.md`, `reference/aligner-cli.md` |
+| 5-Base low coverage, methylated CpG islands, CpG-dense regions | `troubleshooting.md`, `overview.md` |
 | temp disk space, `--temp_dir`, named pipes, FIFO, `--no_stream_converted` | `usage/align-reads.md`, `troubleshooting.md` |
 | CRLF, Windows line endings, read names stop matching | `troubleshooting.md` |
 | an aligner option, a rejected flag | `reference/aligner-cli.md` |
