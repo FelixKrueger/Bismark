@@ -2,3 +2,6 @@
 
 # macOS Finder metadata
 .DS_Store
+
+# Agent session hand-off notes (session-handoff skill); local only
+SESSION_HANDOFF.md
