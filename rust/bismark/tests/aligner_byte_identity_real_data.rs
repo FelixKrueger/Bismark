@@ -131,9 +131,11 @@ fn find_one(dir: &Path, suffix: &str) -> PathBuf {
 ///   `localtime` in bismark2report; it differs run-to-run and across
 ///   `-p`/`--multicore`, but is not part of the byte-identity contract).
 ///
-/// The remaining report content (the numbers) must be byte-identical.
+/// The remaining report content (the numbers) must be byte-identical. The
+/// line-1 version token is masked: the golden carries the version it was captured at.
 fn normalize_report(s: &str) -> String {
     s.lines()
+        .map(mask_version)
         .filter(|l| {
             !l.contains("/Users/")
                 && !l.contains("/tmp/")
@@ -143,6 +145,17 @@ fn normalize_report(s: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `Bismark report for: … (version: vX)` → `… (version: v_)`; other lines unchanged.
+fn mask_version(line: &str) -> String {
+    if line.starts_with("Bismark report for: ")
+        && let Some(start) = line.rfind("(version: v")
+        && line.ends_with(')')
+    {
+        return format!("{}(version: v_)", &line[..start]);
+    }
+    line.to_string()
 }
 
 fn run_oracle(ds: &AlignerDataset) {
@@ -223,8 +236,13 @@ fn run_oracle(ds: &AlignerDataset) {
     // 2) Report numbers (path lines normalized out).
     let golden =
         normalize_report(&std::fs::read_to_string(&golden_report).expect("read golden report"));
-    let current =
-        normalize_report(&std::fs::read_to_string(&cur_report).expect("read current report"));
+    let current_raw = std::fs::read_to_string(&cur_report).expect("read current report");
+    let line1 = current_raw.lines().next().unwrap_or("");
+    assert!(
+        line1.ends_with(&format!("(version: v{})", bismark::meta::SUITE_VERSION)),
+        "current report line 1 lacks the suite version: {line1}"
+    );
+    let current = normalize_report(&current_raw);
     assert_eq!(current, golden, "report numbers differ (current vs golden)");
     eprintln!("✓ report numbers byte-identical");
 

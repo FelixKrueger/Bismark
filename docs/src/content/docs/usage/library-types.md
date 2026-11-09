@@ -43,8 +43,8 @@ Here is a table summarising general recommendations for different library types 
         </tr>
         <tr>
             <td align="left">PBAT</td>
-            <td align="center">6N / 9N</td>
-            <td align="center">(6N / 9N)</td>
+            <td align="center">8 bp</td>
+            <td align="center">(8 bp)</td>
             <td align="center"><code>--pbat</code></td>
             <td align="center">✅</td>
             <td align="center">⬜️</td>
@@ -54,14 +54,6 @@ Here is a table summarising general recommendations for different library types 
             <td align="center">6N</td>
             <td align="center">(6N)</td>
             <td align="center"><code>--non_directional</code>; single-end mode</td>
-            <td align="center">✅</td>
-            <td align="center">⬜️</td>
-        </tr>
-        <tr>
-            <td align="left">TruSeq (EpiGnome)</td>
-            <td align="center">8 bp</td>
-            <td align="center">(8 bp)</td>
-            <td align="center">⬜️</td>
             <td align="center">✅</td>
             <td align="center">⬜️</td>
         </tr>
@@ -128,16 +120,11 @@ Owing to the fact that the NuGEN Ovation kit attaches a varying number of nucleo
 
 ### PBAT
 
-The amount of bases that need to be trimmed from the 5' end depends on the length of the oligo used for random priming, which - as we know - isn't all that random, and in fact causes [misalignments and methylation biases](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/). While the original PBAT paper used 4N oligoes, these days 6N or 9N seem to be most common. Please also see the section _3' Trimming in general_ below.
+The random priming used to generate PBAT libraries - as we know - isn't all that random, and in fact causes [misalignments and methylation biases](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/). Oligo lengths differ between protocols - the original PBAT paper used 4N oligoes, while 6N or 9N are more common these days - but the bias we see in practice extends past the length of the oligo itself, so the oligo is not a reliable guide to how much needs removing. Trimming 8 bp off both the 5' and the 3' ends is the recommended starting point. Please do have a look at the M-bias plots nevertheless to see whether more bases need removing/ignoring during the methylation extraction process. Please also see the section _3' Trimming in general_ below.
 
 ### Single-cell
 
 The [scBS-Seq method](http://www.nature.com/nmeth/journal/v11/n8/full/nmeth.3035.html) uses a PBAT-type protocol but employs five rounds of sequence capture and elongation to amplify the starting material so all four different bisulfite strands (OT, CTOT, OB, CTOB) are sequenced. Since 6N oligos are used to for the random priming step, 6 bp need to be removed from the 5' ends. Since scBS and PBAT libraries tend to result in [chimaeric fragments](https://sequencing.qcfail.com/articles/pbat-libraries-may-generate-chimaeric-read-pairs/) we tend to treat scBS-Seq as single-end reads always. Please also see the section _3' Trimming in general_ below.
-
-### TruSeq DNA-Methylation Kit (formerly EpiGnome)
-
-([Manufacturer's page](http://www.illumina.com/products/by-type/sequencing-kits/library-prep-kits/truseq-dna-methylation.html))
-This Illumina kit (previously known as EpiGnome kit from epicentre) also employs a post-bisulfite strategy using 6N oligos, but in contrast to the PBAT technique only the standard original top and bottom strands (OT and OB) are sequenced, meaning that Bismark can be run in default (= directional) mode. Even though the random priming is performed with 6N oligoes we often saw that the methylation bias extends to 7 or 8 bp, so trimming 8 bp off the 5' end(s) is recommended initially. Please do have a look at the M-bias plots nevertheless to see of more bases need removing/ignoring during the methylation extraction process. Please also see the section _3' Trimming in general_ below.
 
 ### Zymo Pico Methyl-Seq
 

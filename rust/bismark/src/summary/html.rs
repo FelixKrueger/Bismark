@@ -54,7 +54,7 @@ pub fn build_html(
     doc = doc.replace("{{x_values_methylation}}", &x_values);
     // filenames / categories (`/g`, `:1403`).
     doc = doc.replace("{{filenames_replace}}", &a.categories.join(","));
-    // bismark_version (`/g`, `:1405`) = the hardcoded constant (SPEC O1).
+    // bismark_version (`/g`, `:1405`) = the suite version.
     doc = doc.replace("{{bismark_version}}", BISMARK_VERSION);
 
     // ── Alignment numbers section (`:1411-1455`) ─────────────────────────

@@ -65,7 +65,7 @@ pub struct Cli {
     pub genomic_composition_only: bool,
 
     /// Print version information and exit.
-    #[arg(short = 'V', long = "version")]
+    #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
 }
 

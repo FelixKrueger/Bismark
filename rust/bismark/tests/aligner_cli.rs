@@ -6,7 +6,7 @@
 //! they are hermetic and do not require a real Bowtie 2 install.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -36,6 +36,22 @@ fn make_genome(dir: &Path) {
         fs::write(ga.join(format!("BS_GA.{s}.bt2")), b"x").unwrap();
     }
     fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
+/// A genome dir with a FASTA and no bisulfite index at all — 5-Base aligns unconverted,
+/// so this must be enough for it (#1099).
+fn make_genome_fasta_only(dir: &Path) {
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+}
+
+/// A complete-looking unconverted Bowtie 2 index at `basename`. `--five_base_index` is checked
+/// for presence only (#1100), so empty files satisfy it and a fake aligner needs no more.
+fn make_stub_bowtie2_index(basename: &Path) {
+    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+        let mut p = basename.as_os_str().to_owned();
+        p.push(format!(".{s}.bt2"));
+        fs::write(PathBuf::from(p), b"").unwrap();
+    }
 }
 
 #[cfg(unix)]
@@ -82,6 +98,169 @@ esac
     write_exec(&dir.join("bowtie2"), script);
 }
 
+/// Like [`make_fake_bowtie2_mapped`] but reports `AS:i:6` instead of `AS:i:0`, so the
+/// alignment sits partway between `scMin` and the perfect local score. That is what makes the
+/// local score model observable end-to-end: with `--score_min G,1,1` on this 6 bp read the
+/// three states give three different MAPQs — **24** correct, **22** if the `scMin` form is
+/// wrong, **44** if the match bonus never arrived. (`AS:i:0` — the value the sibling fixture
+/// uses — yields 22 under all of them, which is why it cannot detect anything.)
+///
+/// The AS is decoupled from the 6M CIGAR on purpose: MAPQ reads the `AS:i:` tag, and this
+/// fixture exists to prove the resolved score model reaches the BAM, not to model Bowtie 2's
+/// scoring of a specific CIGAR.
+#[cfg(unix)]
+fn make_fake_bowtie2_local_partial_score(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tAS:i:6\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// Bowtie 2 `--local` MAPQ, read back out of the BAM — the wiring gate for #1079.
+///
+/// Every other test of the local denominator is a unit test on `calc_mapq`. This one drives
+/// `config::resolve` → merge → BAM, so it is the only thing that would catch the resolved
+/// `ScoreModel` losing its Bowtie 2-local match bonus (which would silently turn the fix
+/// into a no-op while every unit test still passed).
+#[cfg(unix)]
+#[test]
+fn bowtie2_local_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path()); // chr1 = ACGTACGT (8 bp)
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_local_partial_score(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap(); // 6 bp read
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--local")
+        // A legal always-positive G function with a NONZERO slope. The slope must be nonzero
+        // for the test to see the `scMin` FORM: with `G,1,0` both `1 + 0·ln(len)` and
+        // `1 + 0·len` are exactly 1.0, so a linear/logarithmic mix-up would be invisible.
+        .arg("--score_min")
+        .arg("G,1,1")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let mapq = u8::from(recs[0].inner().mapping_quality().unwrap());
+    // G,1,1 on a 6 bp read: scMin = 1 + ln(6) = 2.7918, perfect = 2·6 = 12,
+    // diff = max(1, 12 - 2.7918) = 9.2082, bestOver = 6 - 2.7918 = 3.2082,
+    // ratio 0.3484 → the 0.3 rung → 24.
+    //
+    // The two ways the wiring can break give distinct values, so the MAPQ names the fault:
+    //   44 → match bonus lost (diff fell back to abs(scMin) = 2.7918, ratio 1.15, top rung)
+    //   22 → wrong scMin form (linear: scMin = 7, bestOver = -1, every rung fails)
+    assert_eq!(
+        mapq, 24,
+        "Bowtie 2-local MAPQ must use max(1, perfect - scMin) over the logarithmic scMin; \
+         44 means the match bonus never reached the resolved ScoreModel, 22 means the \
+         score-min form did not"
+    );
+}
+
+/// A fake `bowtie2` for the **default** `--local` parameters: a 25 bp read at chr1:1 with
+/// `AS:i:48` (just under the perfect local score of 50), so `perfect - scMin` is small and
+/// positive. Needs a 25 bp read because `G,20,8` gives `scMin > perfect` below ~23 bp —
+/// real Bowtie 2 cannot report such an alignment at all, and the denominators stop differing.
+#[cfg(unix)]
+fn make_fake_bowtie2_local_25bp(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t42\t25M\t*\t0\t0\tACGTACGTACGTACGTACGTACGTA\tFFFFFFFFFFFFFFFFFFFFFFFFF\tAS:i:48\tMD:Z:25" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("bowtie2"), script);
+}
+
+/// V10 cell (a): Bowtie 2 `--local` MAPQ out of a BAM at the **default** `G,20,8`, i.e. the
+/// configuration real users run. The sibling test proves the same wiring under a hand-picked
+/// `--score_min` on a 6 bp read Bowtie 2 could never report; this one uses no `--score_min`
+/// at all, so nothing about the score model is supplied by the test.
+#[cfg(unix)]
+#[test]
+fn bowtie2_local_mapq_at_default_score_min_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    // 27 bp chr1 so the 25 bp alignment plus the +2 context window fits.
+    make_genome_chr1(genome.path(), b"ACGTACGTACGTACGTACGTACGTACG");
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_local_25bp(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(
+        &read,
+        b"@r1\nACGTACGTACGTACGTACGTACGTA\n+\nFFFFFFFFFFFFFFFFFFFFFFFFF\n",
+    )
+    .unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--local")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+
+    let bam = outdir.path().join("reads_bismark_bt2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    let mapq = u8::from(recs[0].inner().mapping_quality().unwrap());
+    // Default G,20,8 at len 25: scMin = 20 + 8·ln(25) = 45.7510066, perfect = 50,
+    // diff = 4.2489934, bestOver = 48 - 45.7510066 = 2.2489934, ratio 0.52930 → rung 36.
+    // Either wiring fault collapses to 22: a lost match bonus makes diff = 45.751 (ratio
+    // 0.049), and a linear scMin makes bestOver negative.
+    assert_eq!(
+        mapq, 36,
+        "Bowtie 2-local MAPQ at the DEFAULT --score_min must use max(1, perfect - scMin) \
+         over the logarithmic scMin; 22 means either the match bonus or the score-min form \
+         did not reach the resolved ScoreModel"
+    );
+}
+
 #[test]
 fn version_flag_prints_uniform_suite_line() {
     // Uniform suite one-liner: `bismark (Bismark Rust suite) v<version> (…)`.
@@ -106,12 +285,29 @@ fn no_args_shows_multicall_help() {
 #[test]
 fn align_no_genome_errors() {
     // The aligner's no-genome error, via the explicit `bismark align` subcommand.
+    // Reads are supplied (so it is NOT a bare no-args run — that shows help, see
+    // `align_no_args_shows_help`) but no genome folder, so resolution errors.
     bin()
-        .arg("align")
+        .args(["align", "-1", "r1.fq", "-2", "r2.fq"])
         .assert()
         .failure()
         .code(1)
         .stderr(predicate::str::contains("No genome folder specified"));
+}
+
+#[test]
+fn align_no_args_shows_help() {
+    // `bismark align` with no further args is never a valid run, so
+    // `cli::help_if_no_args` renders the aligner help (exit 2) instead of the
+    // terse "No genome folder specified" error. This is done manually at the
+    // runtime entry, NOT via clap's `arg_required_else_help`: the empty-argv
+    // unit tests depend on `Cli::parse_from([])` still yielding a defaults `Cli`
+    // (see the `help_if_no_args` docstring in `src/cli.rs`).
+    bin()
+        .arg("align")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Bisulfite read aligner"));
 }
 
 #[test]
@@ -220,14 +416,21 @@ fn happy_path_resolves_and_prints_config() {
                 ))
                 .and(predicate::str::contains("single-end"))
                 .and(predicate::str::contains("Bowtie 2 2.5.5"))
-                // Phase 2: the C->T temp file is produced for the v1 spine.
-                .and(predicate::str::contains("Created C->T converted"))
+                // The C->T conversion streams to the aligner by default.
+                .and(predicate::str::contains("Streaming C->T converted"))
+                .and(predicate::str::contains("no temp file written"))
                 // Phase 5: the pipeline ran end-to-end (fake bowtie2 emits unmapped).
                 .and(predicate::str::contains("Mapping summary"))
                 .and(predicate::str::contains("no alignment found:")),
         );
-    // Phase 6: the C->T temp file is DELETED after the run (Perl 1974–1981).
+    // Phase 6: no C->T temp file remains (Perl 1974–1981). When streaming it is
+    // never written, and the FIFO is removed too.
     assert!(!temp.path().join("reads.fq_C_to_T.fastq").is_file());
+    assert_eq!(
+        std::fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "the streaming path must leave the temp dir empty"
+    );
     // Phase 5: the Bismark BAM was written to --output_dir (header-only here,
     // since the fake aligner reports every read unmapped).
     assert!(outdir.path().join("reads_bismark_bt2.bam").is_file());
@@ -238,6 +441,534 @@ fn happy_path_resolves_and_prints_config() {
             .join("reads_bismark_bt2_SE_report.txt")
             .is_file()
     );
+}
+
+/// An instance that exits cleanly without reading its pipe does not starve its sibling.
+/// The input exceeds the per-instance slack; the stub's output fits in one pipe buffer.
+#[cfg(unix)]
+#[test]
+fn streamed_run_survives_an_instance_that_never_reads_its_input() {
+    const N: usize = 1_500;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // CT index: one unmapped record per read, read from the pipe. GA index: the
+    // same records, printed without opening the pipe at all.
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" ;;
+  *)       awk 'BEGIN {{ for (i = 0; i < {N}; i++) print "r" i "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' ;;
+esac
+"#
+    );
+    write_exec(&bins.path().join("bowtie2"), &script);
+
+    let read = genome.path().join("big.fq");
+    let seq = "ACGT".repeat(150);
+    let qual = "I".repeat(seq.len());
+    let mut fq = String::new();
+    for i in 0..N {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{qual}\n"));
+    }
+    assert!(
+        fq.len() > 3 << 19,
+        "input must exceed the per-instance slack"
+    );
+    fs::write(&read, fq).unwrap();
+
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(format!(
+            "({N} sequences, no temp file written)"
+        )));
+}
+
+/// A wrapper that reads the converted reads before the aligner does fails a
+/// streamed run at any input size, naming the fix, and runs with files.
+#[cfg(unix)]
+#[test]
+fn a_sniffing_wrapper_fails_the_streamed_run_at_any_size() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+head -c 2 "$inp" > /dev/null
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+
+    // Under the pipe buffer, under the per-instance slack, and above it.
+    for n in [50, 3_000, 30_000] {
+        let read = genome.path().join(format!("sniff_{n}.fq"));
+        let seq = "ACGT".repeat(25);
+        let mut fq = String::new();
+        for i in 0..n {
+            fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+        }
+        fs::write(&read, fq).unwrap();
+
+        for stream in [true, false] {
+            let temp = TempDir::new().unwrap();
+            let outdir = TempDir::new().unwrap();
+            let mut cmd = bin();
+            cmd.arg("--genome")
+                .arg(genome.path())
+                .arg("--path_to_bowtie2")
+                .arg(bins.path())
+                .arg("--temp_dir")
+                .arg(temp.path())
+                .arg("--output_dir")
+                .arg(outdir.path())
+                .arg(&read)
+                .timeout(std::time::Duration::from_secs(120));
+            if stream {
+                cmd.assert()
+                    .failure()
+                    .stderr(
+                        predicate::str::is_match(
+                            "stopped reading|returned [0-9]+ of|stop matching",
+                        )
+                        .unwrap(),
+                    )
+                    .stderr(predicate::str::contains("--no_stream_converted"));
+            } else {
+                cmd.arg("--no_stream_converted").assert().success();
+            }
+        }
+    }
+}
+
+/// A paired-end aligner that exits non-zero after a wrapper sniffed its `-2`
+/// pipe fails the streamed run, naming the fix.
+#[cfg(unix)]
+#[test]
+fn an_aligner_failing_after_a_sniff_names_the_fix() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // On a pipe, sniff `-2`; fail unless what is left of `-2` starts with a whole record.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; m2=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-2" ] && m2="$a"
+  prev="$a"
+done
+[ -p "$m2" ] && head -c 2 "$m2" > /dev/null
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$m1"
+awk 'NR == 1 { ok = /^@r[0-9]+\/2\/2$/ } END { exit !ok }' "$m2"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..50 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &fq).unwrap();
+    fs::write(&r2, &fq).unwrap();
+
+    for stream in [true, false] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .timeout(std::time::Duration::from_secs(120));
+        if stream {
+            cmd.assert()
+                .failure()
+                .stderr(predicate::str::contains("exited unsuccessfully"))
+                .stderr(predicate::str::contains("--no_stream_converted"));
+        } else {
+            cmd.arg("--no_stream_converted").assert().success();
+        }
+    }
+}
+
+/// Read names that stop matching the input fail a streamed run with the likely
+/// causes, also when the input outgrows the pipes.
+#[cfg(unix)]
+#[test]
+fn a_streamed_run_whose_read_names_stop_matching_fails() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    write_exec(
+        &bins.path().join("bowtie2"),
+        &renaming_stub("-U", "", false),
+    );
+    let read = genome.path().join("reads.fq");
+    for n in [50, 30_000] {
+        fs::write(&read, fastq(n, "\n")).unwrap();
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bismark(genome.path(), bins.path(), temp.path(), outdir.path())
+            .arg(&read)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "stop matching the input at read 1 of {n}"
+            )))
+            .stderr(predicate::str::contains("dos2unix"));
+    }
+}
+
+/// `n` FastQ records `@r{i}` with line ending `eol`.
+fn fastq(n: usize, eol: &str) -> String {
+    let seq = "ACGT".repeat(25);
+    let qual = "I".repeat(seq.len());
+    (0..n)
+        .map(|i| format!("@r{i}{eol}{seq}{eol}+{eol}{qual}{eol}"))
+        .collect()
+}
+
+/// A Bismark run against `genome` with the fake aligners in `bins`.
+fn bismark(genome: &Path, bins: &Path, temp: &Path, outdir: &Path) -> Command {
+    let mut cmd = bin();
+    cmd.arg("--genome")
+        .arg(genome)
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp)
+        .arg("--output_dir")
+        .arg(outdir)
+        .timeout(std::time::Duration::from_secs(30));
+    cmd
+}
+
+/// A fake Bowtie 2 that returns every read of its `flag` input renamed `r…` to `x…`
+/// (with `mate` tags), then exits, or with `hold` never exits on its own.
+fn renaming_stub(flag: &str, mate: &str, hold: bool) -> String {
+    let end = if hold {
+        "exec sleep 60 2>/dev/null"
+    } else {
+        "exit 0"
+    };
+    let print = if mate.is_empty() {
+        r#"print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI""#.to_string()
+    } else {
+        r#"print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI""#
+            .to_string()
+    };
+    format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "{flag}" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {{ id=$1; sub(/^@r/,"x",id); sub(/\/1\/1$/,"",id); {print} }}' "$inp"
+{end}
+"#
+    )
+}
+
+/// A read input with CRLF line endings stops the run before any aligner runs.
+#[cfg(unix)]
+#[test]
+fn a_crlf_input_is_rejected_at_start_up() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let marker = bins.path().join("aligned");
+    write_exec(
+        &bins.path().join("bowtie2"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in *--version*) echo \"fake-bowtie2 version 2.5.5\"; exit 0;; esac\n\
+             touch '{}'\nexit 1\n",
+            marker.display()
+        ),
+    );
+    let dir = genome.path();
+    let crlf = dir.join("crlf.fq");
+    fs::write(&crlf, fastq(20, "\r\n")).unwrap();
+    let crlf_gz = dir.join("crlf.fq.gz");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut gz, fastq(20, "\r\n").as_bytes()).unwrap();
+    fs::write(&crlf_gz, gz.finish().unwrap()).unwrap();
+    let crlf_fa = dir.join("crlf.fa");
+    fs::write(&crlf_fa, ">r0\r\nACGTACGTAC\r\n>r1\r\nACGTACGTAC\r\n").unwrap();
+    let illumina = dir.join("illumina.fq");
+    fs::write(
+        &illumina,
+        "@M001:1:FC:1:1101:1:1 1:N:0:1\r\nACGTACGTAC\r\n+\r\nIIIIIIIIII\r\n",
+    )
+    .unwrap();
+    let lf = dir.join("lf_1.fq");
+    fs::write(&lf, fastq(20, "\n")).unwrap();
+    let crlf_2 = dir.join("crlf_2.fq");
+    fs::write(&crlf_2, fastq(20, "\r\n")).unwrap();
+
+    let cases: [(&[&str], &Path); 6] = [
+        (&[crlf.to_str().unwrap()], &crlf),
+        (&[crlf_gz.to_str().unwrap()], &crlf_gz),
+        (&["-f", crlf_fa.to_str().unwrap()], &crlf_fa),
+        (&["--icpc", illumina.to_str().unwrap()], &illumina),
+        (
+            &["-1", lf.to_str().unwrap(), "-2", crlf_2.to_str().unwrap()],
+            &crlf_2,
+        ),
+        (&["--multicore", "2", crlf.to_str().unwrap()], &crlf),
+    ];
+    for (args, named) in cases {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bismark(genome.path(), bins.path(), temp.path(), outdir.path())
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "{} has Windows (CRLF) line endings",
+                named.display()
+            )))
+            .stderr(predicate::str::contains("dos2unix"));
+        assert!(!marker.exists(), "an aligner ran for {args:?}");
+    }
+}
+
+/// Read names that stop matching the input fail a files-mode run as soon as the
+/// merge ends, without waiting for the aligner.
+#[cfg(unix)]
+#[test]
+fn a_files_mode_run_whose_read_names_stop_matching_fails() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let se_bins = TempDir::new().unwrap();
+    write_exec(
+        &se_bins.path().join("bowtie2"),
+        &renaming_stub("-U", "", true),
+    );
+    let pe_bins = TempDir::new().unwrap();
+    write_exec(
+        &pe_bins.path().join("bowtie2"),
+        &renaming_stub("-1", "pe", true),
+    );
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, fastq(30_000, "\n")).unwrap();
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, fastq(50, "\n")).unwrap();
+    fs::write(&r2, fastq(50, "\n")).unwrap();
+
+    let multicore_note = format!("(in --multicore chunk 0 of 2 of {})", reads.display());
+    let cases: [(&Path, Vec<&std::ffi::OsStr>, &str); 3] = [
+        (
+            se_bins.path(),
+            vec![reads.as_os_str()],
+            "stop matching the input at read 1;",
+        ),
+        (
+            pe_bins.path(),
+            vec!["-1".as_ref(), r1.as_os_str(), "-2".as_ref(), r2.as_os_str()],
+            "stop matching the input at pair 1;",
+        ),
+        (
+            se_bins.path(),
+            vec!["--multicore".as_ref(), "2".as_ref(), reads.as_os_str()],
+            &multicore_note,
+        ),
+    ];
+    for (bins, args, expected) in cases {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        bismark(genome.path(), bins, temp.path(), outdir.path())
+            .arg("--no_stream_converted")
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected))
+            .stderr(predicate::str::contains("dos2unix"));
+    }
+}
+
+/// An aligner that fails, here a second after closing its output, is reported ahead
+/// of another instance's name mismatch.
+#[cfg(unix)]
+#[test]
+fn an_aligner_error_wins_over_a_name_mismatch() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    let rename = renaming_stub("-U", "", true);
+    let script = rename.replacen(
+        "inp=\"\"",
+        "case \"$*\" in *BS_GA*) exec >&-; sleep 1; exit 1;; esac\ninp=\"\"",
+        1,
+    );
+    write_exec(&bins.path().join("bowtie2"), &script);
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, fastq(50, "\n")).unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bismark(genome.path(), bins.path(), temp.path(), outdir.path())
+        .arg("--no_stream_converted")
+        .arg(&reads)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exited unsuccessfully"))
+        .stderr(predicate::str::contains("stop matching").not());
+}
+
+/// A truncated gzip input reports the input error, streamed or not.
+#[cfg(unix)]
+#[test]
+fn a_truncated_gzip_input_names_the_input_error() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Like Bowtie 2, the stub fails on a cut-off final record.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }
+     NR%4==2 { n = length($0) }
+     NR%4==0 && length($0) != n { bad = 1 }
+     END { exit bad || NR%4 }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..4000 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
+    std::io::Write::write_all(&mut gz, fq.as_bytes()).unwrap();
+    let gz = gz.finish().unwrap();
+    let read = genome.path().join("cut.fq.gz");
+    fs::write(&read, &gz[..gz.len() * 3 / 4]).unwrap();
+
+    for stream in [true, false] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let mut cmd = bin();
+        cmd.arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .timeout(std::time::Duration::from_secs(120));
+        if !stream {
+            cmd.arg("--no_stream_converted");
+        }
+        cmd.assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected end of file"))
+            .stderr(predicate::str::contains("--no_stream_converted").not());
+    }
+}
+
+/// A streamed aligner failure suggests `gzip -t` for gzipped input only.
+#[cfg(unix)]
+#[test]
+fn a_failed_streamed_aligner_suggests_gzip_t_for_gzipped_input_only() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Reads its whole input, so the conversion pass succeeds, then fails.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  prev="$a"
+done
+cat "$inp" > /dev/null
+exit 1
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let seq = "ACGT".repeat(25);
+    let mut fq = String::new();
+    for i in 0..50 {
+        fq.push_str(&format!("@r{i}\n{seq}\n+\n{}\n", "I".repeat(seq.len())));
+    }
+    let plain = genome.path().join("reads.fq");
+    fs::write(&plain, &fq).unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut gz, fq.as_bytes()).unwrap();
+    let gzipped = genome.path().join("reads.fq.gz");
+    fs::write(&gzipped, gz.finish().unwrap()).unwrap();
+
+    for (read, hinted) in [(&gzipped, true), (&plain, false)] {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let check = predicate::str::contains("Check the gzipped input with `gzip -t`.");
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(read)
+            .timeout(std::time::Duration::from_secs(120))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("(streamed run;"));
+        if hinted {
+            assert.stderr(check);
+        } else {
+            assert.stderr(check.not());
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -2082,6 +2813,15 @@ fn hisat2_local_softclip_roundtrip_and_options() {
         has_softclip,
         "the --local soft-clipped CIGAR (2S4M) must round-trip into the BAM"
     );
+    // HISAT2-local MAPQ, read back out of the BAM — the only assertion that would catch the
+    // ladder regressing to Bowtie 2's local one (#1080). 6 bp, AS:i:0, no second-best:
+    // scMin = -0.2·6 = -1.2, diff = 1.2, bestOver = 1.2 == diff → the end-to-end top rung.
+    assert_eq!(
+        u8::from(r.mapping_quality().unwrap()),
+        42,
+        "HISAT2 --local must use the END-TO-END ladder; 44 means the local ladder is still \
+         selected (its ceiling)"
+    );
 }
 
 /// PE fake HISAT2 for the `--local` soft-clip path — a soft-clipped (`2S4M`) proper pair
@@ -2167,6 +2907,17 @@ fn hisat2_local_pe_softclip_roundtrip() {
         assert!(
             has_softclip,
             "each PE --local mate's 2S4M CIGAR must round-trip"
+        );
+        // PE HISAT2-local MAPQ out of the BAM — the ladder gate for the paired path (#1080).
+        // Read 1's `ZS` is masked on the HISAT2 PE path, so sum_second = as1(0) + zs2(-2)
+        // = -2, NOT -4 (same rule the end-to-end masked-path test below pins).
+        // scMin = 2·(-0.2·6) = -2.4, diff = 2.4, bestOver = 2.4 == diff, bestDiff = 2, and
+        // 0.8·diff = 1.92 <= 2 < 2.16 = 0.9·diff → the 0.8 bucket with bestOver == diff → 38.
+        // The local ladder's 0.8 rung is flat at 39, so this cell distinguishes them.
+        assert_eq!(
+            u8::from(r.inner().mapping_quality().unwrap()),
+            38,
+            "HISAT2 --local PE must use the END-TO-END ladder; 39 means the local one"
         );
     }
 }
@@ -2487,6 +3238,211 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// Like [`make_fake_minimap2_mapped`] but with a caller-chosen `AS:i:`, so a BAM-level test
+/// can land on a chosen MAPQ rung (#1081). Maps on the CT index only; UNMAPPED on GA, so the
+/// merge yields a unique best with NO second best.
+#[cfg(unix)]
+fn make_fake_minimap2_with_score(dir: &Path, as_value: i64) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:{as_value}\tAS:i:{as_value}\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }}' "$inp" ;;
+  *)       awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" ;;
+esac
+"#
+    );
+    write_exec(&dir.join("minimap2"), &script);
+}
+
+/// Maps on BOTH instances so the merge records a cross-instance runner-up (#1081 cell d).
+///
+/// 🔑 The score ORDER is load-bearing and counter-intuitive: `alignments` only ever receives
+/// the running maxima in slot order (`merge.rs` `overwrite` is set only when
+/// `alignment_score >= best_as_so_far`), so the **later** slot must score **strictly higher**
+/// or its record is never stored and no second best exists. Directional SE slot order is
+/// `[CT, GA]`, hence CT (slot 0) carries the LOWER score here.
+///
+/// Two more constraints: the two records need different POS (the merge keys on
+/// `chromosome:pos`, and CT/GA de-convert to the same chromosome name), and the slot-1 winner
+/// needs POS >= 3 because index 1 prepends two genomic bases and bails when `pos < 2` — at
+/// POS 3 the extracted window is `chr[0..2] + chr[2..8]` = 8 = read_len + 2.
+#[cfg(unix)]
+fn make_fake_minimap2_two_instance(dir: &Path) {
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
+inp=""; mmi=""
+for a in "$@"; do
+  case "$a" in
+    *.mmi) mmi="$a" ;;
+    *.fastq|*.fq) inp="$a" ;;
+  esac
+done
+printf '@HD\tVN:1.0\n'
+case "$mmi" in
+  *BS_CT*) awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_CT_converted\t1\t60\t6M\t*\t0\t0\tACGTAC\tFFFFFF\tNM:i:0\tms:i:11\tAS:i:11\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$inp" ;;
+  *)       awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t0\tchr1_GA_converted\t3\t60\t6M\t*\t0\t0\tACATAC\tFFFFFF\tNM:i:0\tms:i:12\tAS:i:12\tnn:i:0\ttp:A:P\ts1:i:10\ts2:i:0\tMD:Z:6" }' "$inp" ;;
+esac
+"#;
+    write_exec(&dir.join("minimap2"), script);
+}
+
+/// Run `bismark --minimap2` on the 6 bp fixture read and return the single record's MAPQ.
+#[cfg(unix)]
+fn minimap2_bam_mapq(genome: &Path, bins: &Path) -> u8 {
+    let read = genome.join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome)
+        .arg("--minimap2")
+        .arg("--path_to_minimap2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unique best alignments:   1"));
+    let bam = outdir.path().join("reads_bismark_mm2.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1, "expected exactly one written record");
+    u8::from(recs[0].inner().mapping_quality().unwrap())
+}
+
+/// #1081 wiring gate, minimap2 — MAPQ read back out of the BAM.
+///
+/// Every other test of the minimap-like denominator is a unit test on `calc_mapq`. This one
+/// drives `config::resolve` → merge → BAM, so it is the only thing that would catch the
+/// resolved `ScoreModel` losing its match bonus (silently turning the fix into a no-op while
+/// every unit test still passed) — the failure shape that let #1079 ship.
+///
+/// 6 bp read at the default `--score_min L,0,-0.2`: scMin = -1.2, perfect = 2·6 = 12,
+/// diff = max(1, 12 + 1.2) = 13.2. Before #1081 every one of these cells returned **42**.
+#[cfg(unix)]
+#[test]
+fn minimap2_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path()); // chr1 = ACGTACGT (8 bp)
+
+    // (a) AS 12 = perfect: bestOver 13.2, ratio 1.000 → the 0.8 rung → 44.
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 12);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        44,
+        "a perfect minimap2 alignment must reach the local ladder's top rung"
+    );
+
+    // (b) AS 7: bestOver 8.2, ratio 0.6212 → the 0.6 rung → 41. This cell is deliberately
+    // FORM-SENSITIVE — it is the one that distinguishes all the wiring faults, which is why
+    // it is not a rounder AS (#1079's code review H1: `AS:i:5` returns 28 under BOTH a linear
+    // and a logarithmic scMin, so it cannot see a wrong form).
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 7);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        41,
+        "minimap2 MAPQ must use max(1, 2·len - scMin) over the LINEAR scMin; \
+         36 means the score-min form is logarithmic, 42 means the match bonus never reached \
+         the resolved ScoreModel, 44 means the match bonus is wrong (1.0), \
+         24 means the end-to-end ladder was selected"
+    );
+
+    // (c) AS 2: bestOver 3.2, ratio 0.2424 → below every rung → 22, the FLOOR. The floor is
+    // the consequential end of a MAPQ change (#1080's code review): under the rejected
+    // end-to-end ladder this same read would be **0**, i.e. dropped by `samtools view -q 1`.
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_with_score(bins.path(), 2);
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        22,
+        "the local ladder's floor is 22 (the end-to-end ladder's would be 0)"
+    );
+}
+
+/// #1081 wiring gate, minimap2 — the cross-instance second-best branch, end to end.
+///
+/// This is the only end-to-end coverage of the with-second-best half of #1081, which is the
+/// half that moves in both directions and the half the issue text does not describe.
+///
+/// CT (slot 0) AS 11, GA (slot 1) AS 12 ⇒ best 12, runner-up 11, bestDiff 1. With diff 13.2,
+/// `1 < 0.1·13.2` so the ladder falls to its `bestDiff > 0` leaf and `bestOver 13.2 >= 0.5·13.2`
+/// gives **11**. Before #1081 diff was 1.2, so `1 >= 0.8·1.2` took the 0.8 rung → **27**.
+#[cfg(unix)]
+#[test]
+fn minimap2_mapq_second_best_branch_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_two_instance(bins.path());
+    assert_eq!(
+        minimap2_bam_mapq(genome.path(), bins.path()),
+        11,
+        "a near-tie across strand instances must now score LOW (11); 27 is the pre-#1081 \
+         value, and 44 means the runner-up never reached calc_mapq at all — check the slot \
+         order, the later slot must score strictly higher"
+    );
+}
+
+/// #1081 wiring gate, **rammap** — the same arm must cover `Aligner::Rammap`.
+///
+/// Without this an `Aligner::Minimap2`-only match arm ships entirely green: rammap has no
+/// other MAPQ assertion anywhere in the suite. Same fixture scores as the minimap2 fake
+/// (`AS:i:12` on a 6 bp read), so the expected value is the top rung, 44 (was 42).
+#[cfg(unix)]
+#[test]
+fn rammap_mapq_uses_the_perfect_score_denominator_end_to_end() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--rammap")
+        // The score model is resolved from `Aligner::Rammap`, so either backend proves the
+        // arm — but `--rammap` DEFAULTS to in-process on a `--features rammap-inprocess`
+        // build, which would load the fake 1-byte `.mmi` and fail. Pin the subprocess.
+        .arg("--rammap_subprocess")
+        .arg("--path_to_rammap")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .success();
+    let bam = outdir.path().join("reads_bismark_rammap.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+    assert_eq!(recs.len(), 1);
+    assert_eq!(
+        u8::from(recs[0].inner().mapping_quality().unwrap()),
+        44,
+        "rammap must get the same minimap-like score model as minimap2; 42 means the \
+         match_bonus arm covers Minimap2 but not Rammap"
+    );
+}
+
 /// V8: `--minimap2` SE end-to-end — the output BAM + report carry the `mm2`
 /// naming token (not `bt2`/`hisat2`), the report says "Bismark was run with
 /// minimap2" (lowercase, Perl 1725) and echoes the clean-slate minimap2 option
@@ -2710,6 +3666,67 @@ fn rammap_se_mapped_names_report_and_notice() {
     // supplementary on `sup` must NOT have produced an extra record.
     let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
     assert_eq!(reader.records().count(), 2);
+}
+
+/// #1092: the backend notice names the preset `resolve` actually stored on `RunConfig`, and
+/// the emitted option string agrees with it.
+///
+/// The only observation of `RunConfig::mm2_preset` as populated by `resolve` — the in-process
+/// wiring gate hand-builds its `RunConfig` (it must; `resolve` execs `<aligner> --version`),
+/// so without this a `resolve` that stored a `MapOnt` literal while still calling the resolver
+/// is caught only by `unused variable` under `-D warnings`. Also the only gate on the
+/// `--mm2_pacbio` near-inertness note. `--rammap_subprocess` pins the backend on both builds.
+#[cfg(unix)]
+#[test]
+fn rammap_notice_names_the_resolved_preset() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_rammap_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+
+    let run = |preset_flag: &str| {
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--rammap")
+            .arg("--rammap_subprocess")
+            .arg(preset_flag)
+            .arg("--path_to_rammap")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .assert()
+            .success();
+        let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+        let report =
+            fs::read_to_string(outdir.path().join("reads_bismark_rammap_SE_report.txt")).unwrap();
+        (stderr, report)
+    };
+
+    let (stderr, report) = run("--mm2_short_reads");
+    assert!(
+        stderr.contains("preset -x sr"),
+        "the notice must name the resolved preset, not the default: {stderr}"
+    );
+    assert!(!stderr.contains("preset -x map-ont"));
+    assert!(report.contains("-x sr -K 250K"), "{report}");
+    // The near-inertness note is specific to map-pb.
+    assert!(!stderr.contains("--mm2_pacbio differs from the default"));
+
+    let (stderr, report) = run("--mm2_pacbio");
+    assert!(stderr.contains("preset -x map-pb"), "{stderr}");
+    assert!(
+        stderr.contains("--mm2_pacbio differs from the default"),
+        "map-pb must carry the never-silent near-inertness note: {stderr}"
+    );
+    assert!(report.contains("-x map-pb -K 250K"), "{report}");
 }
 
 /// Phase 3 (T3): paired-end `--rammap` is rejected loudly (SE-only, minimap-like) —
@@ -5696,7 +6713,7 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
 #[test]
 fn five_base_pe_end_to_end_inverts_polarity() {
     let genome = TempDir::new().unwrap();
-    make_genome_mmi(genome.path()); // genome.fa = chr1 ACGTACGT + BS_*.mmi for discovery
+    make_genome_fasta_only(genome.path()); // #1099: no BS_*.mmi — 5-Base must not need one
     let bins = TempDir::new().unwrap();
     make_fake_minimap2_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
@@ -5789,6 +6806,266 @@ fn five_base_rejects_non_directional() {
         ));
 }
 
+/// #1100: a missing `--five_base_index` is rejected before anything is spawned or written —
+/// no aligner needed, because the check precedes aligner detection.
+#[cfg(unix)]
+#[test]
+fn five_base_index_missing_fails_early() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    // A path that does not exist yet, so "nothing written" also covers "never created".
+    let nested = outdir.path().join("a").join("b");
+
+    let out = bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg(genome.path().join("no_such_idx"))
+        .arg("--output_dir")
+        .arg(&nested)
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("--five_base_index"), "{stderr}");
+    assert!(!stderr.contains("desync"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+
+    // Nothing written, and no output tree created at all.
+    assert!(
+        !nested.exists(),
+        "output dir was created for a rejected run"
+    );
+    let leftovers: Vec<_> = fs::read_dir(outdir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(leftovers.is_empty(), "output dir not empty: {leftovers:?}");
+}
+
+/// #1100/C1: another index file at the basename must NOT suppress the environment lookup — the
+/// aligner falls back on `<basename>.1.<ext>` alone, and gating wider rejected a working setup.
+#[cfg(unix)]
+#[test]
+fn non_first_index_file_does_not_block_the_env_fallback() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    fs::write(here.path().join("puc.2.bt2"), b"").unwrap(); // present, but not `.1`
+    let there = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&there.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env("BOWTIE2_INDEXES", there.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: an index that resolves through `$BOWTIE2_INDEXES` must be accepted. Setting the
+/// variable on the child avoids the shared-process hazard of `set_var` in a test.
+#[cfg(unix)]
+#[test]
+fn five_base_index_resolved_via_env_is_accepted() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idxdir = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idxdir.path().join("puc"));
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    // A BARE basename: only the environment variable can resolve it.
+    let out = bin()
+        .env("BOWTIE2_INDEXES", idxdir.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: the aligner consults `$BOWTIE2_INDEXES` only when NOTHING matches the basename, so a
+/// partial index at the basename blocks the fallback. Only observable with a relative basename,
+/// hence a child cwd rather than a unit test.
+#[cfg(unix)]
+#[test]
+fn partial_index_at_the_basename_blocks_the_env_fallback() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    fs::write(here.path().join("puc.1.bt2"), b"").unwrap(); // 1 of 6 — partial
+    let there = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&there.path().join("puc")); // complete, but must not be reached
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env("BOWTIE2_INDEXES", there.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: a bare basename resolved from the working directory, with no environment variable —
+/// the remaining positive form, and not unit-testable without mutating the process cwd.
+#[cfg(unix)]
+#[test]
+fn five_base_index_resolved_from_cwd_is_accepted() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let here = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&here.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let outdir = TempDir::new().unwrap();
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .current_dir(here.path())
+        .env_remove("BOWTIE2_INDEXES")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg("puc")
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(!stderr.contains("--five_base_index"), "{stderr}");
+}
+
+/// #1100: a missing `--output_dir` is created, with a notice — including nested parents, where
+/// Perl instead died.
+#[cfg(unix)]
+#[test]
+fn output_dir_is_created_with_a_notice() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let parent = TempDir::new().unwrap();
+    let nested = parent.path().join("a").join("b");
+    let temp = TempDir::new().unwrap();
+
+    let out = bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--bowtie2")
+        .arg("--five_base_index")
+        .arg(genome.path().join("normal_idx"))
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(&nested)
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(stderr.contains("Created output directory"), "{stderr}");
+    assert!(nested.is_dir());
+}
+
 /// `--illumina_5base --bowtie2 --five_base_index` PE end-to-end: aligns the RAW
 /// read pairs to a NORMAL (unconverted) bowtie2 index and emits the same
 /// inverted-polarity BAM as the minimap2 path (read `T` at a genomic CpG C →
@@ -5798,7 +7075,8 @@ fn five_base_rejects_non_directional() {
 #[test]
 fn five_base_bowtie2_unconverted_index_end_to_end() {
     let genome = TempDir::new().unwrap();
-    make_genome(genome.path()); // CT/GA .bt2 (for discovery) + genome.fa chr1 ACGTACGT
+    make_genome_fasta_only(genome.path()); // #1099: no CT/GA .bt2 — 5-Base must not need one
+    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
@@ -5831,7 +7109,7 @@ fn five_base_bowtie2_unconverted_index_end_to_end() {
     let report =
         fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
     assert!(report.contains("Bismark was run with Bowtie 2 against"));
-    assert!(report.contains("-q --score-min L,0,-0.6")); // the plain 5-Base bowtie2 opts
+    assert!(report.contains("-q --score-min L,0,-0.6 --maxins 800")); // the plain 5-Base bowtie2 opts
     assert!(!report.contains("--norc")); // NOT the bisulfite strand-restricted options
 
     let bam_path = outdir.path().join("reads_1_bismark_bt2_pe.bam");
@@ -5949,4 +7227,604 @@ fn five_base_umi_len_requires_illumina_5base() {
         .stderr(predicate::str::contains(
             "--five_base_umi_len requires --illumina_5base",
         ));
+}
+
+fn ubam_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/aligner")
+        .join(name)
+}
+
+/// #1135: a positional paired uBAM gets the paired-end options, `-I`/`-X` included.
+#[cfg(unix)]
+#[test]
+fn positional_paired_ubam_accepts_minins_maxins() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-I", "10", "-X", "800"])
+        .arg(ubam_fixture("tg_pe_trimgalore.bam"))
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(
+        outdir
+            .path()
+            .join("tg_pe_trimgalore_1_bismark_bt2_PE_report.txt"),
+    )
+    .unwrap();
+    assert!(
+        report.contains(
+            "-q --score-min L,0,-0.2 --ignore-quals --no-mixed --no-discordant --dovetail \
+             --minins 10 --maxins 800"
+        ),
+        "{report}"
+    );
+}
+
+/// #1135: a positional single-end uBAM rejects `-X`.
+#[cfg(unix)]
+#[test]
+fn positional_single_end_ubam_rejects_maxins() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-X", "800"])
+        .arg(ubam_fixture("tg_se_trimgalore.bam"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "-X/--maxins can only be used for paired-end mapping!",
+        ));
+}
+
+/// #1135: a positional paired uBAM is rejected for minimap2 and rammap like `-1`/`-2` input.
+#[test]
+fn positional_paired_ubam_rejects_minimap_aligners() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+
+    for aligner in ["minimap2", "rammap"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg(format!("--{aligner}"))
+            .arg(ubam_fixture("tg_pe_trimgalore.bam"))
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "paired-end alignment with --{aligner} is not supported"
+            )));
+    }
+}
+
+/// #1135: `-I`/`-X` reach Bowtie 2 for a positional paired BINSEQ input.
+#[cfg(all(unix, feature = "binseq-input"))]
+#[test]
+fn positional_paired_vbq_accepts_minins_maxins() {
+    use bismark::aligner::binseq::SequencingRecordBuilder;
+    use bismark::aligner::binseq::write::{BinseqWriterBuilder, Format};
+
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let inputs = TempDir::new().unwrap();
+    let vbq = inputs.path().join("reads.vbq");
+    let mut w = BinseqWriterBuilder::new(Format::Vbq)
+        .paired(true)
+        .quality(true)
+        .headers(true)
+        .build(fs::File::create(&vbq).unwrap())
+        .unwrap();
+    let rec = SequencingRecordBuilder::default()
+        .s_header(b"r1")
+        .s_seq(b"ACGTAC")
+        .s_qual(b"FFFFFF")
+        .x_header(b"r1")
+        .x_seq(b"ACGTAC")
+        .x_qual(b"FFFFFF")
+        .build()
+        .unwrap();
+    assert!(w.push(rec).unwrap());
+    w.finish().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(["-I", "10", "-X", "800"])
+        .arg(&vbq)
+        .assert()
+        .success();
+
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
+    assert!(report.contains("--minins 10 --maxins 800"), "{report}");
+}
+
+#[cfg(unix)]
+struct FiveBaseOptionsFixture {
+    dir: TempDir,
+    engine: &'static str,
+}
+
+#[cfg(unix)]
+impl FiveBaseOptionsFixture {
+    fn new(engine: &'static str) -> Self {
+        let dir = tempfile::Builder::new()
+            .prefix("5base options ")
+            .tempdir()
+            .unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("genome")).unwrap();
+        fs::create_dir(root.join("bin")).unwrap();
+        make_genome_fasta_only(&root.join("genome"));
+        if engine == "bowtie2" {
+            make_stub_bowtie2_index(&root.join("plain index"));
+        } else {
+            for i in 1..=8 {
+                fs::write(root.join(format!("plain index.{i}.ht2")), b"").unwrap();
+            }
+        }
+        for mate in [1, 2] {
+            fs::write(
+                root.join(format!("reads_{mate}.fq")),
+                b"@r1\nATGTAC\n+\nIIIIII\n",
+            )
+            .unwrap();
+        }
+        let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "VERSION"; exit 0;; esac
+printf '%s\n' "$@" > "$BISMARK_TEST_ARGV"
+printf 'alignment\n' >> "$BISMARK_TEST_CALLS"
+r1=""; r2=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && r1="$a"
+  [ "$prev" = "-2" ] && r2="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
+awk -v clip="$BISMARK_TEST_SOFTCLIP" -v r2="$r2" '
+ function rc(s,  i, o, c) {
+   o = "";
+   for (i = length(s); i > 0; i--) {
+     c = substr(s, i, 1);
+     o = o (c == "A" ? "T" : c == "C" ? "G" : c == "G" ? "C" : c == "T" ? "A" : "N");
+   }
+   return o;
+ }
+ NR%4==1 { id=$1; sub(/^@/,"",id); for (k = 0; k < 4; k++) { getline m[k] < r2 } }
+ NR%4==2 {
+   cigar = clip == "1" ? "1S5M" : "6M";
+   tlen = clip == "1" ? 5 : 6;
+   q = $0; gsub(/./, "5", q);
+   print id "\t99\tchr1\t1\t42\t" cigar "\t=\t1\t" tlen "\t" $0 "\t" q "\tAS:i:0";
+   print id "\t147\tchr1\t1\t42\t" cigar "\t=\t1\t-" tlen "\t" rc(m[1]) "\t" q "\tAS:i:0";
+ }' "$r1"
+"#;
+        let banner = if engine == "bowtie2" {
+            "bowtie2-align-s version 2.5.5"
+        } else {
+            "hisat2-align-s version 2.2.2"
+        };
+        write_exec(
+            &root.join("bin").join(engine),
+            &script.replace("VERSION", banner),
+        );
+        Self { dir, engine }
+    }
+
+    fn command(&self) -> Command {
+        let root = self.dir.path();
+        let mut cmd = bin();
+        cmd.arg("--illumina_5base")
+            .arg(format!("--{}", self.engine))
+            .arg("--genome")
+            .arg(root.join("genome"))
+            .arg("--five_base_index")
+            .arg(root.join("plain index"))
+            .arg(format!("--path_to_{}", self.engine))
+            .arg(root.join("bin"))
+            .arg("--output_dir")
+            .arg(root.join("output"))
+            .arg("--temp_dir")
+            .arg(root.join("temp"))
+            .arg("-1")
+            .arg(root.join("reads_1.fq"))
+            .arg("-2")
+            .arg(root.join("reads_2.fq"))
+            .env("BISMARK_TEST_ARGV", root.join("argv"))
+            .env("BISMARK_TEST_CALLS", root.join("calls"));
+        cmd
+    }
+
+    fn argv(&self) -> Vec<String> {
+        fs::read_to_string(self.dir.path().join("argv"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    fn token(&self) -> &str {
+        if self.engine == "bowtie2" {
+            "bt2"
+        } else {
+            "hisat2"
+        }
+    }
+
+    fn check_report(&self, stderr: &[u8]) {
+        let args = self.argv();
+        let end = args.iter().position(|a| a == "-x").unwrap();
+        let opts = args[..end].join(" ");
+        let report = fs::read_to_string(self.dir.path().join(format!(
+            "output/reads_1_bismark_{}_PE_report.txt",
+            self.token()
+        )))
+        .unwrap();
+        assert!(
+            report.contains("against the unconverted genome of"),
+            "{report}"
+        );
+        assert!(
+            report.contains(&format!("with the specified options: {opts}\n")),
+            "{report}"
+        );
+        assert!(String::from_utf8_lossy(stderr).contains(&format!("aligner_options: {opts}\n")));
+        assert_eq!(
+            fs::read_to_string(self.dir.path().join("calls")).unwrap(),
+            "alignment\n"
+        );
+        for (flag, path) in [
+            ("-x", self.dir.path().join("plain index")),
+            ("-1", self.dir.path().join("reads_1.fq")),
+            ("-2", self.dir.path().join("reads_2.fq")),
+        ] {
+            assert!(
+                args.windows(2)
+                    .any(|w| w[0] == flag && w[1] == path.to_str().unwrap()),
+                "{args:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+fn assert_option(args: &[String], name: &str, value: &str) {
+    assert_eq!(args.iter().filter(|a| *a == name).count(), 1, "{args:?}");
+    assert!(
+        args.windows(2).any(|w| w[0] == name && w[1] == value),
+        "{args:?}"
+    );
+}
+
+#[cfg(unix)]
+type OptionCase<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_default_argv_is_exact() {
+    for (engine, expected) in [
+        (
+            "bowtie2",
+            "-q --score-min L,0,-0.6 --maxins 800 -p 4 --reorder",
+        ),
+        (
+            "hisat2",
+            "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
+        ),
+    ] {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let out = f.command().args(["-p", "4"]).assert().success();
+        let args = f.argv();
+        let end = args.iter().position(|a| a == "-x").unwrap();
+        assert_eq!(args[..end].join(" "), expected, "{engine}");
+        let name = if engine == "bowtie2" {
+            "Bowtie 2"
+        } else {
+            "HISAT2"
+        };
+        let stderr = String::from_utf8_lossy(&out.get_output().stderr);
+        let notice = stderr
+            .lines()
+            .find(|l| l.starts_with("Note: --illumina_5base"))
+            .unwrap_or_else(|| panic!("{engine}: no 5-Base notice in {stderr}"));
+        assert!(
+            notice.contains(&format!("aligned with {name} to the UNCONVERTED genome")),
+            "{notice}"
+        );
+        assert!(!stderr.contains("aligned with minimap2"), "{stderr}");
+        f.check_report(&out.get_output().stderr);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_maxins_default_reaches_argv() {
+    let cases: &[(&str, &[&str], Option<&str>)] = &[
+        ("bowtie2", &[], Some("800")),
+        ("bowtie2", &["--dovetail"], Some("800")),
+        ("bowtie2", &["--no_dovetail"], Some("800")),
+        ("bowtie2", &["-X", "500"], Some("500")),
+        ("bowtie2", &["-X", "1200", "--no_dovetail"], Some("1200")),
+        ("hisat2", &[], None),
+        ("hisat2", &["-X", "500"], Some("500")),
+    ];
+    for (engine, cli, maxins) in cases {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
+        let args = f.argv();
+        let count = |tok: &str| args.iter().filter(|a| *a == tok).count();
+        assert_eq!(count("--dovetail"), 0, "{cli:?}: {args:?}");
+        match maxins {
+            Some(x) => assert_option(&args, "--maxins", x),
+            None => assert_eq!(count("--maxins"), 0, "{args:?}"),
+        }
+        for tok in ["--no-mixed", "--no-discordant", "--local"] {
+            assert_eq!(count(tok), 0, "{args:?}");
+        }
+        f.check_report(&out.get_output().stderr);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_tuning_reaches_each_aligner_and_report() {
+    let cases: &[OptionCase] = &[
+        (&["-L", "10"], &[("-L", "10")]),
+        (&["-N", "1"], &[("-N", "1")]),
+        (&["-D", "20"], &[("-D", "20")]),
+        (&["--score_min", "L,0,-0.2"], &[("--score-min", "L,0,-0.2")]),
+        (&["-I", "10"], &[("--minins", "10")]),
+        (&["-X", "1000"], &[("--maxins", "1000")]),
+        (
+            &["-I", "10", "-X", "1000"],
+            &[("--minins", "10"), ("--maxins", "1000")],
+        ),
+        (
+            &[
+                "-L",
+                "10",
+                "-N",
+                "1",
+                "-D",
+                "20",
+                "-R",
+                "4",
+                "--rdg",
+                "6,2",
+                "--rfg",
+                "7,3",
+                "--score_min",
+                "L,0,-0.2",
+                "-I",
+                "10",
+                "-X",
+                "1000",
+                "--quiet",
+                "--phred33-quals",
+            ],
+            &[
+                ("-L", "10"),
+                ("-N", "1"),
+                ("-D", "20"),
+                ("-R", "4"),
+                ("--rdg", "6,2"),
+                ("--rfg", "7,3"),
+                ("--score-min", "L,0,-0.2"),
+                ("--minins", "10"),
+                ("--maxins", "1000"),
+            ],
+        ),
+    ];
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, expected) in cases {
+            let f = FiveBaseOptionsFixture::new(engine);
+            let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
+            let args = f.argv();
+            for (flag, value) in *expected {
+                assert_option(&args, flag, value);
+            }
+            assert!(!args.iter().any(|a| a == "--dovetail"), "{args:?}");
+            if cli.contains(&"--quiet") {
+                assert_eq!(args.iter().filter(|a| *a == "--quiet").count(), 1);
+            }
+            if cli.contains(&"--phred33-quals") {
+                assert_eq!(args.iter().filter(|a| *a == "--phred33").count(), 1);
+            }
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_threads_survive_cli_resolution() {
+    let cases: &[(&[&str], Option<&str>)] = &[
+        (&[], None),
+        (&["--multicore", "1"], None),
+        (&["--multicore", "4"], Some("4")),
+        (&["-p", "8"], Some("8")),
+        (&["--multicore", "4", "-p", "8"], Some("8")),
+    ];
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, expected) in cases {
+            let f = FiveBaseOptionsFixture::new(engine);
+            let out = f.command().args(*cli).assert().success();
+            let args = f.argv();
+            assert_eq!(args.iter().filter(|a| *a == "--reorder").count(), 1);
+            assert_eq!(args.iter().filter(|a| *a == "-p").count(), 1);
+            let cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(2)
+                .to_string();
+            assert_option(&args, "-p", expected.unwrap_or(cpus.as_str()));
+            assert!(
+                !String::from_utf8_lossy(&out.get_output().stderr)
+                    .contains("interpreted as a single HISAT2")
+            );
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_local_and_phred64_produce_usable_bam() {
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    for engine in ["bowtie2", "hisat2"] {
+        for score in [
+            None,
+            Some(if engine == "bowtie2" {
+                "G,15,7"
+            } else {
+                "L,0,-0.3"
+            }),
+        ] {
+            let f = FiveBaseOptionsFixture::new(engine);
+            for mate in [1, 2] {
+                fs::write(
+                    f.dir.path().join(format!("reads_{mate}.fq")),
+                    b"@r1\nATGTAC\n+\nhhhhhh\n",
+                )
+                .unwrap();
+            }
+            let mut cmd = f.command();
+            cmd.args(["--local", "--phred64-quals", "-p", "4"])
+                .env("BISMARK_TEST_SOFTCLIP", "1");
+            if let Some(s) = score {
+                cmd.args(["--score_min", s]);
+            }
+            let out = cmd.assert().success();
+            let args = f.argv();
+            assert_option(
+                &args,
+                "--score-min",
+                score.unwrap_or(if engine == "bowtie2" {
+                    "G,20,8"
+                } else {
+                    "L,0,-0.6"
+                }),
+            );
+            assert_eq!(args.iter().any(|a| a == "--local"), engine == "bowtie2");
+            assert!(!args.iter().any(|a| a == "--no-softclip"));
+            assert_eq!(args.iter().filter(|a| *a == "--phred64").count(), 1);
+            let mut reader = bismark::io::BamReader::from_path(
+                &f.dir
+                    .path()
+                    .join(format!("output/reads_1_bismark_{}_pe.bam", f.token())),
+            )
+            .unwrap();
+            let records: Vec<_> = reader.records().map(Result::unwrap).collect();
+            assert_eq!(records.len(), 2);
+            for rec in records {
+                assert_eq!(rec.inner().quality_scores().as_ref(), &[40u8; 6]);
+                let ops: Vec<_> = rec
+                    .inner()
+                    .cigar()
+                    .as_ref()
+                    .iter()
+                    .map(|op| (op.kind(), op.len()))
+                    .collect();
+                assert_eq!(ops, vec![(Kind::SoftClip, 1), (Kind::Match, 5)]);
+            }
+            f.check_report(&out.get_output().stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_1134_invalid_tuning_fails_before_output_creation() {
+    let invalid: &[(&[&str], &str)] = &[
+        (&["-N", "2"], "can be 0 or 1"),
+        (&["--rdg", "bad"], "--rdg <int1>,<int2>"),
+        (&["--rfg", "bad"], "--rfg <int1>,<int2>"),
+        (
+            &["--phred33-quals", "--phred64-quals"],
+            "one type of quality value",
+        ),
+        (&["--multicore", "0"], "Core usage needs to be set to 1"),
+        (&["-p", "0"], "-p of 2 or more"),
+        (&["-p", "1"], "-p of 2 or more"),
+        (&["--score_min", "G,20,8"], "<L,value,value>"),
+        (
+            &["--known-splicesite-infile", "SPLICE"],
+            "5-Base alignment is unspliced",
+        ),
+    ];
+    let rejects = |engine, cli: &[&str], message: &str| {
+        let f = FiveBaseOptionsFixture::new(engine);
+        let splice = f.dir.path().join("known.splice");
+        fs::write(&splice, "chr1\t2\t5\t+\n").unwrap();
+        let cli: Vec<&str> = cli
+            .iter()
+            .map(|a| {
+                if *a == "SPLICE" {
+                    splice.to_str().unwrap()
+                } else {
+                    a
+                }
+            })
+            .collect();
+        f.command()
+            .args(&cli)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(message));
+        assert!(!f.dir.path().join("output").exists());
+        assert!(!f.dir.path().join("argv").exists());
+    };
+    for engine in ["bowtie2", "hisat2"] {
+        for (cli, message) in invalid {
+            rejects(engine, cli, message);
+        }
+    }
+    rejects(
+        "bowtie2",
+        &["--no-spliced-alignment"],
+        "only be selected in HISAT2 mode",
+    );
+    rejects(
+        "bowtie2",
+        &["--local", "--score_min", "L,0,-0.2"],
+        "<G,value,value>",
+    );
+    rejects(
+        "bowtie2",
+        &["-I", "900"],
+        "-I/--minins (900) is larger than the maximum insert size (800); raise -X/--maxins",
+    );
 }

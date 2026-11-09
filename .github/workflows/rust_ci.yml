@@ -32,14 +32,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # The Illumina 5-Base real-aligner gates shell out to minimap2; without it they
-        # would no-op silently. CI must guarantee it so the gates can't pass vacuously
-        # (the tests themselves panic if minimap2 is missing while $CI is set).
+      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
+        # The Illumina 5-Base real-aligner gates shell out to minimap2, and #1095's
+        # bisulfite-convention gates compare decompressed SAM text via samtools. Without
+        # either, those tests would no-op silently. CI must guarantee both so the gates
+        # can't pass vacuously (the tests themselves panic if the tool is missing while
+        # $CI is set).
         run: |
           sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2
+          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
           minimap2 --version
+          bowtie2 --version | head -1
+          samtools --version | head -1
       - name: cargo build --workspace
         run: cargo build --workspace --all-targets
       - name: cargo test --workspace
@@ -90,14 +94,17 @@ jobs:
         run: cargo build -p bismark --all-targets --features rammap-inprocess
       - name: cargo clippy -p bismark --features rammap-inprocess -D warnings
         run: cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
-      - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
-        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
-        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+        # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
+        # the tool is missing (they must not pass vacuously). This feature job runs
+        # them too, so it needs both like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2
+          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
           minimap2 --version
+          bowtie2 --version | head -1
+          samtools --version | head -1
       - name: cargo test -p bismark --features rammap-inprocess
         run: cargo test -p bismark --features rammap-inprocess
 
@@ -128,14 +135,17 @@ jobs:
         run: cargo build -p bismark --all-targets --features binseq-input
       - name: cargo clippy -p bismark --features binseq-input -D warnings
         run: cargo clippy -p bismark --all-targets --features binseq-input -- -D warnings
-      - name: Install minimap2 (5-Base #787 ground-truth gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates, which panic
-        # when $CI is set and minimap2 is missing (they must not pass vacuously). This
-        # feature job runs them too, so it needs minimap2 like the main `cargo test` job.
+      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
+        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+        # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
+        # the tool is missing (they must not pass vacuously). This feature job runs
+        # them too, so it needs both like the main `cargo test` job.
         run: |
           sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2
+          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
           minimap2 --version
+          bowtie2 --version | head -1
+          samtools --version | head -1
       - name: cargo test -p bismark --features binseq-input
         run: cargo test -p bismark --features binseq-input
 
@@ -191,7 +201,7 @@ jobs:
           command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
           perl -v
           samtools --version >/dev/null
-      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 12 ran)
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 13 ran)
         env:
           BISMARK_REQUIRE_PERL: "1"
         run: |

@@ -6,10 +6,10 @@
 # are vendored third-party report assets, not Bismark source.
 
 # Vendored web assets (plot.ly bundle + embedded HTML report templates).
-*.ly               linguist-vendored
-plotly/**          linguist-vendored
-**/plotly/**       linguist-vendored
-*.html             linguist-vendored
+*.ly                  linguist-vendored
+legacy_perl/plotly/** linguist-vendored
+**/plotly/**          linguist-vendored
+*.html                linguist-vendored
 
 # Documentation (not counted as a language).
 Docs/**            linguist-documentation

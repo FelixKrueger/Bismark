@@ -1,0 +1,23 @@
+	Command being timed: "bismark --illumina_5base --five_base_deconvolution -p 32 --genome /var/tmp/5base_engines/genome -o /var/tmp/5base_engines/runs/NA12878/screen/A.rep1 --temp_dir /var/tmp/5base_engines/runs/NA12878/screen/A.rep1/tmp -1 /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R1_val_1.fq -2 /var/tmp/5base_engines/runs/NA12878/screen/input/sub_R2_val_2.fq"
+	User time (seconds): 56879.85
+	System time (seconds): 555.54
+	Percent of CPU this job got: 393%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 4:03:31
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 13177292
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 5
+	Minor (reclaiming a frame) page faults: 69776133
+	Voluntary context switches: 10216904
+	Involuntary context switches: 5307207
+	Swaps: 0
+	File system inputs: 70467168
+	File system outputs: 51342256
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

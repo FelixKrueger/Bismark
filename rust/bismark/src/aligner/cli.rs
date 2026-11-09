@@ -27,7 +27,8 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 )]
 pub struct Cli {
     // ---- genome + reads ----------------------------------------------------
-    /// Genome folder (prepared with bismark_genome_preparation). May also be
+    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base`
+    /// needs only the FASTA). May also be
     /// given as the first positional argument.
     #[arg(long = "genome", visible_alias = "genome_folder", value_name = "PATH")]
     pub genome: Option<PathBuf>,
@@ -116,6 +117,8 @@ pub struct Cli {
     /// complexity, so they align to the plain genome index (build it once with
     /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
+    /// Checked before the run starts, and — as the aligner itself does — also resolved
+    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
@@ -165,6 +168,26 @@ pub struct Cli {
     /// (not byte-identical); see the 5-Base guide. Requires `--illumina_5base`.
     #[arg(long = "five_base_consensus")]
     pub five_base_consensus: bool,
+    /// `[#1104]` Which consensus multiplicities to emit (DRAGEN
+    /// `--umi-emit-multiplicity` shape). `duplex` (default): families seen from BOTH
+    /// molecule strands, to `<out>.5base_consensus.bam` — today's behaviour. `simplex`:
+    /// only single-strand families, ONE consensus read each on the molecule's own
+    /// strand, to `<out>.5base_simplex.bam`; NO duplex BAM is written. `both`: the two
+    /// files above. In `simplex`/`both` modes every consensus record carries `mx:i`
+    /// (2 = duplex, 1 = simplex; unrelated to the `XM` call string), so the classes
+    /// stay distinguishable even after a `samtools merge`. A simplex consensus has NO
+    /// cross-strand variant check — a genuine C>T reads as methylation; pair with
+    /// `--five_base_deconvolution` for the population-level check. Simplex families
+    /// still hold every PCR copy of their strand, so the collapse deduplicates and
+    /// error-corrects; expect them to dominate at cfDNA depth. Requires
+    /// `--five_base_consensus` or `--five_base_consensus_from_bam`.
+    #[arg(
+        long = "five_base_emit_multiplicity",
+        value_enum,
+        value_name = "MODE",
+        default_value = "duplex"
+    )]
+    pub five_base_emit_multiplicity: EmitMultiplicity,
     /// `[#787 EXPERIMENTAL/PREVIEW]` Take the duplex UMI from the READ NAME instead of
     /// inline read bases. Real Illumina 5-Base data carries a DUAL UMI as the tail
     /// `:`-field of the qname written `A+B` (e.g. `...:1070:ANCGTTG+NGGTGTA`), with the
@@ -181,6 +204,18 @@ pub struct Cli {
     /// align pipeline is skipped.
     #[arg(long = "five_base_consensus_from_bam", value_name = "BAM")]
     pub five_base_consensus_from_bam: Vec<std::path::PathBuf>,
+    /// `[#1095]` Re-encode one or more EXISTING 5-Base BAM(s) into BISULFITE convention and
+    /// write `<stem>.bisulfite.bam` per input — no re-alignment. At each called cytosine the
+    /// base becomes what bisulfite chemistry would have produced (`C`/`G` if `XM` says
+    /// methylated, `T`/`A` if not), so the file is a drop-in for tools that read `SEQ` rather
+    /// than `XM` — notably `wgbs_tools bam2pat` and `UXM_deconv`, which produce systematically
+    /// INVERTED calls on 5-Base data. `XM` itself is left untouched. NEVER use this as the
+    /// primary BAM: its `SEQ` no longer matches the sequencer, and genuine `C>T` variants are
+    /// encoded as methylation, so it must not feed a variant caller. Output is read-order —
+    /// `bam2pat` needs it coordinate-sorted and indexed. Requires `--illumina_5base`; needs no
+    /// `--genome`. When set, the normal align pipeline is skipped.
+    #[arg(long = "five_base_bisulfite_bam", value_name = "BAM")]
+    pub five_base_bisulfite_bam: Vec<std::path::PathBuf>,
     /// Folder containing `samtools`.
     #[arg(long = "samtools_path", value_name = "PATH")]
     pub samtools_path: Option<PathBuf>,
@@ -268,10 +303,13 @@ pub struct Cli {
 
     // ---- Bowtie 2 alignment parameters ------------------------------------
     /// Multiseed mismatches, 0 or 1 (Bowtie 2 -N).
-    #[arg(short = 'n', long = "seedmms", value_name = "int")]
+    // Perl declared `n|seedmms` but Getopt::Long ignores case, so -N (as the help documents,
+    // -n being retired Bowtie 1's flag) worked too. Accept both (#1084).
+    #[arg(short = 'n', short_alias = 'N', long = "seedmms", value_name = "int")]
     pub seedmms: Option<i64>,
     /// Seed length (Bowtie 2 -L).
-    #[arg(short = 'l', long = "seedlen", value_name = "int")]
+    // As for -N/-n above: Perl documented -L, declared `l|seedlen`, accepted both (#1084).
+    #[arg(short = 'l', short_alias = 'L', long = "seedlen", value_name = "int")]
     pub seedlen: Option<u32>,
     /// Consecutive seed-extension fails (Bowtie 2 -D).
     #[arg(short = 'D', value_name = "int")]
@@ -305,8 +343,12 @@ pub struct Cli {
     /// Allow a non-bisulfite mismatch.
     #[arg(long = "non_bs_mm")]
     pub non_bs_mm: bool,
-    /// Threads *per Bowtie 2 instance* (Bowtie 2 -p; ≥ 2).
-    #[arg(short = 'p', value_name = "int")]
+    /// Threads per aligner instance (≥ 2): Bowtie 2 / HISAT2 `-p`, and (#1074)
+    /// minimap2 / rammap `-t`. minimap2 `-t` is thread-invariant, so this stays
+    /// output-neutral; omitted ⇒ the faithful default (`-t 2` for minimap2/rammap).
+    /// `--threads` long alias (matches bowtie2's own; nf-core long-name convention,
+    /// requested on nf-core/modules#12385) — `-p` stays valid.
+    #[arg(short = 'p', long = "threads", value_name = "int")]
     pub bowtie_threads: Option<u32>,
     /// `--dovetail` (paired-end; kept for backwards compatibility, no effect here).
     #[arg(long)]
@@ -327,6 +369,15 @@ pub struct Cli {
     /// Temporary directory (default: output directory's parent / CWD).
     #[arg(long = "temp_dir", value_name = "PATH")]
     pub temp_dir: Option<PathBuf>,
+    /// `[#1120]` Write the converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir`
+    /// as files instead of streaming them to the aligner through named pipes (the
+    /// default, which needs no temp disk space). The files are temporary: each is
+    /// deleted once its input has been aligned. Output is byte-identical either way.
+    /// Runs that cannot stream (`--hisat2`, combined-index modes, `--rammap_subprocess`,
+    /// or a `--temp_dir` that cannot host a FIFO) fall back to files automatically and
+    /// say so.
+    #[arg(long = "no_stream_converted")]
+    pub no_stream_converted: bool,
     /// Output base name (overrides the derived name).
     #[arg(short = 'B', long = "basename", value_name = "name")]
     pub basename: Option<String>,
@@ -416,7 +467,7 @@ pub struct Cli {
     /// minimap2 Nanopore preset (`-x map-ont`; the default; minimap2 mode only).
     #[arg(long = "mm2_nanopore", visible_alias = "nanopore")]
     pub mm2_nanopore: bool,
-    /// Report the strand identity (deferred).
+    /// Paired-end only: add `YS:Z:OT|CTOT|CTOB|OB` naming each pair's alignment strand.
     #[arg(long = "strandID")]
     pub strand_id: bool,
 
@@ -427,8 +478,31 @@ pub struct Cli {
     /// Print version information and exit.
     #[arg(
         short = 'V',
+        short_alias = 'v',
         long = "version",
         help = "Print version information and exit"
     )]
     pub version: bool,
+}
+
+/// `[#1104]` Consensus emit multiplicity (`--five_base_emit_multiplicity`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EmitMultiplicity {
+    /// Duplex families only (the default; today's behaviour).
+    Duplex,
+    /// Simplex (single-strand) families only — no duplex BAM.
+    Simplex,
+    /// Duplex and simplex, each to its own BAM.
+    Both,
+}
+
+impl EmitMultiplicity {
+    /// The CLI spelling, for run notices.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Duplex => "duplex",
+            Self::Simplex => "simplex",
+            Self::Both => "both",
+        }
+    }
 }

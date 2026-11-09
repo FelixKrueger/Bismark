@@ -16,6 +16,7 @@
 //!   glob-fold lesson). *Follow-up:* promote this to a shared crate to remove
 //!   the duplication.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use crate::aligner::config::Aligner;
@@ -74,17 +75,25 @@ pub struct GenomeIndexes {
     /// Absolute path to the genome folder.
     pub genome_dir: PathBuf,
     /// `<genome>/Bisulfite_Genome/CT_conversion/BS_CT` (index basename).
+    ///
+    /// Unvalidated after `discover_genome_fasta_only`: `pipeline()`'s `five_base` short-circuit
+    /// returns `run_pe_five_base` before the chunk spawners and `emit_memory_warning` can stat it.
     pub ct_index_basename: PathBuf,
-    /// `<genome>/Bisulfite_Genome/GA_conversion/BS_GA` (index basename).
+    /// `<genome>/Bisulfite_Genome/GA_conversion/BS_GA` (index basename). Unvalidated after
+    /// `discover_genome_fasta_only`, as for `ct_index_basename`.
     pub ga_index_basename: PathBuf,
-    /// `true` if the large (`.bt2l`) index was found instead of the small one.
+    /// `true` if the large (`.bt2l`) index was found instead of the small one; always
+    /// `false` after `discover_genome_fasta_only`, which probes no index.
     pub large_index: bool,
     /// `<genome>/Bisulfite_Genome/Combined/BS_combined` (index basename) — the v2
     /// combined CT+GA index. `Some` iff a complete set (small `.bt2` OR large
-    /// `.bt2l`) is present; probed best-effort for **every** run (the cost is a
+    /// `.bt2l`) is present; probed best-effort for **every bisulfite** run (the cost is a
     /// directory stat). `--combined_index` runs require it (the `resolve` guard
     /// errors when this is `None`); faithful runs ignore it. Deviates from the
     /// PLAN §7 `PathBuf` (it must be optional — most genomes have no combined index).
+    ///
+    /// `discover_genome_fasta_only` probes nothing and yields `None`; safe because the
+    /// `--illumina_5base` scope guards reject every combined flag before that guard runs.
     pub combined_index_basename: Option<PathBuf>,
     /// Raw FASTA file(s), in byte-significant order (sets `@SQ` order, Phase 5).
     pub fastas: Vec<PathBuf>,
@@ -100,6 +109,9 @@ pub struct GenomeIndexes {
 ///   There is no large-index variant, so `large` is ignored: the small/large
 ///   fallback in [`discover_genome`] is a harmless no-op (both probe the same
 ///   `.mmi`), and `large_index` stays `false`.
+///
+/// Two invariants callers rely on: the `.1` file is **first**, and an empty `stem` yields bare
+/// suffixes (`.1.bt2`) for appending to a whole basename.
 fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
     match aligner {
         Aligner::Bowtie2 => {
@@ -126,15 +138,135 @@ fn first_missing(aligner: Aligner, dir: &Path, stem: &str, large: bool) -> Optio
         .find(|f| !dir.join(f).is_file())
 }
 
-/// Discover the genome folder, validate the bisulfite indexes for `aligner`
-/// (Bowtie 2 `.bt2` or HISAT2 `.ht2`), and inventory the raw FASTA file(s).
-pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeIndexes> {
-    // Absolute path (Perl chdir + getcwd). canonicalize also verifies existence.
+/// The index files expected for `basename`, each suffix appended to the basename itself — what
+/// the aligners do (`<basename> . ".1." . <ext>`). The first entry is always the `.1` file.
+fn index_files_for(aligner: Aligner, basename: &OsStr, large: bool) -> Vec<PathBuf> {
+    index_suffixes(aligner, "", large)
+        .into_iter()
+        .map(|suffix| {
+            let mut path = basename.to_os_string();
+            path.push(suffix);
+            PathBuf::from(path)
+        })
+        .collect()
+}
+
+/// The first expected index file absent at `basename`, or `None` when the set is complete.
+fn first_missing_at(aligner: Aligner, basename: &OsStr, large: bool) -> Option<PathBuf> {
+    index_files_for(aligner, basename, large)
+        .into_iter()
+        .find(|p| !p.is_file())
+}
+
+/// The `<basename>.1.<ext>` file, if one exists in either index size.
+///
+/// This is the file the aligner binaries open before falling back to their index environment
+/// variable (bowtie2's and hisat2's `adjustEbwtBase`), so its presence is what suppresses that
+/// fallback — not the wider prefix glob their wrapper scripts use.
+fn first_index_file_at(aligner: Aligner, basename: &OsStr) -> Option<PathBuf> {
+    [false, true].into_iter().find_map(|large| {
+        index_files_for(aligner, basename, large)
+            .into_iter()
+            .next()
+            .filter(|p| p.is_file())
+    })
+}
+
+/// The name of the index environment variable the aligner itself consults, if it has one.
+fn index_env_name(aligner: Aligner) -> Option<&'static str> {
+    match aligner {
+        Aligner::Bowtie2 => Some("BOWTIE2_INDEXES"),
+        Aligner::Hisat2 => Some("HISAT2_INDEXES"),
+        Aligner::Minimap2 | Aligner::Rammap => None,
+    }
+}
+
+/// The value of that variable, read once so callers can inject it.
+pub(crate) fn index_env_for(aligner: Aligner) -> Option<OsString> {
+    index_env_name(aligner).and_then(std::env::var_os)
+}
+
+/// Check that `basename` names a complete UNCONVERTED index for `aligner` (`--five_base_index`).
+///
+/// Mirrors the aligner: the basename itself in both index sizes, then — only when no
+/// `<basename>.1.<ext>` exists — `<index_env>/<basename>`. `index_env` is injected so the fallback
+/// is testable without mutating a shared process environment.
+///
+/// Only two index sizes are probed because this route never emits `--large-index`
+/// (`five_base_build_argv` passes `-x` and the mates, nothing else).
+pub(crate) fn validate_unconverted_index(
+    aligner: Aligner,
+    basename: &Path,
+    index_env: Option<&OsStr>,
+) -> Result<()> {
+    let base = basename.as_os_str();
+    let mut missing: Vec<PathBuf> = Vec::new();
+
+    for large in [false, true] {
+        match first_missing_at(aligner, base, large) {
+            None => return Ok(()),
+            Some(absent) => missing.push(absent),
+        }
+    }
+
+    let suppressed_by = first_index_file_at(aligner, base);
+    if suppressed_by.is_none()
+        && let Some(dir) = index_env
+    {
+        // Concatenation, not `Path::join`: an absolute basename extends the variable's directory
+        // rather than replacing it, which is what the aligners do.
+        let mut joined = dir.to_os_string();
+        joined.push("/");
+        joined.push(base);
+        for large in [false, true] {
+            match first_missing_at(aligner, &joined, large) {
+                None => return Ok(()),
+                Some(absent) => missing.push(absent),
+            }
+        }
+    }
+
+    let builder = match aligner {
+        Aligner::Bowtie2 => "bowtie2-build",
+        Aligner::Hisat2 => "hisat2-build",
+        Aligner::Minimap2 | Aligner::Rammap => "the aligner's indexer",
+    };
+    let env_note = match (index_env_name(aligner), index_env, &suppressed_by) {
+        (Some(var), None, _) => format!(" (${var} is not set)"),
+        (Some(var), Some(_), Some(found)) => format!(
+            " (${var} was not consulted: {} exists, and the aligner falls back only when it does not)",
+            found.display()
+        ),
+        _ => String::new(),
+    };
+    let missing: Vec<String> = missing.iter().map(|p| p.display().to_string()).collect();
+    Err(AlignerError::Validation(format!(
+        "--five_base_index {} is not a complete {} index{}. Missing: {}. Build a NORMAL \
+         (unconverted) index once with {}.",
+        basename.display(),
+        aligner.name(),
+        env_note,
+        missing.join(", "),
+        builder,
+    )))
+}
+
+/// The genome folder as an absolute path (Perl `chdir`+`getcwd`).
+///
+/// Both failure modes must stay `GenomeFolder`.
+fn absolute_genome_dir(genome_arg: &Path) -> Result<PathBuf> {
     let genome_dir = std::fs::canonicalize(genome_arg)
         .map_err(|_| AlignerError::GenomeFolder(genome_arg.to_path_buf()))?;
     if !genome_dir.is_dir() {
         return Err(AlignerError::GenomeFolder(genome_arg.to_path_buf()));
     }
+    Ok(genome_dir)
+}
+
+/// Discover the genome folder, validate the bisulfite indexes for `aligner`
+/// (Bowtie 2 `.bt2` or HISAT2 `.ht2`), and inventory the raw FASTA file(s).
+pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeIndexes> {
+    let genome_dir = absolute_genome_dir(genome_arg)?;
 
     let ct_dir = genome_dir.join("Bisulfite_Genome").join("CT_conversion");
     let ga_dir = genome_dir.join("Bisulfite_Genome").join("GA_conversion");
@@ -188,6 +320,34 @@ pub fn discover_genome(aligner: Aligner, genome_arg: &Path) -> Result<GenomeInde
         genome_dir,
         large_index,
         combined_index_basename,
+        fastas,
+        fasta_kind,
+    })
+}
+
+/// Genome discovery for `--illumina_5base`: the folder and its raw FASTA only.
+///
+/// 5-Base aligns against the unconverted index given by `--five_base_index`, or with
+/// minimap2 against the FASTA directly, so the bisulfite CT/GA indexes are never opened
+/// and requiring them rejects a valid run (#1099).
+pub(crate) fn discover_genome_fasta_only(genome_arg: &Path) -> Result<GenomeIndexes> {
+    let genome_dir = absolute_genome_dir(genome_arg)?;
+    let ct_index_basename = genome_dir
+        .join("Bisulfite_Genome")
+        .join("CT_conversion")
+        .join("BS_CT");
+    let ga_index_basename = genome_dir
+        .join("Bisulfite_Genome")
+        .join("GA_conversion")
+        .join("BS_GA");
+    let (fastas, fasta_kind) = discover_fastas(&genome_dir)?;
+
+    Ok(GenomeIndexes {
+        genome_dir,
+        ct_index_basename,
+        ga_index_basename,
+        large_index: false,
+        combined_index_basename: None,
         fastas,
         fasta_kind,
     })
@@ -253,6 +413,266 @@ mod tests {
             fs::write(ga.join(format!("BS_GA.{n}.{ext}")), b"x").unwrap();
         }
         fs::write(dir.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+    }
+
+    /// #1099: a genome folder holding only a FASTA is valid for 5-Base and rejected by the
+    /// bisulfite entry point — the two assertions together are the fix.
+    #[test]
+    fn fasta_only_needs_no_bisulfite_index() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("genome.fa"), b">chr1\nACGT\n").unwrap();
+
+        let g = discover_genome_fasta_only(tmp.path()).unwrap();
+        assert_eq!(g.fastas.len(), 1);
+        assert_eq!(g.fasta_kind, FastaKind::Fa);
+        assert!(g.combined_index_basename.is_none());
+        assert!(!g.large_index);
+
+        assert!(matches!(
+            discover_genome(Aligner::Bowtie2, tmp.path()),
+            Err(AlignerError::FaultyIndex { .. })
+        ));
+    }
+
+    /// The shape `five_base_reference_fasta` hands straight to minimap2.
+    #[test]
+    fn fasta_only_accepts_a_gzipped_fasta() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("genome.fa.gz"), b"\x1f\x8b").unwrap();
+        let g = discover_genome_fasta_only(tmp.path()).unwrap();
+        assert_eq!(g.fasta_kind, FastaKind::FaGz);
+    }
+
+    #[test]
+    fn fasta_only_still_requires_a_fasta() {
+        let tmp = TempDir::new().unwrap();
+        assert!(matches!(
+            discover_genome_fasta_only(tmp.path()),
+            Err(AlignerError::NoFasta(_))
+        ));
+    }
+
+    /// Both entry points must report `GenomeFolder`, not `Io`: a plain `?` on `canonicalize`
+    /// in the shared prologue compiles and silently downgrades it.
+    #[test]
+    fn genome_folder_errors_survive_the_shared_prologue() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("no_such_dir");
+        let a_file = tmp.path().join("genome.fa");
+        fs::write(&a_file, b">chr1\nACGT\n").unwrap();
+
+        for probe in [missing.as_path(), a_file.as_path()] {
+            assert!(
+                matches!(
+                    discover_genome_fasta_only(probe),
+                    Err(AlignerError::GenomeFolder(_))
+                ),
+                "discover_genome_fasta_only({probe:?})"
+            );
+            assert!(
+                matches!(
+                    discover_genome(Aligner::Bowtie2, probe),
+                    Err(AlignerError::GenomeFolder(_))
+                ),
+                "discover_genome({probe:?})"
+            );
+        }
+    }
+
+    /// A complete-looking index at `basename` — `validate_unconverted_index` checks presence
+    /// only, so empty files are a faithful fixture.
+    fn stub_index(basename: &Path, aligner: Aligner, large: bool) {
+        for suffix in index_suffixes(aligner, "", large) {
+            let mut p = basename.as_os_str().to_owned();
+            p.push(&suffix);
+            fs::write(PathBuf::from(p), b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn complete_small_index_accepted() {
+        let tmp = TempDir::new().unwrap();
+        let idx = tmp.path().join("puc");
+        stub_index(&idx, Aligner::Bowtie2, false);
+        assert!(validate_unconverted_index(Aligner::Bowtie2, &idx, None).is_ok());
+    }
+
+    /// The large arm: a mammalian bowtie2 index is `.bt2l`, so dropping it would reject one.
+    #[test]
+    fn complete_large_index_accepted() {
+        let tmp = TempDir::new().unwrap();
+        let idx = tmp.path().join("puc");
+        stub_index(&idx, Aligner::Bowtie2, true);
+        assert!(validate_unconverted_index(Aligner::Bowtie2, &idx, None).is_ok());
+    }
+
+    #[test]
+    fn hisat2_arity_and_large_arm() {
+        let tmp = TempDir::new().unwrap();
+        let small = tmp.path().join("s");
+        stub_index(&small, Aligner::Hisat2, false);
+        assert!(validate_unconverted_index(Aligner::Hisat2, &small, None).is_ok());
+
+        let large = tmp.path().join("l");
+        stub_index(&large, Aligner::Hisat2, true);
+        assert!(validate_unconverted_index(Aligner::Hisat2, &large, None).is_ok());
+
+        // Six files is a complete Bowtie 2 set but not a complete HISAT2 one.
+        let six = tmp.path().join("six");
+        stub_index(&six, Aligner::Bowtie2, false);
+        assert!(validate_unconverted_index(Aligner::Hisat2, &six, None).is_err());
+    }
+
+    #[test]
+    fn missing_index_rejected_naming_the_flag() {
+        let tmp = TempDir::new().unwrap();
+        let err = validate_unconverted_index(Aligner::Bowtie2, &tmp.path().join("nope"), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--five_base_index"), "{err}");
+        assert!(err.contains("nope.1.bt2"), "{err}");
+    }
+
+    #[test]
+    fn partial_index_rejected_naming_the_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let idx = tmp.path().join("puc");
+        stub_index(&idx, Aligner::Bowtie2, false);
+        fs::remove_file(tmp.path().join("puc.rev.2.bt2")).unwrap();
+        let err = validate_unconverted_index(Aligner::Bowtie2, &idx, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("puc.rev.2.bt2"), "{err}");
+    }
+
+    /// The aligner retries `$BOWTIE2_INDEXES/<basename>`, so a bare basename resolves there.
+    #[test]
+    fn env_fallback_accepted() {
+        let tmp = TempDir::new().unwrap();
+        stub_index(&tmp.path().join("puc"), Aligner::Bowtie2, false);
+        assert!(
+            validate_unconverted_index(
+                Aligner::Bowtie2,
+                Path::new("puc"),
+                Some(tmp.path().as_os_str())
+            )
+            .is_ok()
+        );
+    }
+
+    /// The wrapper joins the variable with the basename AS GIVEN, so a separator does not
+    /// disable the fallback. A separator-based heuristic would reject this working setup.
+    #[test]
+    fn env_fallback_applies_to_a_separator_basename() {
+        let tmp = TempDir::new().unwrap();
+        stub_index(&tmp.path().join("puc"), Aligner::Bowtie2, false);
+        assert!(
+            validate_unconverted_index(
+                Aligner::Bowtie2,
+                Path::new("./puc"),
+                Some(tmp.path().as_os_str())
+            )
+            .is_ok()
+        );
+    }
+
+    /// The aligner binaries fall back to their index variable when `<basename>.1.<ext>` cannot be
+    /// opened, so another index file present at the basename must NOT suppress the fallback.
+    /// (Gating on "any index file", as the wrapper scripts glob, rejected a working setup.)
+    #[test]
+    fn a_non_first_index_file_does_not_block_the_env_fallback() {
+        let here = TempDir::new().unwrap();
+        let env = TempDir::new().unwrap();
+        fs::write(here.path().join("puc.2.bt2"), b"").unwrap(); // present, but not `.1`
+
+        // The env candidate is `<env>/<basename>`, so mirror the absolute basename underneath it.
+        let mirror = PathBuf::from(format!("{}{}", env.path().display(), here.path().display()));
+        fs::create_dir_all(&mirror).unwrap();
+        stub_index(&mirror.join("puc"), Aligner::Bowtie2, false);
+
+        assert!(
+            validate_unconverted_index(
+                Aligner::Bowtie2,
+                &here.path().join("puc"),
+                Some(env.path().as_os_str())
+            )
+            .is_ok()
+        );
+    }
+
+    /// A typo or a swapped arm here would hard-reject a working setup with every other test green.
+    #[test]
+    fn index_env_name_maps_each_aligner() {
+        assert_eq!(index_env_name(Aligner::Bowtie2), Some("BOWTIE2_INDEXES"));
+        assert_eq!(index_env_name(Aligner::Hisat2), Some("HISAT2_INDEXES"));
+        assert_eq!(index_env_name(Aligner::Minimap2), None);
+        assert_eq!(index_env_name(Aligner::Rammap), None);
+    }
+
+    /// hisat2's `adjustEbwtBase` performs the same `$HISAT2_INDEXES` lookup as bowtie2's.
+    #[test]
+    fn hisat2_env_fallback_accepted() {
+        let tmp = TempDir::new().unwrap();
+        stub_index(&tmp.path().join("puc"), Aligner::Hisat2, false);
+        assert!(
+            validate_unconverted_index(
+                Aligner::Hisat2,
+                Path::new("puc"),
+                Some(tmp.path().as_os_str())
+            )
+            .is_ok()
+        );
+    }
+
+    /// `..` and `/` have no `file_name()`; a split-based probe would panic on the very path
+    /// this check exists to report cleanly.
+    #[test]
+    fn pathological_basenames_error_rather_than_panic() {
+        for probe in ["..", "/", "puc."] {
+            assert!(
+                validate_unconverted_index(Aligner::Bowtie2, Path::new(probe), None).is_err(),
+                "{probe}"
+            );
+        }
+    }
+
+    /// False-rejection guards: forms the aligner accepts must not be refused.
+    #[test]
+    fn accepts_absolute_and_dot_dot_basenames() {
+        let tmp = TempDir::new().unwrap();
+        let sub = tmp.path().join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        stub_index(&tmp.path().join("puc"), Aligner::Bowtie2, false);
+
+        assert!(
+            validate_unconverted_index(Aligner::Bowtie2, &tmp.path().join("puc"), None).is_ok()
+        );
+        // Containing `..`, which resolves through the filesystem.
+        assert!(validate_unconverted_index(Aligner::Bowtie2, &sub.join("../puc"), None).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accepts_symlinked_index_files_and_directory() {
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        stub_index(&real.join("puc"), Aligner::Bowtie2, false);
+
+        let linked = tmp.path().join("linked");
+        fs::create_dir_all(&linked).unwrap();
+        for suffix in index_suffixes(Aligner::Bowtie2, "", false) {
+            std::os::unix::fs::symlink(
+                real.join(format!("puc{suffix}")),
+                linked.join(format!("puc{suffix}")),
+            )
+            .unwrap();
+        }
+        assert!(validate_unconverted_index(Aligner::Bowtie2, &linked.join("puc"), None).is_ok());
+
+        let dir_link = tmp.path().join("dirlink");
+        std::os::unix::fs::symlink(&real, &dir_link).unwrap();
+        assert!(validate_unconverted_index(Aligner::Bowtie2, &dir_link.join("puc"), None).is_ok());
     }
 
     #[test]

@@ -1,22 +1,23 @@
 <!-- Thank you for contributing to Bismark! -->
 
 > [!IMPORTANT]
-> **The Perl version of Bismark is in maintenance freeze** (this is the default branch). It accepts
-> **critical bug and security fixes only**. New features and performance changes should target the
-> **Bismark Rust suite** (`master`) — please see [CONTRIBUTING.md](../CONTRIBUTING.md).
-> Thank you for understanding!
+> **Please open pull requests against `dev`** — `master` only receives releases. New features and
+> performance changes go to the **Bismark Rust suite** (`rust/`). The Perl tools in `legacy_perl/` are
+> in **maintenance freeze** and accept critical bug and security fixes only — please see
+> [CONTRIBUTING.md](../CONTRIBUTING.md). Thank you!
 
 ## What does this PR do?
 
 
 ## Type of change
 
-- [ ] Critical bug fix (allowed during the Perl maintenance freeze)
-- [ ] Security fix (allowed)
+- [ ] Bug fix (Rust suite)
+- [ ] New feature or performance change (Rust suite)
+- [ ] Critical bug or security fix to the frozen Perl tools (`legacy_perl/`)
 - [ ] Documentation / typo
-- [ ] New feature or performance change — **please retarget to the Rust suite** (`master`); see [CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ## Checklist
 
+- [ ] This pull request targets `dev`.
 - [ ] I have read [CONTRIBUTING.md](../CONTRIBUTING.md) and understand the Perl maintenance freeze.
-- [ ] For a bug or security fix: I opened an issue describing it first.
+- [ ] For a fix to the Perl tools: I opened an issue describing it first.

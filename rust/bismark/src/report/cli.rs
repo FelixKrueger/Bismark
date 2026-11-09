@@ -63,6 +63,6 @@ pub struct Cli {
     pub man: bool,
 
     /// Print version and exit.
-    #[arg(long, short = 'V')]
+    #[arg(long, short = 'V', short_alias = 'v')]
     pub version: bool,
 }

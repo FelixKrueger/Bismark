@@ -11,6 +11,24 @@
 use std::ffi::OsString;
 use std::process::ExitCode;
 
+/// "No args is never a valid run → show help" for the suite tools that require
+/// input. When `argv_len` is `<= 1` (only the program name is present), render
+/// `command`'s long help to stderr and return `Some(ExitCode 2)`; otherwise
+/// `None`, and the caller parses `argv` as usual.
+///
+/// Implemented at the runtime entry (not via clap's `arg_required_else_help`) so
+/// `Cli::parse_from([])` keeps returning a defaults `Cli` — the many unit tests
+/// that parse an empty argv and then assert `validate()`'s "no input" error rely
+/// on that. Auto-discovery tools (`bismark2report`, `bismark2summary`) opt OUT:
+/// a bare run there scans the working directory and is a valid mode.
+pub fn help_if_no_args(argv_len: usize, mut command: clap::Command) -> Option<ExitCode> {
+    if argv_len > 1 {
+        return None;
+    }
+    eprint!("{}", command.render_long_help());
+    Some(ExitCode::from(2))
+}
+
 /// A classic binary name (from an `argv[0]` alias/symlink) → that module's `run_main`
 /// (unchanged → byte-identical). Returns `None` if `prog` is not a classic tool name
 /// (i.e. we were invoked as `bismark`).

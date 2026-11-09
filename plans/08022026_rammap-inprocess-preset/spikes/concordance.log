@@ -1,0 +1,15 @@
+=== (1) SAME-CONFIG: rammap from_seqs(preset) vs minimap2 -x preset ===
+  map-ont                            n=32  both=29  locus_agree=29  full_agree=29  ram_only=0 mm2_only=0 neither=3
+                                     locus concordance = 100.0% of co-mapped; full = 100.0%
+  map-pb                             n=32  both=27  locus_agree=27  full_agree=27  ram_only=0 mm2_only=0 neither=5
+                                     locus concordance = 100.0% of co-mapped; full = 100.0%
+  sr                                 n=32  both=28  locus_agree=28  full_agree=28  ram_only=0 mm2_only=0 neither=4
+                                     locus concordance = 100.0% of co-mapped; full = 100.0%
+
+=== (2) PRODUCTION HYBRID: rammap sr options over a map-ont-k index ===
+  sr-over-mapont-index vs mm2 sr     n=32  both=28  locus_agree=28  full_agree=28  ram_only=1 mm2_only=0 neither=3
+                                     locus concordance = 100.0% of co-mapped; full = 100.0%
+    mm6_150: RAMMAP-ONLY (minimap2 did not map it)
+  control: mapont-index+mapont       n=32  both=29  locus_agree=29  full_agree=29  ram_only=0 mm2_only=0 neither=3
+                                     locus concordance = 100.0% of co-mapped; full = 100.0%
+test spike_per_preset_concordance ... ok

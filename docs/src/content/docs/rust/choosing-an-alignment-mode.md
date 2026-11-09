@@ -4,7 +4,7 @@ description: "A decision guide for the Bismark Rust aligner: which index and thr
 ---
 
 The Rust `bismark` aligner can run several ways. The faithful default reproduces Perl `v0.25.1`
-byte-for-byte; the opt-in **combined index** is usually faster and can be lighter, at the cost of being
+byte-for-byte, apart from the version string; the opt-in **combined index** is usually faster and can be lighter, at the cost of being
 *concordance-gated* rather than byte-identical. This page is a short decision guide — the numbers behind
 it are on the [Benchmarks](/Bismark/rust/benchmarks/) page, and each flag is described under
 [Alignment](/Bismark/usage/alignment/).
@@ -29,6 +29,16 @@ Pick your library row, then your priority:
 
 † `--combined_index_single_pass` is *not* decision-equivalent — see [Correctness](#correctness--concordance).
 
+:::note[The converted reads no longer touch the disk on the standard modes]
+Every Bismark run converts your reads in silico before aligning them. On the **standard**
+per-strand modes those converted reads are now streamed straight into the aligner and are never
+written to `--temp_dir` at all — so the scratch they used to need (roughly the uncompressed size of
+your input, per converted set) is gone. The **`--combined_index` modes still write them as files**,
+which is worth weighing against the spill figures below if scratch is your binding constraint. Pass
+`--no_stream_converted` to get files back everywhere; it is described under
+[Alignment options](/Bismark/options/alignment/).
+:::
+
 ## Directional and PBAT
 
 For directional and PBAT libraries the combined index is a clean win: one both-strands pass replaces the
@@ -37,7 +47,7 @@ two per-strand instances, so it is faster at every core budget and uses about 22
 
 ![Directional alignment: combined versus standard, wall time and peak memory at full-scale paired-end, 8-core budget](../../../assets/combined_modes_dir.png)
 
-If you need output **byte-identical to Perl `v0.25.1`**, use the standard per-strand index (omit
+If you need output **byte-identical to Perl `v0.25.1`** (apart from the version string), use the standard per-strand index (omit
 `--combined_index`).
 
 ## Non-directional
@@ -71,7 +81,7 @@ alternatives.
 
 The combined index is **opt-in and never silent**; it trades exact reproduction for speed:
 
-- **Byte-identical to Perl `v0.25.1`** → only the **standard** per-strand modes.
+- **Byte-identical to Perl `v0.25.1`** (apart from the version string) → only the **standard** per-strand modes.
 - **Concordance-gated** (benign ~0.01–0.04 % churn versus the faithful result, almost all
   unique↔ambiguous flips at cross-sub-genome ties) → `--combined_index` (parallel) **and**
   `--combined_index_sequential`, which are byte-identical *to each other*.

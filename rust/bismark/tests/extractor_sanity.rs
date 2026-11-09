@@ -29,10 +29,24 @@ fn short_version_flag_works_too() {
 
 #[test]
 fn invocation_with_no_input_files_errors_with_clear_message() {
+    // A mode flag but no input file still reaches the validation error (exit 1).
+    // A bare no-args run instead shows the tool's help (exit 2) — see
+    // `no_args_shows_help`.
     let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
-    cmd.assert()
+    cmd.arg("-s")
+        .assert()
         .failure()
         .stderr(predicates::str::contains("no input file"));
+}
+
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation prints the tool's help
+    // (exit 2) instead of the terse one-line error it used to.
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+    cmd.assert()
+        .code(2)
+        .stderr(predicates::str::contains("Extract methylation calls"));
 }
 
 /// All 35 flags must appear in the help output. We don't pin the exact

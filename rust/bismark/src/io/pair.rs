@@ -63,11 +63,18 @@ impl BismarkPair {
         // is feeding us nameless reads, surfacing a MateMismatch here would
         // be misleading. Real corruption would manifest as one name set and
         // the other missing, which still triggers MateMismatch correctly.
-        let r1_name_opt = r1.inner().name();
-        let r2_name_opt = r2.inner().name();
-        let r1_bytes: &[u8] = r1_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
-        let r2_bytes: &[u8] = r2_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
-        if r1_bytes != r2_bytes {
+        if !Self::qnames_match(&r1, &r2) {
+            // Cold path: allocate the names only to build the error.
+            let r1_bytes: &[u8] = r1
+                .inner()
+                .name()
+                .as_ref()
+                .map_or(b"", |n| AsRef::as_ref(*n));
+            let r2_bytes: &[u8] = r2
+                .inner()
+                .name()
+                .as_ref()
+                .map_or(b"", |n| AsRef::as_ref(*n));
             return Err(BismarkIoError::MateMismatch {
                 r1_qname: r1_bytes.to_vec(),
                 r2_qname: r2_bytes.to_vec(),
@@ -80,6 +87,23 @@ impl BismarkPair {
             r2,
             pair_strand,
         })
+    }
+
+    /// The pairing predicate: `true` iff `r1` and `r2` carry the same query
+    /// name. Borrow-compare only (no allocation) — at 27M+ pairs per PE run the
+    /// cheap path matters. Both-nameless compares equal (treated as matching,
+    /// per [`Self::from_mates`]); exactly one nameless is a mismatch.
+    ///
+    /// This is the single source of truth for R1/R2 adjacency. `from_mates`
+    /// uses it, and `--allow_discordant`'s producers call it to pre-check
+    /// adjacency without constructing (and failing) a pair.
+    #[must_use]
+    pub fn qnames_match(r1: &BismarkRecord, r2: &BismarkRecord) -> bool {
+        let r1_name_opt = r1.inner().name();
+        let r2_name_opt = r2.inner().name();
+        let r1_bytes: &[u8] = r1_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
+        let r2_bytes: &[u8] = r2_name_opt.as_ref().map_or(b"", |n| AsRef::as_ref(*n));
+        r1_bytes == r2_bytes
     }
 
     /// Library-level strand classification, derived from R1.

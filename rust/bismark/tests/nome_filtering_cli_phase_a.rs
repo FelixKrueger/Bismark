@@ -43,6 +43,15 @@ fn missing_genome_errors_nonzero() {
 }
 
 #[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation renders the tool's help
+    // (exit 2) via `cli::help_if_no_args` instead of a terse one-line error.
+    bin().assert().code(2).stderr(predicates::str::contains(
+        "Per-read NOMe-Seq methylation filtering",
+    ));
+}
+
+#[test]
 fn valid_invocation_produces_gzipped_report() {
     // Phase B: a valid invocation with a real (suitable) yacht read processes
     // the input and writes the always-gzipped `.manOwar.txt.gz` report.

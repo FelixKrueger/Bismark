@@ -1,0 +1,25 @@
+case           MapOnt                       MapPb                        Sr                          
+perfect_30     UNMAPPED                     UNMAPPED                     UNMAPPED                    
+mm1_30         UNMAPPED                     UNMAPPED                     UNMAPPED                    
+mm3_30         UNMAPPED                     UNMAPPED                     UNMAPPED                    
+del2_30        UNMAPPED                     UNMAPPED                     UNMAPPED                    
+perfect_60     AS=120 cig=60M mapq=18       AS=120 cig=60M mapq=17       AS=120 cig=60M mapq=49        <== MapOnt != Sr
+mm1_60         AS=114 cig=60M mapq=7        UNMAPPED                     UNMAPPED                      <== MapOnt != Sr
+mm3_60         UNMAPPED                     UNMAPPED                     UNMAPPED                    
+del2_60        AS=108 cig=29M2D29M mapq=6   UNMAPPED                     AS=100 cig=29M2D29M mapq=11   <== MapOnt != Sr
+perfect_100    AS=200 cig=100M mapq=60      AS=200 cig=100M mapq=60      AS=200 cig=100M mapq=60     
+mm1_100        AS=194 cig=100M mapq=60      AS=194 cig=100M mapq=36      AS=190 cig=100M mapq=60       <== MapOnt != Sr
+mm3_100        AS=182 cig=100M mapq=34      UNMAPPED                     UNMAPPED                      <== MapOnt != Sr
+del2_100       AS=188 cig=50M2D48M mapq=60  AS=188 cig=50M2D48M mapq=48  AS=180 cig=50M2D48M mapq=60   <== MapOnt != Sr
+perfect_150    AS=300 cig=150M mapq=60      AS=300 cig=150M mapq=60      AS=300 cig=150M mapq=60     
+mm1_150        AS=294 cig=150M mapq=60      AS=294 cig=150M mapq=60      AS=290 cig=150M mapq=60       <== MapOnt != Sr
+mm3_150        AS=282 cig=150M mapq=60      AS=282 cig=150M mapq=60      AS=270 cig=150M mapq=60       <== MapOnt != Sr
+del2_150       AS=288 cig=75M2D73M mapq=60  AS=288 cig=75M2D73M mapq=60  AS=280 cig=75M2D73M mapq=60   <== MapOnt != Sr
+short_16       UNMAPPED                     UNMAPPED                     UNMAPPED                    
+short_18       UNMAPPED                     UNMAPPED                     UNMAPPED                    
+short_20       UNMAPPED                     UNMAPPED                     UNMAPPED                    
+short_22       UNMAPPED                     UNMAPPED                     UNMAPPED                    
+
+MapOnt-vs-Sr discriminating cases: ["perfect_60", "mm1_60", "del2_60", "mm1_100", "mm3_100", "del2_100", "mm1_150", "mm3_150", "del2_150"]
+count: 9/20
+determinism on perfect_60: 3 runs identical = true

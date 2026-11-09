@@ -58,7 +58,7 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Print version information and exit.
-    #[arg(short = 'V', long = "version")]
+    #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
 
     /// Alias for `--help` (Perl accepts `--help|--man`). Prints the long

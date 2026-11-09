@@ -13,13 +13,19 @@ bismark dedup [options] filename(s)
 
 **It is important to note that deduplication is not recommended for RRBS, amplicon or other target enrichment-type libraries!**
 
-In the default mode, the first alignment to a given position will be used irrespective of its methylation call. As the alignments are not ordered in any way this is near enough a random read for each position.
+In the default mode, the first alignment to a given position will be used irrespective of its methylation call. Which copy that is depends on the order of the alignments in the input file.
 
 For **single-end** alignments, only the chromosome, start coordinate and strand of a read will be used for deduplication.
 
 For **paired-end** alignments, the chromosome, the strand of a read pair, the start-coordinate of the first read as well as the start coordinate of the second read will be used for deduplication. This script expects the Bismark output to be in SAM/BAM format.
 
 **Please note that for paired-end BAM files the deduplication script expects Read 1 and Read 2 to follow each other in consecutive lines!** If the file has been sorted by position for whatever reason, please make sure that you resort it by read name first (e.g. using `samtools sort -n`)
+
+### Which duplicate is kept
+
+Perl Bismark v0.25.1 run with `--multicore` and Bowtie 2 writes the same alignments as a single-core run, but in a different order. nf-core/methylseq releases that run Perl Bismark usually set `--multicore`, based on the available CPUs. Deduplicating such a BAM keeps a different copy of many duplicate sets than a BAM from the Rust aligner, or from Perl without `--multicore`.
+
+The number of reads kept is the same. Call counts and methylation values move slightly, as with any other choice of copy; neither choice is more correct. To check that two aligned BAMs hold the same alignments, compare their records with `samtools view` after `samtools sort -n`; the files differ anyway in compression and `@PG` lines. To reproduce a deduplicated Perl result exactly, re-run Perl without `--multicore`. With HISAT2, Perl `--multicore` also changes the alignments themselves.
 
 ### Deduplication using UMIs or barcodes
 

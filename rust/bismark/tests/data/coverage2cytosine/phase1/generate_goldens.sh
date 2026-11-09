@@ -10,7 +10,7 @@
 # (gzip is content-invariant — same discipline as phase_d).
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-C2C="$(cd "$HERE/../../../../.." && pwd)/coverage2cytosine"
+C2C="$(cd "$HERE/../../../../../.." && pwd)/legacy_perl/coverage2cytosine"
 cd "$HERE"
 
 # ── Fixtures (committed alongside the goldens) ──

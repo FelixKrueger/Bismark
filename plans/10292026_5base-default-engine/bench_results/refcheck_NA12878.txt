@@ -1,0 +1,1 @@
+refcheck: 1000000/1000000 sampled DRAGEN CpGs are CpGs in the FASTA (100.0000%)

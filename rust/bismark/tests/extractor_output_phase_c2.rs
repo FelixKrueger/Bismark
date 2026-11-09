@@ -178,7 +178,10 @@ fn splitting_report_byte_shape_matches_perl_format() {
 
     // Header block (Perl :4996-5001).
     assert!(report.contains("Parameters used to extract methylation information:\n"));
-    assert!(report.contains("Bismark Extractor Version: v0.25.1\n"));
+    assert!(report.contains(&format!(
+        "Bismark Extractor Version: v{}\n",
+        bismark::meta::SUITE_VERSION
+    )));
     assert!(report.contains("Bismark result file: single-end (SAM format)\n"));
     assert!(report.contains("Output specified: strand-specific (default)\n"));
 

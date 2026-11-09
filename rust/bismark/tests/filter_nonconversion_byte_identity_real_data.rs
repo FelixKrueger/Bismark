@@ -14,7 +14,7 @@
 //! Any unset var skips its cells (prints + returns success). Example:
 //!
 //! ```sh
-//! FNC_PERL=~/Github/Bismark/filter_non_conversion \
+//! FNC_PERL=~/Github/Bismark/legacy_perl/filter_non_conversion \
 //! FNC_REAL_SE=/weka/.../10M_SE/directional_10M_R1_val_1_bismark_bt2.bam \
 //! FNC_REAL_PE=/weka/.../10M_PE/..._pe.deduplicated.bam \
 //!   cargo test -p bismark-filter-nonconversion --release --test byte_identity_real_data \

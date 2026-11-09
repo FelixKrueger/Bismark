@@ -6,21 +6,25 @@
 //! - `.txt` is **byte-for-byte identical**;
 //! - `.html` is **byte-identical after normalizing the single timestamp
 //!   line** (Perl `localtime` cannot be pinned; the gate normalizes it and
-//!   asserts exactly one occurrence in each file).
+//!   asserts exactly one occurrence in each file) and the footer version (#1148).
 //!
 //! Auto-skips (prints a notice, passes) when `perl`, the Perl source, or the
 //! `plotly/` assets are unavailable — mirroring the genomeprep/c2c oracle
 //! pattern so the suite stays green on Perl-less runners.
 
 mod common;
+#[path = "common/version.rs"]
+mod version;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use version::{Form, perl_version};
+
 fn perl_script() -> Option<PathBuf> {
-    // crate dir = .../rust/bismark-summary ; Perl script = repo-root/bismark2summary
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bismark2summary");
-    let plotly = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plotly/plot.ly");
+    // crate dir = .../rust/bismark ; Perl script = repo-root legacy_perl/bismark2summary
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/bismark2summary");
+    let plotly = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../legacy_perl/plotly/plot.ly");
     if !p.exists() || !plotly.exists() {
         return None;
     }
@@ -91,8 +95,8 @@ fn assert_identical(dir: &Path, script: &Path) {
     let r_html = std::fs::read_to_string(dir.join("rust_out.html")).unwrap();
     assert_eq!(
         normalize_timestamp(&p_html),
-        normalize_timestamp(&r_html),
-        ".html differs (modulo timestamp)"
+        perl_version(&normalize_timestamp(&r_html), &[(Form::SummaryHtml, 1)]),
+        ".html differs (modulo timestamp and version)"
     );
 }
 

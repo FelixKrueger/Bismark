@@ -36,6 +36,8 @@ bismark [options] --genome <genome_folder> {-1 <mates1> -2 <mates2> | <singles>}
 
 ##### Input:
 
+A FastQ or FastA input with Windows (CRLF) line endings stops the run at start-up; convert such a file first (e.g. with `dos2unix`). A run whose aligner returns read names that stop matching the input's also stops with an error.
+
 - `--se <list>` / `--single_end <list>`
 
   Sets single-end mapping mode explicitly giving a list of file names as <list>. The filenames may be provided as a comma [`,`] or colon [`:`]-separated list.
@@ -74,6 +76,9 @@ The full path `</../../>` to the HISAT2 installation on your system. If not spec
 
 ##### Alignment:
 
+The Bowtie 2 seed options below may be given in either letter case (`-N`/`-n`, `-L`/`-l`) — both are
+accepted, as they were in Perl Bismark.
+
 - `-N <int>`
 
   Sets the number of mismatches to be allowed in a seed alignment during multiseed alignment. Can be set to 0 or 1. Setting this higher makes alignment slower (often _much_ slower) but increases sensitivity. Default: 0.
@@ -92,18 +97,29 @@ The full path `</../../>` to the HISAT2 installation on your system. If not spec
 
 - `-X <int>` / `--maxins <int>`
 
-  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.
+  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500 (800 for `--illumina_5base --bowtie2`).
 
 - `--parallel <int>`
 
-(May also be --multicore <int>). Sets the number of parallel instances of Bismark to be run concurrently. This forks the Bismark alignment step very early on so that each individual Spawn of Bismark processes only every n-th sequence (n being set by `--multicore`). Once all processes have completed, the individual BAM files, mapping reports, unmapped or ambiguous FastQ files are merged into single files in very much the same way as they would have been generated running Bismark conventionally with only a single instance.
+  (May also be `--multicore <int>`). Runs the alignment on more cores. How depends on the aligner:
 
-If system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
-**WARNING:** Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
+  - **Bowtie 2, minimap2, and rammap through the external binary** (`--rammap_subprocess`, FastA input, or a build without the in-process backend): each read file (or mate pair) is split into `<int>` contiguous chunks that are aligned at the same time. The BAM file, mapping report and unmapped or ambiguous files are merged back in input order, so the alignments are the same as with `--parallel 1`.
+  - **HISAT2:** the input is not split; each HISAT2 instance gets `-p <int>`. The output is the same from run to run for a given value, but changes with the value.
+  - **rammap (in-process) and `--illumina_5base`:** `<int>` sets the number of threads.
+  - **`--combined_index`:** values above 1 are rejected.
+
+  Perl Bismark v0.25.1 hands reads to its workers in turn and joins the worker outputs one after another, so its record order depends on `<int>`. This changes which copy [deduplication keeps](/Bismark/usage/deduplication/#which-duplicate-is-kept).
+
+On the chunked path (Bowtie 2, minimap2, external rammap), if system resources are plentiful this is a viable option to speed up the alignment process (we observed a near linear speed increase for up to `--multicore 8` tested). However, please note that a typical Bismark run will use several cores already (Bismark itself, 2 or 4 threads for Bowtie/Bowtie2, gzip etc...) and ~10-16GB of memory per thread depending on the choice of aligner and genome.
+**WARNING:** On the chunked path, Bismark Parallel is **resource hungry**! Each value of `--multicore` specified will effectively lead to a linear increase in compute and memory requirements, so `--parallel 4` for e.g. the GRCm38 mouse genome will probably use ~20 cores and eat ~48GB of RAM, but at the same time reduce the alignment time to ~25-30%. _You have been warned_.
 
 - `--local`
 
 In this mode, it is not required that the entire read aligns from one end to the other. Rather, some characters may be omitted (“soft-clipped”) from the ends in order to achieve the greatest possible alignment score. For Bowtie 2, the match bonus `--ma` (default: 2) is used in this mode, and the best possible alignment score is equal to the match bonus (`--ma`) times the length of the read. This is mutually exclusive with end-to-end alignments. DEFAULT: OFF.
+
+  Reported MAPQ values are normalised against that best possible score, so local-mode MAPQ differs from end-to-end MAPQ for the same alignment. Among the modes `--local` selects, this applies to Bowtie 2 only: HISAT2 exposes no `--local` option of its own and always scores matches as 0, so with `--hisat2 --local` the best possible score is 0 and MAPQ is reported on the same scale as end-to-end. `--local` still enables soft-clipping for HISAT2 (Bismark drops `--no-softclip`); only the MAPQ scale is shared with end-to-end.
+
+  Note that a positive best possible score is not exclusive to `--local`: minimap2 and rammap align locally by design (they reject `--local`) and also score matches positively, so their MAPQ is normalised the same way — see `--minimap2` below.
 
 ##### Output:
 
@@ -168,6 +184,22 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 - `--gzip`
 
   Temporary bisulfite conversion files will be written out in a `GZIP` compressed form to save disk space. This option is available for most alignment modes but is not available for paired-end `FastA` files.
+
+- `--no_stream_converted`
+
+  Write the in-silico converted reads (`_C_to_T` / `_G_to_A`) to `--temp_dir` as files instead of streaming them to the aligner through named pipes. These are temporary files: each one is deleted once its input file has been aligned, and a run that fails or is killed leaves them in `--temp_dir`.
+
+  Bismark converts your reads before aligning them, and by default those converted reads now go straight into the aligner through a FIFO and are never written to disk. They have exactly one consumer — the aligner — so nothing is lost by not keeping them: the methylation call re-reads your *original* FastQ. On a disk-constrained scratch this is the difference between a run that starts and one that does not; the converted set is typically around 5x the size of a gzipped input, and `--gzip` only ever made it smaller, never absent. Wall time is unchanged — conversion no longer has to finish before the aligner starts, but that serial phase was small to begin with.
+
+  Output is byte-identical either way. Use this flag to bisect a suspected streaming problem, or to look at the converted reads while a run is in progress; Bismark has no option to keep them afterwards. `--gzip` has no effect on the streamed reads — there is no file to compress.
+
+  `--rammap`'s default in-process backend goes one better: it aligns inside the Bismark process, so it receives the converted reads in memory with neither a file nor a pipe in between. `--rammap_subprocess` runs the external binary and uses files.
+
+  Some runs cannot stream and fall back to files on their own, saying so on STDERR: `--hisat2` (HISAT2 rejects a named pipe as its read input), the `--combined_index` alignment models, `--rammap_subprocess`, and a `--temp_dir` on a filesystem that will not host a FIFO. `--illumina_5base` aligns to the unconverted genome and writes no converted reads at all.
+
+  While a run streams, its named pipes sit in `--temp_dir` (one `*.fifo.*` entry per aligner input) and are removed when it finishes. A run that is killed can leave them behind; they hold no data and are safe to delete.
+
+  An aligner wrapper (`--path_to_bowtie2` or `--path_to_minimap2`) that reads part of the input before the aligner does cannot be streamed: Bismark stops with an error naming `--no_stream_converted`, which runs it with files. A wrapper that leaves a background process holding the input open without reading it fails the same way, but the run can wait until that process exits.
 
 - `--sam`
 
@@ -241,6 +273,8 @@ For reads that have multiple alignments a random alignment is written out to a s
 
   Specify `--no_dovetail` to turn off this behaviour for paired-end libraries. Default: OFF.
 
+  With `--illumina_5base`, Bowtie 2 never receives `--dovetail`, whatever is specified (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bowtie-2-and-hisat2-tuning)).
+
 
 ##### HISAT2 SPECIFIC OPTIONS:
 
@@ -304,18 +338,31 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
 
+  **MAPQ:** minimap2 reports *positive* alignment scores (every preset Bismark can select awards 2 per matching base), so the best possible score is `2 × read_length` and Bismark normalises MAPQ against it, exactly as it does for Bowtie 2 `--local`. MAPQ is **22–44 for a uniquely-aligned read**, and can be **lower — down to 2 — when another strand instance produced a competing score** for the same read. This is **Bismark's own scale, not minimap2's**: minimap2 derives its own MAPQ from chain scores on a 0–60 scale, and Bismark discards it because it recomputes MAPQ across the 2–4 strand instances it runs. The same applies to `--rammap`.
+
+  Four consequences worth knowing:
+
+  - Because the score is compared against the *full* read length, a soft-clipped alignment scores below perfect and earns a lower MAPQ.
+  - `--score_min` is **not passed to minimap2** — minimap2 gets a fixed option string — yet its value still enters this normalisation, so setting an unusually steep `--score_min` raises minimap2 MAPQ without changing a single alignment.
+  - The competing-score branch is entered only when a **later** strand instance strictly out-scores every earlier one. Two reads with the same pair of scores can therefore end up with different MAPQ depending on which strand won — a pre-existing asymmetry that this normalisation widens. Reads on that branch can fall below a typical `-q` cut, so MAPQ-filtered read counts differ from Bismark 3.1.0.
+  - `--ambig_bam` copies MAPQ straight from the aligner's own output rather than recomputing it, so a `--minimap2 --ambig_bam` run legitimately writes **two different MAPQ scales**: Bismark's 22–44 in the main BAM and minimap2's 0–60 in the ambiguous-alignments BAM.
+
 - `--mm2_nanopore`
 
-Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x map-ont`). Only works in conjuntion with `--minimap2`. Default mode when `--minimap2` is specified without additional qualifiers.
+Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x map-ont`). Only works in conjuntion with `--minimap2` or `--rammap`. Default mode when `--minimap2` is specified without additional qualifiers.
 
 - `--mm2_pacbio`
 
-Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2`. Default: OFF.
+Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2` or `--rammap`. Default: OFF.
+
+  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
 
 - `--mm2_short_reads`
 
 This option invokes the minmap2 preset setting `-x sr` and is intended for genomic short-read mapping with accurate reads (probably Illumina 150bp+ ?). For spliced short-reads, please use `--hisat2` instead. The `sr` preset mode (short single-end reads without splicing) uses the following options:
 `-k21 -w11 --sr --frag=yes -A2 -B8 -O12,32 -E2,1 -r50 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g200 -2K50m --heap-sort=yes --secondary=no`. Default: OFF.
+
+  Works with `--rammap` as well as `--minimap2`. Because `sr` changes the chain and DP thresholds as well as the mismatch and gap penalties, it changes **which** reads map, not only their alignment scores — expect mapping-efficiency percentages to differ from a `map-ont` run. Against a pre-built bisulfite index the `-k21 -w11` part has no effect (the index supplies its own), so `sr` there means the scoring and filtering options rather than the seeding ones.
 
 - `--mm2_maximum_length <int>`
 
@@ -327,7 +374,7 @@ Maximum length cutoff for very long sequences (currently allowed 100-100,000 bp)
 
 - `--rammap/--ram`
 
-Uses [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, as the underlying read aligner. Intended for long-read bisulfite data (EM-seq Nanopore/PacBio). Single-end only, and like `--minimap2` uses the `map-ont` preset. **Experimental and concordance-gated — NOT byte-identical to minimap2.** rammap is compiled into the conda, Docker and release builds, so this works with no extra install. By default it runs the **in-process** backend (the converted index is loaded once and shared across strand instances; auto-threaded to the available cores, capped), which uses less memory and is faster than spawning the external binary. Default: OFF.
+Uses [rammap](https://github.com/jwanglab/rammap), a pure-Rust reimplementation of minimap2, as the underlying read aligner. Intended for long-read bisulfite data (EM-seq Nanopore/PacBio). Single-end only, and like `--minimap2` defaults to the `map-ont` preset and honours the `--mm2_*` selectors above. **Experimental and concordance-gated — NOT byte-identical to minimap2.** rammap is compiled into the conda, Docker and release builds, so this works with no extra install. By default it runs the **in-process** backend (the converted index is loaded once and shared across strand instances; auto-threaded to the available cores, capped), which uses less memory and is faster than spawning the external binary. Default: OFF.
 
 - `--rammap_subprocess`
 

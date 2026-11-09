@@ -70,8 +70,7 @@ impl Logger {
         let _ = err.write_all(s.as_bytes());
     }
 
-    /// Startup banner — the SUITE version (matches `--version`), NOT the
-    /// v0.25.1-locked `BISMARK_VERSION` used for output-file headers.
+    /// Startup banner — the SUITE version (matches `--version`).
     pub fn banner(&self) {
         self.info(&format!(
             "\n*** Bismark methylation extractor (Rust port) version {} ***\n\n",
@@ -105,8 +104,14 @@ impl Logger {
     }
 
     /// Final per-context methylation summary (mirror of `_splitting_report.txt`).
-    pub fn final_summary(&self, report: &SplittingReport) {
+    /// When `allow_discordant` is set, the `--allow_discordant` section is
+    /// appended (mirroring the splitting-report section); off by default it adds
+    /// nothing, so the stderr summary is unchanged.
+    pub fn final_summary(&self, report: &SplittingReport, allow_discordant: bool) {
         self.info(&final_summary_text(report));
+        if allow_discordant {
+            self.info(&crate::extractor::output::discordant_section_text(report));
+        }
     }
 }
 

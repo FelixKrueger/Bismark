@@ -149,3 +149,14 @@ fn help_flag_smoke() {
         .success()
         .stdout(predicate::str::contains("Usage"));
 }
+
+#[test]
+fn no_args_shows_help() {
+    // No input is never a valid run, so a bare invocation renders the tool's help
+    // (exit 2) via `cli::help_if_no_args` instead of a terse one-line error.
+    Command::cargo_bin("bismark2bedGraph")
+        .unwrap()
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Generate a sorted bedGraph"));
+}

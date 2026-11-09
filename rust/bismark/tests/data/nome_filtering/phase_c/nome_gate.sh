@@ -5,7 +5,7 @@
 # `gzip -c` vs Rust `flate2` — so we compare post-decompression; SPEC §6 / P8).
 #
 # Usage:
-#   PERL_NOME=~/Bismark/NOMe_filtering \
+#   PERL_NOME=~/Bismark/legacy_perl/NOMe_filtering \
 #   RUST_NOME=~/nome-build/rust/target/release/NOMe_filtering_rs \
 #   nome_gate.sh <genome_dir> <yacht_file[.gz]>
 #
@@ -16,7 +16,7 @@
 # dir and `cd` in. (Verified on oxy 2026-06-01: 10M SE, byte-identical.)
 set -euo pipefail
 export LC_ALL=C
-: "${PERL_NOME:?set PERL_NOME=path/to/Bismark/NOMe_filtering}"
+: "${PERL_NOME:?set PERL_NOME=path/to/Bismark/legacy_perl/NOMe_filtering}"
 : "${RUST_NOME:?set RUST_NOME=path/to/NOMe_filtering_rs}"
 GENOME=${1:?usage: nome_gate.sh <genome_dir> <yacht_file>}
 YACHT=${2:?usage: nome_gate.sh <genome_dir> <yacht_file>}

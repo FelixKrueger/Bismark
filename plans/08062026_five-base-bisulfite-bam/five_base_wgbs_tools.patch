@@ -1,0 +1,68 @@
+diff --git a/src/pipeline_wgbs/main.cpp b/src/pipeline_wgbs/main.cpp
+index cc6c9b6..90af9be 100644
+--- a/src/pipeline_wgbs/main.cpp
++++ b/src/pipeline_wgbs/main.cpp
+@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
+             np_thresh = std::stof(np_thresh_str);
+         }
+         if (argc < 3) {
+-            throw std::invalid_argument("Usage: patter CPG_DICT REGION [--mbias MBIAS_PATH] [--clip CLIP] [--nanopore] [--np_thresh NP_THRESH] [--cpc_call {C|H|.}] [--combine_mods] [--long]");
++            throw std::invalid_argument("Usage: patter CPG_DICT REGION [--mbias MBIAS_PATH] [--clip CLIP] [--nanopore] [--np_thresh NP_THRESH] [--cpc_call {C|H|.}] [--combine_mods] [--long] [--five_base]");
+         }
+         std::string mbias_path = input.getCmdOption("--mbias");
+         bool is_np = input.cmdOptionExists("--nanopore");
+@@ -48,6 +48,12 @@ int main(int argc, char **argv) {
+         }
+         bool combine_mods = input.cmdOptionExists("--combine_mods");
+         patter p(argv[1], argv[2], mbias_path, min_cpg, clip, is_np, np_thresh, is_long, is_ds_test, cpc_call, combine_mods);
++        if (input.cmdOptionExists("--five_base")) {
++            // Inverted-polarity chemistry (Illumina 5-Base, TAPS): 5mC reads as T,
++            // unmethylated C stays C. Swap the meth/unmeth call characters.
++            p.OT = ReadOrient{'T', 'C', 0, 0};
++            p.OB = ReadOrient{'A', 'G', 1, 1};
++        }
+         p.parse_reads_from_stdin();
+ 
+     }
+diff --git a/src/python/bam2pat.py b/src/python/bam2pat.py
+index 3603296..f79df79 100755
+--- a/src/python/bam2pat.py
++++ b/src/python/bam2pat.py
+@@ -143,7 +143,7 @@ def is_region_empty(view_cmd, region, verbose):
+ 
+ def proc_chr(bam, out_path, region, genome, paired_end, ex_flags, in_flags, top_only, bottom_only,
+              rg, mapq, debug, blueprint, clip, temp_dir, blacklist, whitelist, min_cpg, mbias, nanopore,
+-             np_thresh, verbose, long, cpc_call='C', combine_mods=False):
++             np_thresh, verbose, long, cpc_call='C', combine_mods=False, five_base=False):
+     """ Convert a temp single chromosome file, extracted from a bam file, into pat """
+ 
+     # Run patter tool on a single chromosome (or region). out_path will have the following fields:
+@@ -198,6 +198,8 @@ def proc_chr(bam, out_path, region, genome, paired_end, ex_flags, in_flags, top_
+         patter_cmd += ' --combine_mods '
+     if long:
+         patter_cmd += ' --long '
++    if five_base:
++        patter_cmd += ' --five_base '
+ 
+     if blueprint:
+         patter_cmd, match_cmd = blueprint_legacy(genome, region, paired_end)
+@@ -330,7 +332,7 @@ class Bam2Pat:
+                        self.args.temp_dir, blist, wlist, self.args.min_cpg,
+                        self.args.mbias, self.args.nanopore, self.args.np_thresh,
+                        self.verbose, self.args.long,
+-                       self.args.cpc_call, self.args.combine_mods)
++                       self.args.cpc_call, self.args.combine_mods, self.args.five_base)
+                 params.append(par)
+ 
+             if len(cur_regions) == 1 and self.args.threads == 1:
+@@ -447,6 +449,10 @@ def parse_bam2pat_args(parser):
+     parser.add_argument('--combine_mods', action='store_true',
+                         help='Combine 5mC (C+m) and 5hmC (C+h) modifications, treating both as methylated. '
+                              'Sums probabilities before thresholding. Output will contain only C/T/. (no H).')
++    parser.add_argument('--five_base', action='store_true',
++                        help='Input BAM is from an inverted-polarity chemistry (Illumina 5-Base, TAPS): '
++                             '5mC reads as T while unmethylated C stays C. Swaps the methylated/unmethylated '
++                             'call characters. Default behaviour without this flag is unchanged.')
+ 
+ 
+ def add_samtools_view_flags(parser):

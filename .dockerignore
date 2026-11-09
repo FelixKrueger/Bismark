@@ -3,6 +3,8 @@
 # and dev/plan artifacts that don't affect the build.
 rust/target/
 **/target/
+# Legacy Perl toolchain — nothing in it is consumed by the image build.
+legacy_perl/
 .git/
 .github/
 plans/

@@ -7,10 +7,11 @@
 //! minimap2 and SAM/CRAM output fail loudly (deferred), while non-directional/
 //! pbat/PE/FastA resolve (no alignment runs in Phase 1).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::aligner::aligner::{self, DetectedAligner};
-use crate::aligner::cli::Cli;
+use crate::aligner::cli::{Cli, EmitMultiplicity};
 use crate::aligner::discovery::{self, GenomeIndexes};
 use crate::aligner::error::{AlignerError, Result};
 use crate::aligner::options;
@@ -62,6 +63,239 @@ impl Aligner {
             // The report "Bismark was run with rammap against …" line.
             Aligner::Rammap => "rammap",
         }
+    }
+}
+
+/// Which `--score-min` function form the aligner was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreMinForm {
+    /// `L,<i>,<s>` — `scMin = i + s·len`.
+    Linear,
+    /// `G,<i>,<s>` — `scMin = i + s·ln(len)`.
+    Log,
+}
+
+/// Which minimap-family preset the `--mm2_*` selectors chose. Bismark can reach exactly
+/// these three (`options::resolve_mm2_preset`); `rammap::Preset` has 13 more that stay
+/// unreachable.
+///
+/// Resolved once so the emitted `-x` option and the in-process rammap backend are the same
+/// fact rather than two derivations that can drift — the bug in #1092 was exactly that drift,
+/// and #1079 fixed the same class for [`ScoreMinForm`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mm2Preset {
+    /// `-x map-ont` — the default, and `--mm2_nanopore`.
+    MapOnt,
+    /// `-x map-pb` — `--mm2_pacbio`. NB near-inert against a pre-built index: its preset
+    /// body sets only `k`/HPC, which `from_index` discards (#1092).
+    MapPb,
+    /// `-x sr` — `--mm2_short_reads`, and `--illumina_5base` by default.
+    Sr,
+}
+
+impl Mm2Preset {
+    /// The `-x` argument text — the single source of truth for the emitted option.
+    pub fn as_option_str(self) -> &'static str {
+        match self {
+            Mm2Preset::MapOnt => "map-ont",
+            Mm2Preset::MapPb => "map-pb",
+            Mm2Preset::Sr => "sr",
+        }
+    }
+}
+
+/// Bowtie 2's `--ma` default — the per-base perfect-alignment score in `--local`
+/// mode (documented in Bismark's own `--local` help text). Not settable in
+/// Bismark; a future `--ma` passthrough would have to feed this instead.
+pub const BOWTIE2_LOCAL_MATCH_BONUS: f64 = 2.0;
+
+/// minimap2's match score (`-A`; `options.c:47` `opt->a = 2`). Every preset Bismark can
+/// select keeps it at 2 — `map-ont` is "the same as the default" (`options.c:96`), `map-pb`
+/// overrides index options only (`:103`), `sr` sets it explicitly (`:155`) — and there is no
+/// `-A` passthrough (`options::minimap2_options` emits a closed string). rammap mirrors it
+/// (`rammap-core align/map.rs:215`). So the perfect score is `2 × read_length` (#1081).
+///
+/// Deliberately separate from [`BOWTIE2_LOCAL_MATCH_BONUS`] despite the equal value: the two
+/// record unrelated upstream facts and can drift independently.
+pub const MINIMAP2_MATCH_BONUS: f64 = 2.0;
+
+/// How alignment scores are normalized for MAPQ. Replaces the former
+/// `(intercept, slope, local)` trio that rode through every merge/select
+/// signature. Built once in [`resolve`], the only place `--local` and the
+/// resolved aligner are both known.
+///
+/// Fields are private and there is a single general constructor, so `match_bonus` and
+/// `form` can only be set together — outside this module they cannot be set at all.
+/// Within it, keeping them consistent is [`from_emitted`](Self::from_emitted)'s job:
+/// Bowtie 2-local and the minimap-like aligners have a nonzero perfect score, and only
+/// Bowtie 2-local is emitted the `G` form. The MAPQ ladder is *derived* from the match
+/// bonus rather than stored — see [`local_ladder`](Self::local_ladder).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScoreModel {
+    intercept: f64,
+    slope: f64,
+    form: ScoreMinForm,
+    /// Perfect-alignment score per base: nonzero for Bowtie 2 `--local` and for
+    /// minimap2/rammap, zero for every end-to-end Bowtie 2/HISAT2 mode.
+    match_bonus: f64,
+}
+
+impl ScoreModel {
+    /// The general constructor, used by [`resolve`]. `form` is the form actually
+    /// emitted to the aligner (from `options::score_min_params`) — never re-derived
+    /// here, so the `--score-min` option and the MAPQ `scMin` stay one fact (#1079 D2).
+    pub fn from_emitted(
+        intercept: f64,
+        slope: f64,
+        form: ScoreMinForm,
+        local: bool,
+        aligner: Aligner,
+    ) -> Self {
+        Self {
+            intercept,
+            slope,
+            form,
+            // Which modes score matches positively. HISAT2 never does — it forces its match
+            // bonus to 0 (hisat2.cpp:3916) and exposes no --local option of its own.
+            // Assumes Bismark never passes --ma or --bwa-sw-like through; if that changes,
+            // guard at the CLI (--ma >= 0, --bwa-sw-like unsupported) rather than loosening
+            // the `> 0.0` tests below, which would desynchronise the ladder from `normalize`.
+            match_bonus: match aligner {
+                Aligner::Bowtie2 if local => BOWTIE2_LOCAL_MATCH_BONUS,
+                // NOT gated on `local`: minimap2/rammap align locally by design and their
+                // `--local` is rejected, so there is no zero-bonus variant to fall back to.
+                Aligner::Minimap2 | Aligner::Rammap => MINIMAP2_MATCH_BONUS,
+                _ => 0.0,
+            },
+        }
+    }
+
+    /// The **monotone** model: linear `L` form, perfect score 0. Bowtie 2 and HISAT2
+    /// end-to-end — NOT minimap2/rammap, which earn `2·len` even without `--local`
+    /// (#1081); use [`minimap_like`](Self::minimap_like) for those. The name is kept for
+    /// its ~47 call sites; `score_model_construction_matrix` pins
+    /// `end_to_end != minimap_like` so the two cannot be confused silently.
+    ///
+    /// `merge.rs`/`combined.rs` selection tests use this deliberately as an
+    /// aligner-agnostic model — none of them asserts a MAPQ value, so they stay as they are.
+    pub fn end_to_end(intercept: f64, slope: f64) -> Self {
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            false,
+            Aligner::Bowtie2,
+        )
+    }
+
+    /// Bowtie 2 `--local` — logarithmic `G` form, perfect score `2·len`.
+    pub fn bowtie2_local(intercept: f64, slope: f64) -> Self {
+        Self::from_emitted(intercept, slope, ScoreMinForm::Log, true, Aligner::Bowtie2)
+    }
+
+    /// minimap2 / rammap — linear `L` form, perfect score `2·len` (#1081). The `--score-min`
+    /// the coefficients come from is never given to the aligner (`options.rs` throws the base
+    /// string away for the minimap2 clean slate), so `scMin` here is Bismark's own; the
+    /// perfect score is real. `--local` is rejected for both, so there is no second variant.
+    pub fn minimap_like(intercept: f64, slope: f64) -> Self {
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            false,
+            Aligner::Minimap2,
+        )
+    }
+
+    /// HISAT2 `--local` — emitted the linear `L` form, so `scMin` is linear too.
+    pub fn hisat2_local(intercept: f64, slope: f64) -> Self {
+        Self::from_emitted(
+            intercept,
+            slope,
+            ScoreMinForm::Linear,
+            true,
+            Aligner::Hisat2,
+        )
+    }
+
+    /// Use the `--local` MAPQ ladder (Perl 4082-4178) rather than the end-to-end one.
+    ///
+    /// Derived from the match bonus, exactly as Bowtie 2 and HISAT2 both do
+    /// (`unique.h:236`, `if(sc_.monotone)`): a zero perfect score means scores only ever
+    /// go down, which is the end-to-end regime. This is why HISAT2 `--local` uses the
+    /// end-to-end ladder — its match bonus is always 0 (#1080).
+    ///
+    /// The coupling this derivation created was #1081's decision to make, and it was
+    /// answered **yes**: minimap2/rammap now have a nonzero match bonus and therefore take
+    /// the local ladder, so `--local` no longer implies it and the local ladder is no longer
+    /// Bowtie-2-only. The reasoning is consistency with the score regime — the positive-score
+    /// (non-monotone) regime Bowtie 2's local ladder is calibrated for — and it is an analogy,
+    /// not a correspondence: minimap2 derives MAPQ from chain scores on a 0-60 scale and uses
+    /// no ladder at all. The end-to-end ladder was rejected because it needs a second,
+    /// non-derived predicate and because for a **uniquely-aligned** read its floor is 0 rather
+    /// than 22, i.e. it would newly drop such reads from `-q 1` filters in a default path.
+    /// (Both ladders' second-best sub-rungs go lower than 22 — that is not what separates them.)
+    ///
+    /// `score_model_construction_matrix` classifies every aligner in an exhaustive `match`, so a
+    /// fifth backend fails to compile there until it is classified.
+    pub(crate) fn local_ladder(&self) -> bool {
+        self.match_bonus > 0.0
+    }
+
+    /// Minimum valid alignment score, summed over mates (Perl 3932-36).
+    fn score_min(&self, read1_len: usize, read2_len: Option<usize>) -> f64 {
+        let term = |len: usize| {
+            self.intercept
+                + self.slope
+                    * match self.form {
+                        ScoreMinForm::Log => (len as f64).ln(),
+                        ScoreMinForm::Linear => len as f64,
+                    }
+        };
+        let mut sc_min = term(read1_len);
+        if let Some(l2) = read2_len {
+            sc_min += term(l2);
+        }
+        sc_min
+    }
+
+    /// Best possible alignment score, summed over mates (Bowtie 2 `unique.h:207-209`).
+    /// Uses the FULL read length even when the alignment soft-clips, as Bowtie 2 does
+    /// (`scoring.h:310-316`) — a clipped alignment scores below perfect and earns a lower
+    /// MAPQ, which is the conservative direction.
+    fn perfect(&self, read1_len: usize, read2_len: Option<usize>) -> f64 {
+        self.match_bonus * (read1_len + read2_len.unwrap_or(0)) as f64
+    }
+
+    /// `(bestOver, diff)` — the two MAPQ ladder inputs, derived together so a
+    /// caller cannot combine a `scMin` and a `diff` computed from different reads.
+    ///
+    /// `diff` is the score range a valid alignment can span. Bowtie 2 computes it as
+    /// `max(1, perfectScore - scMin)` (`unique.h:218`); modes whose perfect score is 0
+    /// keep the historical `abs(scMin)`, which is byte-frozen and NOT equivalent in
+    /// general — `abs(scMin) == -scMin` only for `scMin <= -1` (#1079).
+    ///
+    /// For the minimap-like aligners `scMin` is Bismark's own number (the aligner never
+    /// receives `--score-min`) while `perfect` is real, so a steep `--score_min` inflates
+    /// both terms and compresses MAPQ toward the ceiling — documented in the `--score_min`
+    /// help and pinned by `minimap_like_non_default_score_min_compresses_upward` (#1081).
+    ///
+    /// A NaN `scMin` (only reachable from a NaN `--score_min`, which the shape-only validation
+    /// would accept) propagates through `abs()` but is swallowed to `1.0` by `max()`; neither
+    /// yields a meaningful MAPQ, and no caller can produce it today.
+    pub(crate) fn normalize(
+        &self,
+        read1_len: usize,
+        read2_len: Option<usize>,
+        as_best: i64,
+    ) -> (f64, f64) {
+        let sc_min = self.score_min(read1_len, read2_len);
+        let diff = if self.match_bonus > 0.0 {
+            (self.perfect(read1_len, read2_len) - sc_min).max(1.0)
+        } else {
+            sc_min.abs()
+        };
+        (as_best as f64 - sc_min, diff)
     }
 }
 
@@ -162,6 +396,82 @@ pub struct ReadProcessing {
     pub maximum_length_cutoff: Option<u32>,
 }
 
+/// Whether the converted reads are streamed to the aligner through FIFOs instead
+/// of written to `--temp_dir` as files, and if not, why not.
+///
+/// Streaming is the default and removes the `_C_to_T` / `_G_to_A` temp files from
+/// the disk footprint. Output is byte-identical either way: the converted bytes
+/// have exactly one consumer and Bismark writes its own `@PG`.
+#[derive(Debug, Clone)]
+pub struct StreamConverted {
+    /// Stream through FIFOs (`true`) or write files (`false`).
+    pub enabled: bool,
+    /// Why files are being written, when `enabled` is `false`. `None` only when
+    /// the user asked for files outright with `--no_stream_converted`; every
+    /// automatic fallback carries a reason so it is never silent.
+    pub reason: Option<String>,
+}
+
+/// Resolve the streaming decision from everything knowable without touching the
+/// filesystem. The `--temp_dir` FIFO probe is applied later, in `run`.
+///
+/// Bowtie 2 and minimap2 accept a FIFO for `-U` / `-1` / `-2` and produce
+/// byte-identical records from it. HISAT2 rejects a FIFO (exit 255), so it keeps
+/// files. The in-process rammap backend (`rammap_in_memory`) needs neither file nor
+/// pipe: the converter hands it the reads directly. The subprocess rammap backend
+/// keeps files, since FIFO support in the external binary is unverified.
+pub fn resolve_stream_converted(
+    no_stream_converted: bool,
+    aligner: Aligner,
+    combined_index: bool,
+    five_base: bool,
+    rammap_in_memory: bool,
+) -> StreamConverted {
+    let no = |reason: &str| StreamConverted {
+        enabled: false,
+        reason: Some(reason.to_string()),
+    };
+    if no_stream_converted {
+        // Asked for explicitly; nothing to explain.
+        return StreamConverted {
+            enabled: false,
+            reason: None,
+        };
+    }
+    if five_base {
+        // 5-Base aligns raw reads to the unconverted genome: nothing to stream.
+        return StreamConverted {
+            enabled: false,
+            reason: None,
+        };
+    }
+    match aligner {
+        Aligner::Bowtie2 | Aligner::Minimap2 => {}
+        Aligner::Hisat2 => {
+            return no(
+                "HISAT2 rejects a named pipe as its read input (it stats the file while \
+                 sniffing the format)",
+            );
+        }
+        Aligner::Rammap if rammap_in_memory => {
+            // In-process: takes the converted reads in memory, no file or pipe.
+        }
+        Aligner::Rammap => {
+            return no(
+                "the subprocess rammap backend reads its converted reads from a file (only the \
+                 in-process backend takes them in memory)",
+            );
+        }
+    }
+    if combined_index {
+        return no("the combined-index alignment models still read the converted reads as files");
+    }
+    StreamConverted {
+        enabled: true,
+        reason: None,
+    }
+}
+
 /// The fully-resolved configuration (the seam consumed by later phases).
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -169,6 +479,10 @@ pub struct RunConfig {
     pub command_line: String,
     /// Selected aligner (Bowtie 2, HISAT2, or minimap2).
     pub aligner: Aligner,
+    /// Whether the converted reads are streamed through FIFOs rather
+    /// than written to `--temp_dir`. Resolved by [`resolve_stream_converted`],
+    /// then narrowed in `run` by the `--temp_dir` FIFO probe.
+    pub stream_converted: StreamConverted,
     /// `[v2/experimental]` `--rammap_subprocess`: OPT OUT to the subprocess rammap
     /// backend (external `rammap` binary on `PATH`). `--rammap` now DEFAULTS to the
     /// in-process `rammap-core` backend (auto-threaded); this flag forces the subprocess
@@ -178,8 +492,9 @@ pub struct RunConfig {
     pub rammap_subprocess: bool,
     /// Thread count for the in-process rammap pool (rev2 single-source-of-truth). Computed
     /// ONCE in `resolve` (where `cli.multicore: Option` still distinguishes explicit from
-    /// default) by [`inprocess_rammap_threads`]: an explicit `--multicore N` verbatim, else
-    /// a capped `available_parallelism()`. Read by BOTH the backend notice (`lib.rs`) and
+    /// default) by [`inprocess_rammap_threads`]: `-p N` (`bowtie_threads`) first (#1074),
+    /// else an explicit `--multicore N` verbatim, else a capped `available_parallelism()`.
+    /// Read by BOTH the backend notice (`lib.rs`) and
     /// the pool builder (`build_se_inprocess_streams`) so the printed count and the built
     /// pool can never disagree. Separate from `multicore` (never mutated) so auto-scaling
     /// does NOT leak into the fork dispatch for FastA/other paths. Always ≥ 1.
@@ -209,6 +524,9 @@ pub struct RunConfig {
     /// #787: collapse each duplex family to one consensus read in a `.5base_consensus.bam`
     /// (implies `five_base_duplex`). Paired-end only. Requires `five_base`.
     pub five_base_consensus: bool,
+    /// #1104: which consensus multiplicities to emit. Non-default requires
+    /// `five_base_consensus` (guarded at resolve()).
+    pub five_base_emit_multiplicity: EmitMultiplicity,
     /// #787: take the duplex UMI from the read NAME tail (`A+B` dual UMI) instead of inline
     /// read bases; the duplex partner carries `B+A`. Requires `five_base`; mutually
     /// exclusive with `five_base_umi_len`.
@@ -227,14 +545,17 @@ pub struct RunConfig {
     pub aligner_options: String,
     /// Gap penalties (for later MAPQ).
     pub gap_penalties: GapPenalties,
-    /// `--score_min` intercept (default `0.0`) — for `calc_mapq`.
-    pub score_min_intercept: f64,
-    /// `--score_min` slope (default `-0.2`) — for `calc_mapq`.
-    pub score_min_slope: f64,
-    /// `--local` mode (= `cli.local`): `calc_mapq` uses `ln(readLen)` scMin + the local
-    /// MAPQ ladder. The `--score_min` defaults are aligner-dependent: Bowtie 2-local =
-    /// `(20.0, 8.0)` (G-form); HISAT2-local = `(0.0, -0.2)` (L-form) — see `score_min_params`.
-    pub score_min_local: bool,
+    /// Score normalization for `calc_mapq`: the `--score_min` parameters, the
+    /// `scMin` function form and the ladder choice. The `--score_min` defaults are
+    /// aligner-dependent: Bowtie 2-local = `(20.0, 8.0)` (G-form); HISAT2-local and
+    /// end-to-end = `(0.0, -0.2)` (L-form; `(0.0, -0.6)` for 5-Base Bowtie 2/HISAT2) — see
+    /// `score_min_params`.
+    pub score_model: ScoreModel,
+    /// The `--mm2_*` selectors' answer, resolved once — **regardless of aligner**. Only the
+    /// minimap-family backends read it. NB it is NOT always `MapOnt` for other aligners:
+    /// `--illumina_5base --bowtie2 --five_base_index X` resolves to `Aligner::Bowtie2` with
+    /// `illumina_5base = true`, hence `Sr`. Inert there, but not a dummy (#1092).
+    pub mm2_preset: Mm2Preset,
     /// Perl's `$dovetail` variable (8047): `!--no_dovetail`, set for **every**
     /// aligner (the `if($bowtie2)` at 8051 only gates whether `--dovetail` is
     /// pushed to the *aligner options*, NOT this variable). Consumed by the PE
@@ -258,6 +579,8 @@ pub struct RunConfig {
     pub add_barcode: bool,
     /// `--add_umi`: write `UR:Z:<umi>` parsed from QNAME field 1.
     pub add_umi: bool,
+    /// `--strandID`: write `YS:Z:<strand>` on paired-end records.
+    pub strand_id: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -268,9 +591,12 @@ pub struct RunConfig {
     /// For HISAT2 this is forced to `1` when `--multicore N` is remapped to `-p N`
     /// (see `hisat2_multicore_remap`) — the fork model is not faithful for HISAT2.
     pub multicore: u32,
-    /// `-p` (threads passed to the aligner instance, Perl Bismark `-p`). Used by the
-    /// 5-Base path to set minimap2 `-t` / bowtie2,hisat2 `-p` (precedence over
-    /// `--multicore`, then all logical CPUs). `None` ⇒ aligner default / all cores.
+    /// `-p` (threads-to-aligner knob, Perl Bismark `-p`): the per-instance thread count.
+    /// Applied as bowtie2/hisat2 `-p` and, since #1074, minimap2/rammap `-t` (subprocess)
+    /// / the rammap in-process pool size — not just the 5-Base path. minimap2 `-t` is
+    /// thread-invariant (spike), so a bare `--minimap2`/`--rammap` keeps the faithful
+    /// `-t 2`; `-p N` lifts it. Precedence over `--multicore`, then all logical CPUs.
+    /// `None` ⇒ aligner default / all cores.
     pub bowtie_threads: Option<u32>,
     /// HISAT2 Approach B-faithful (`--hisat2 --multicore N`): when set, `--multicore N`
     /// was interpreted as a single HISAT2 instance with `-p N --reorder` (NOT the fork
@@ -326,24 +652,34 @@ fn hisat2_multicore_threads(aligner: Aligner, cli_multicore: Option<u32>) -> Opt
 const RAMMAP_INPROCESS_THREAD_CAP: usize = 8;
 
 /// Thread count for the in-process rammap pool (rev2, Alt-1 — the single source of truth
-/// read by both the backend notice and the pool builder). An explicit `--multicore N` is
-/// honored verbatim; otherwise the default auto-scales to `min(avail, CAP)` so the default
+/// read by both the backend notice and the pool builder). Precedence (#1074): `-p N`
+/// (`bowtie_threads`, the per-aligner thread knob) first when set; else an explicit
+/// `--multicore N` verbatim; else the default auto-scales to `min(avail, CAP)` so the default
 /// `--rammap` run is multi-threaded (not the ~6× single-threaded regression Alt-1 exists to
 /// prevent). Pure (no I/O — `avail` is passed in) so it is unit-testable fixture-free.
 /// ALWAYS returns ≥ 1: `rayon`'s `num_threads(0)` means "all cores", which we must never
 /// select by accident, so both branches clamp with `.max(1)`.
-fn inprocess_rammap_threads(cli_multicore: Option<u32>, avail: usize) -> usize {
-    let n = match cli_multicore {
-        Some(n) => n as usize,
-        None => avail.min(RAMMAP_INPROCESS_THREAD_CAP),
+fn inprocess_rammap_threads(
+    cli_bowtie_threads: Option<u32>,
+    cli_multicore: Option<u32>,
+    avail: usize,
+) -> usize {
+    // #1074: `-p` (bowtie_threads) is the per-aligner thread knob and takes precedence
+    // when set (>0); otherwise the existing behaviour — explicit `--multicore` verbatim,
+    // else a capped `available_parallelism()`.
+    let n = match cli_bowtie_threads.filter(|&p| p > 0) {
+        Some(p) => p as usize,
+        None => match cli_multicore {
+            Some(n) => n as usize,
+            None => avail.min(RAMMAP_INPROCESS_THREAD_CAP),
+        },
     }
     .max(1);
     debug_assert!(n >= 1, "rammap pool thread count must be >= 1 (never 0)");
     n
 }
 
-/// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
-/// Reject a paired-end layout with an aligner that has no PE support / no
+/// Reject paired-end input with an aligner that has no PE support / no
 /// byte-identity oracle (minimap2, rammap — minimap-like, SE-only).
 ///
 /// PE-minimap2 is NOT byte-identity-reachable and is deferred out of v1.x
@@ -353,13 +689,8 @@ fn inprocess_rammap_threads(cli_multicore: Option<u32>, avail: usize) -> usize {
 /// has no `$mm2` branch, so it mislabels minimap2 PE as "HISAT2" — there is no
 /// trustworthy oracle to byte-match. minimap2 AND rammap are SE-only. The error
 /// names the actual engine (`aligner.name()`) so a `--rammap` run reads "--rammap".
-///
-/// Shared by [`resolve`] (native `-1/-2`) AND the uBAM SingleEnd→PairedEnd switch
-/// (`lib::resolve_ubam_inputs`), so this layout-dependent guard cannot drift
-/// between the two entry points — a positional paired uBAM is rejected for
-/// minimap2/rammap exactly as `-1/-2` would be.
-pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) -> Result<()> {
-    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && layout.is_paired() {
+pub fn reject_unsupported_paired_aligner(aligner: Aligner, paired: bool) -> Result<()> {
+    if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) && paired {
         return Err(AlignerError::Unsupported(format!(
             "paired-end alignment with --{0} is not supported: the Perl Bismark minimap2 \
              paired-end path is unfinished/experimental and has no trustworthy byte-identity \
@@ -370,6 +701,58 @@ pub fn reject_unsupported_paired_aligner(aligner: Aligner, layout: &ReadLayout) 
     Ok(())
 }
 
+/// Two index basenames naming the same file, comparing canonicalised directories so `..` and
+/// symlinks cannot slip past. Falls back to a literal comparison when a directory cannot be
+/// canonicalised.
+fn same_index_basename(a: &Path, b: &Path) -> bool {
+    let split = |p: &Path| -> Option<(PathBuf, OsString)> {
+        let name = p.file_name()?.to_os_string();
+        let parent = p.parent().unwrap_or(Path::new(""));
+        let dir = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+        Some((dir, name))
+    };
+    match (split(a), split(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// Reject a BISULFITE-converted basename for `--five_base_index`.
+///
+/// 5-Base reads are unconverted, so a `BS_CT`/`BS_GA` index aligns them against a C→T or G→A
+/// genome and yields systematically inverted calls with no error anywhere.
+fn reject_converted_five_base_index(index: &Path, genome: &GenomeIndexes) -> Result<()> {
+    for (converted, label) in [
+        (&genome.ct_index_basename, "C->T"),
+        (&genome.ga_index_basename, "G->A"),
+    ] {
+        if same_index_basename(index, converted) {
+            return Err(AlignerError::Validation(format!(
+                "--five_base_index {} is the {label}-converted bisulfite index. 5-Base reads are \
+                 unconverted, so aligning them against it would invert every methylation call. \
+                 Pass a NORMAL index of the genome instead.",
+                index.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve the genome for this run. 5-Base aligns against the unconverted
+/// `--five_base_index` or, under minimap2, the FASTA — never the CT/GA indexes (#1099).
+fn discover_genome_for_run(
+    five_base: bool,
+    aligner: Aligner,
+    genome_arg: &Path,
+) -> Result<GenomeIndexes> {
+    if five_base {
+        discovery::discover_genome_fasta_only(genome_arg)
+    } else {
+        discovery::discover_genome(aligner, genome_arg)
+    }
+}
+
+/// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
@@ -460,6 +843,15 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 .into(),
         ));
     }
+    // #1104: the emit-multiplicity selector only affects the consensus collapse.
+    if cli.five_base_emit_multiplicity != EmitMultiplicity::Duplex && !cli.five_base_consensus {
+        return Err(AlignerError::Validation(
+            "--five_base_emit_multiplicity requires --five_base_consensus (or a \
+             --five_base_consensus_from_bam run): it selects which consensus families are \
+             emitted."
+                .into(),
+        ));
+    }
     // The minimap2-only preset/length flags (Perl 8329-8356): outside minimap2
     // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
     // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
@@ -481,7 +873,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // run (`lib.rs`). Bowtie 2 `--multicore` (the fork path, Phase 9b) and single-core
     // HISAT2 are unaffected. `--ambig_bam` works under B (one instance, the single-instance
     // path — Perl's Bowtie-2-only multicore ambig temp machinery is never reached).
-    let hisat2_multicore_remap = hisat2_multicore_threads(aligner, cli.multicore);
+    let hisat2_multicore_remap = if cli.illumina_5base {
+        None
+    } else {
+        hisat2_multicore_threads(aligner, cli.multicore)
+    };
     // An explicit `-p M` AND the remapped `--multicore N` both set is ambiguous (both
     // would drive HISAT2's `-p`) → fail loud rather than silently pick one.
     if hisat2_multicore_remap.is_some() && cli.bowtie_threads.is_some() {
@@ -584,19 +980,23 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // the Perl minimap2 paired-end path is unfinished WIP with no trustworthy byte-identity
     // oracle. 5-Base PE (#787) is its OWN path (run_pe_five_base) — unconverted minimap2 PE,
     // concordance-gated, NOT the rejected bisulfite minimap2 PE — so it is exempt.
+    // A positional paired uBAM/BINSEQ is still a SingleEnd layout here (#1135).
+    let paired = layout.is_paired() || crate::aligner::positional_input_is_paired(&layout)?;
     if !cli.illumina_5base {
-        reject_unsupported_paired_aligner(aligner, &layout)?;
+        reject_unsupported_paired_aligner(aligner, paired)?;
     }
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
     // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
     // silently fall back to the faithful path — that would mask which strands the
     // combined search omits). PLAN §3.1 + phase 5.
-    reject_combined_index_unsupported(cli, aligner, library, &layout)?;
+    reject_combined_index_unsupported(cli, aligner, library, paired)?;
 
-    let genome = discovery::discover_genome(aligner, &genome_arg)?;
+    let genome = discover_genome_for_run(cli.illumina_5base, aligner, &genome_arg)?;
     // --combined_index requires the combined index to be present (built by
     // `bismark_genome_preparation --combined_genome`); fail loudly if absent.
+    // 5-Base cannot reach here with a combined flag: the --illumina_5base scope guards reject
+    // all four, so its unprobed None is safe.
     if cli.combined_index && genome.combined_index_basename.is_none() {
         return Err(AlignerError::Validation(format!(
             "--combined_index was requested but no combined index was found at \
@@ -605,6 +1005,17 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             genome.genome_dir.display()
         )));
     }
+    // After genome discovery so a missing genome still wins, and before `detect_aligner` so the
+    // run fails before anything is spawned or written (#1100).
+    if cli.illumina_5base
+        && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2)
+        && let Some(index) = cli.five_base_index.as_deref()
+    {
+        reject_converted_five_base_index(index, &genome)?;
+        let env = discovery::index_env_for(aligner);
+        discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
+    }
+
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
@@ -612,15 +1023,26 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::Rammap => cli.path_to_rammap.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
-    let (aligner_options, gap_penalties) = options::build_aligner_options(
-        cli,
+    let (aligner_options, gap_penalties) =
+        if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
+            options::build_five_base_aligner_options(cli, aligner, format)?
+        } else {
+            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+        };
+    // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
+    // and the in-process rammap backend cannot drift (#1092). Must stay after
+    // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
+    let mm2_preset = options::resolve_mm2_preset(cli)?;
+    let (score_min_intercept, score_min_slope, score_min_form) =
+        options::score_min_params(cli, aligner)?;
+    // The only place `--local` and the resolved aligner are both known.
+    let score_model = ScoreModel::from_emitted(
+        score_min_intercept,
+        score_min_slope,
+        score_min_form,
+        cli.local,
         aligner,
-        format,
-        layout.is_paired(),
-        hisat2_multicore_remap,
-    )?;
-    let (score_min_intercept, score_min_slope) = options::score_min_params(cli, aligner)?;
-    let score_min_local = cli.local; // --local: ln() scMin + the local MAPQ ladder
+    );
     reject_unsupported_output_flags(cli)?;
     let output = resolve_output(cli)?;
     let read_processing = ReadProcessing {
@@ -634,6 +1056,19 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     Ok(RunConfig {
         command_line,
         aligner,
+        // Narrowed further in `run` by the `--temp_dir` FIFO probe.
+        stream_converted: resolve_stream_converted(
+            cli.no_stream_converted,
+            aligner,
+            cli.combined_index
+                || cli.combined_index_sequential
+                || cli.combined_index_single_pass
+                || cli.combined_index_parallel,
+            cli.illumina_5base,
+            // Same predicate as the routing in `process_se_chunk`, so the two
+            // cannot disagree.
+            crate::aligner::inprocess_rammap_selected(aligner, cli.rammap_subprocess, format),
+        ),
         // rev2: opt-OUT to the subprocess rammap backend (guarded above: requires --rammap).
         rammap_subprocess: cli.rammap_subprocess,
         // rev2 SINGLE SOURCE OF TRUTH for the in-process rammap pool size: explicit
@@ -643,6 +1078,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // mutates `multicore` — auto-scaling must not leak into the fork dispatch (a FastA
         // `--rammap` run would otherwise fork N index-reloading workers).
         rammap_inprocess_threads: inprocess_rammap_threads(
+            cli.bowtie_threads,
             cli.multicore,
             // On the rare platform where `available_parallelism()` fails, fall back to 2
             // (not 1) so the default does not silently revert to the single-threaded path
@@ -661,6 +1097,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         // --five_base_consensus implies the duplex family pass.
         five_base_duplex: cli.five_base_duplex || cli.five_base_consensus,
         five_base_consensus: cli.five_base_consensus,
+        five_base_emit_multiplicity: cli.five_base_emit_multiplicity,
         five_base_umi_qname: cli.five_base_umi_qname,
         library,
         layout,
@@ -669,9 +1106,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         detected_aligner,
         aligner_options,
         gap_penalties,
-        score_min_intercept,
-        score_min_slope,
-        score_min_local,
+        score_model,
+        mm2_preset,
         // Perl 8047: `$dovetail = 1 unless $no_dovetail` — independent of the aligner.
         dovetail: !cli.no_dovetail,
         phred64: cli.phred64,
@@ -680,6 +1116,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ambig_bam: cli.ambig_bam,
         add_barcode: cli.add_barcode,
         add_umi: cli.add_umi,
+        strand_id: cli.strand_id,
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
@@ -716,7 +1153,7 @@ fn reject_combined_index_unsupported(
     cli: &Cli,
     aligner: Aligner,
     library: LibraryType,
-    layout: &ReadLayout,
+    paired: bool,
 ) -> Result<()> {
     // --combined_index_single_pass (model (b), the single-pass tagged exec model) is
     // ONLY meaningful for the non-directional combined path (the sole mode that
@@ -744,10 +1181,7 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 6: PE non-directional combined now supports this low-RAM exec model
-        // (the `layout.is_paired()` reject that used to live here is lifted — both SE and
-        // PE non-dir single-pass are valid targets). It stays Bowtie 2-only (next guard);
-        // PE-HISAT2 + this flag is therefore rejected by the aligner guard below.
+        // SE and PE non-directional are both valid; Bowtie 2 only (next guard).
         if aligner != Aligner::Bowtie2 {
             return Err(AlignerError::Unsupported(
                 "--combined_index_single_pass requires Bowtie 2: it is the Bowtie-2-specific \
@@ -795,13 +1229,7 @@ fn reject_combined_index_unsupported(
                     .into(),
             ));
         }
-        // v2.x Phase 6: PE non-directional combined supports this faithful sequential
-        // low-RAM exec model (the `layout.is_paired()` reject is lifted — SE + PE both
-        // valid). v2.x Phase 7: HISAT2 supports it too (the sequential model is faithful +
-        // aligner-agnostic — it spawns whichever `config.aligner` resolves and just runs
-        // the two passes serially). minimap2 stays rejected (next guard + the global
-        // minimap2 reject below). (--combined_index_single_pass stays Bowtie-2-only — its
-        // own guard above; the tag-RNG mechanism is Bowtie-2-specific.)
+        // SE and PE non-directional are both valid; Bowtie 2 and HISAT2 only (next guard).
         if !matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
             return Err(AlignerError::Unsupported(format!(
                 "--combined_index_sequential requires Bowtie 2 or HISAT2: it is the faithful \
@@ -883,8 +1311,8 @@ fn reject_combined_index_unsupported(
     // keeps **minimap2** PE combined rejected (the Minimap2-only reject above only covers
     // SE fall-through; a single both-strands minimap2 pass cannot do the 4-strand dispatch,
     // and PE-minimap2 has no trustworthy oracle). minimap2 PE is also double-rejected at the
-    // global `aligner == Minimap2 && layout.is_paired()` guard above.
-    if layout.is_paired()
+    // global `reject_unsupported_paired_aligner` guard above.
+    if paired
         && !(matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2)
             && matches!(
                 library,
@@ -1049,7 +1477,7 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
 ///   must be in `100..=100_000` (else die), and defaults to `10000` when absent.
 ///   Returns `Some(value)`.
 ///
-/// (Preset *selection* + the preset-conflict dies live in `options::minimap2_options`,
+/// (Preset *selection* + the preset-conflict dies live in `options::resolve_mm2_preset`,
 /// mirroring Perl's `if($mm2)` option-assembly block 8358-8413.)
 fn resolve_mm2_max_length(cli: &Cli, aligner: Aligner) -> Result<Option<u32>> {
     // rammap is minimap-like — it honors the SAME `--mm2_*` knobs + length cutoff
@@ -1279,8 +1707,17 @@ fn resolve_output(cli: &Cli) -> Result<OutputTarget> {
             "CRAM output is not yet supported in v1 (BAM only).".into(),
         ));
     }
+    // Perl creates a missing --output_dir and says so; unlike Perl's single-level mkdir, missing
+    // parents are created too.
+    let output_dir = cli.output_dir.clone().unwrap_or_default();
+    if !output_dir.as_os_str().is_empty() && !output_dir.is_dir() {
+        std::fs::create_dir_all(&output_dir).map_err(|e| {
+            AlignerError::Validation(format!("--output_dir {}: {e}", output_dir.display()))
+        })?;
+        eprintln!("Created output directory {}!\n", output_dir.display());
+    }
     Ok(OutputTarget {
-        output_dir: cli.output_dir.clone().unwrap_or_default(),
+        output_dir,
         temp_dir: cli.temp_dir.clone().unwrap_or_default(),
         basename: cli.basename.clone(),
         // Perl 8238: `$prefix =~ s/\.+$//` — strip trailing dots (the `.` joining
@@ -1325,6 +1762,34 @@ impl RunConfig {
             ReadFormat::FastQ => "FASTQ",
             ReadFormat::FastA => "FASTA",
         };
+        // A 5-Base run probes no converted index; report the index it does use.
+        let index_lines = if self.five_base {
+            format!(
+                "5-Base index:   {}\n",
+                self.five_base_index
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(none: minimap2 reads the FASTA)".to_string()),
+            )
+        } else {
+            format!(
+                "CT index:       {}\n\
+                 GA index:       {}\n\
+                 large index:    {}\n",
+                self.genome.ct_index_basename.display(),
+                self.genome.ga_index_basename.display(),
+                self.genome.large_index,
+            )
+        };
+        // The reason for a fallback is printed separately by `run`. 5-Base has
+        // no converted reads at all, so it gets its own state.
+        let converted = if self.five_base {
+            "none (5-Base aligns the raw reads to the unconverted genome)"
+        } else if self.stream_converted.enabled {
+            "streamed to the aligner through FIFOs (no temp files)"
+        } else {
+            "written to the temp dir as files"
+        };
         format!(
             "Bismark aligner (Rust) — resolved configuration\n\
                aligner:        {} {} ({})\n\
@@ -1332,25 +1797,123 @@ impl RunConfig {
                layout:         {layout} [{format}]\n\
                reads:          {files}\n\
                genome:         {}\n\
-               CT index:       {}\n\
-               GA index:       {}\n\
-               large index:    {}\n\
+               {index_lines}\
                FASTA(s):       {} file(s) ({:?})\n\
                aligner_options: {}\n\
+               converted reads: {converted}\n\
                output:         BAM, dir={:?}, basename={:?}",
             self.aligner.name(),
             self.detected_aligner.version,
             self.detected_aligner.path.display(),
             self.genome.genome_dir.display(),
-            self.genome.ct_index_basename.display(),
-            self.genome.ga_index_basename.display(),
-            self.genome.large_index,
             self.genome.fastas.len(),
             self.genome.fasta_kind,
-            self.aligner_options,
+            if self.five_base {
+                crate::aligner::five_base_aligner_options(self)
+            } else {
+                self.aligner_options.clone()
+            },
             self.output.output_dir,
             self.output.basename,
         )
+    }
+}
+
+/// Minimal `RunConfig` for tests that must drive a production function taking one.
+///
+/// `build_se_inprocess_streams` — its only caller today — reads exactly `library`,
+/// `genome.{ct,ga}_index_basename`, `mm2_preset` and `rammap_inprocess_threads`. Everything
+/// else is inert **for that path**; a test asserting something else (MAPQ, PE) must not assume
+/// the remaining 32 defaults are meaningful.
+///
+/// Exists because `resolve` cannot be used: it execs `<aligner> --version`
+/// (`aligner::detect_aligner`), and the `rammap-inprocess` CI job installs minimap2, not
+/// rammap. Only the fields a caller varies are parameters; everything else is an inert
+/// default. A new `RunConfig` field breaks this loudly, which is the intended behaviour —
+/// the alternative is a `..Default::default()` that silently absorbs it (#1092).
+#[cfg(test)]
+pub fn run_config_stub(
+    aligner: Aligner,
+    mm2_preset: Mm2Preset,
+    ct_index_basename: PathBuf,
+    ga_index_basename: PathBuf,
+    library: LibraryType,
+    layout: ReadLayout,
+) -> RunConfig {
+    use crate::aligner::aligner::DetectedAligner;
+    use crate::aligner::discovery::{FastaKind, GenomeIndexes};
+    RunConfig {
+        command_line: "bismark (test stub)".into(),
+        aligner,
+        stream_converted: StreamConverted {
+            enabled: false,
+            reason: None,
+        },
+        rammap_subprocess: false,
+        rammap_inprocess_threads: 1,
+        five_base: false,
+        five_base_deconvolution: false,
+        five_base_index: None,
+        five_base_umi_len: 0,
+        five_base_baseq: 0,
+        five_base_min_mapq: 0,
+        five_base_duplex: false,
+        five_base_consensus: false,
+        five_base_emit_multiplicity: EmitMultiplicity::Duplex,
+        five_base_umi_qname: false,
+        library,
+        layout,
+        format: ReadFormat::FastQ,
+        genome: GenomeIndexes {
+            genome_dir: PathBuf::from("."),
+            ct_index_basename,
+            ga_index_basename,
+            large_index: false,
+            combined_index_basename: None,
+            fastas: Vec::new(),
+            fasta_kind: FastaKind::Fa,
+        },
+        detected_aligner: DetectedAligner {
+            path: PathBuf::from("rammap"),
+            version: "1.1.1".into(),
+        },
+        aligner_options: String::new(),
+        gap_penalties: GapPenalties {
+            deletion_open: 5,
+            deletion_extend: 3,
+            insertion_open: 5,
+            insertion_extend: 3,
+        },
+        score_model: ScoreModel::minimap_like(0.0, -0.2),
+        mm2_preset,
+        dovetail: false,
+        phred64: false,
+        unmapped: false,
+        ambiguous: false,
+        ambig_bam: false,
+        add_barcode: false,
+        add_umi: false,
+        strand_id: false,
+        output: OutputTarget {
+            output_dir: PathBuf::from("."),
+            temp_dir: PathBuf::from("."),
+            basename: None,
+            prefix: None,
+            format: OutputFormat::Bam,
+            gzip: false,
+        },
+        read_processing: ReadProcessing {
+            skip: None,
+            upto: None,
+            icpc: false,
+            maximum_length_cutoff: None,
+        },
+        multicore: 1,
+        bowtie_threads: None,
+        hisat2_multicore_remap: None,
+        combined_index: false,
+        combined_index_single_pass: false,
+        combined_index_parallel: false,
     }
 }
 
@@ -1369,6 +1932,213 @@ mod tests {
     #[test]
     fn resolve_aligner_defaults_to_bowtie2() {
         assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    /// A genome folder holding only a FASTA, plus empty read files — the #1099 shape.
+    /// `resolve` stats the reads (`check_exists`) before discovery, so they must exist.
+    fn fasta_only_genome_and_reads() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let genome = tmp.path().join("g");
+        std::fs::create_dir_all(&genome).unwrap();
+        std::fs::write(genome.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+        let r1 = tmp.path().join("r1.fastq");
+        let r2 = tmp.path().join("r2.fastq");
+        std::fs::write(&r1, b"").unwrap();
+        std::fs::write(&r2, b"").unwrap();
+        (tmp, genome, r1, r2)
+    }
+
+    /// #1099, at the branch itself — no aligner binary involved, so this is the gate that
+    /// runs identically everywhere.
+    #[test]
+    fn discover_genome_for_run_skips_the_index_check_for_five_base() {
+        let (_tmp, genome, _r1, _r2) = fasta_only_genome_and_reads();
+
+        assert!(discover_genome_for_run(true, Aligner::Bowtie2, &genome).is_ok());
+        assert!(discover_genome_for_run(true, Aligner::Minimap2, &genome).is_ok());
+        assert!(matches!(
+            discover_genome_for_run(false, Aligner::Bowtie2, &genome),
+            Err(AlignerError::FaultyIndex { .. })
+        ));
+    }
+
+    /// #1099 through `resolve`. Asserts the variant cannot be `FaultyIndex` rather than
+    /// `Ok`: `resolve` execs `<aligner> --version` and CI installs no bowtie2.
+    #[test]
+    fn five_base_resolve_does_not_require_the_converted_index() {
+        let (_tmp, genome, r1, r2) = fasta_only_genome_and_reads();
+        // A real stub index, so the bowtie2 arm clears #1100's check and keeps exercising
+        // genome discovery rather than stopping at it.
+        let idx = genome.join("normal_idx");
+        for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+            std::fs::write(genome.join(format!("normal_idx.{s}.bt2")), b"").unwrap();
+        }
+        let (g, r1, r2, idx) = (
+            genome.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+            idx.to_str().unwrap(),
+        );
+
+        for extra in [Vec::new(), vec!["--bowtie2", "--five_base_index", idx]] {
+            let mut args = vec!["--illumina_5base", "--genome", g, "-1", r1, "-2", r2];
+            args.extend_from_slice(&extra);
+            if let Err(e) = resolve(&cli_from(&args), "cmd".into()) {
+                assert!(
+                    !matches!(e, AlignerError::FaultyIndex { .. }),
+                    "5-Base must not require the converted index (extra: {extra:?}); got: {e}"
+                );
+                assert!(
+                    !e.to_string().contains("--five_base_index"),
+                    "the index check must not fire on a valid index (extra: {extra:?}); got: {e}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn five_base_hisat2_keeps_requested_multicore_without_remap() {
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, genome, r1, r2) = fasta_only_genome_and_reads();
+        let idx = tmp.path().join("plain");
+        for i in 1..=8 {
+            std::fs::write(tmp.path().join(format!("plain.{i}.ht2")), b"").unwrap();
+        }
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let hisat2 = bin.join("hisat2");
+        std::fs::write(&hisat2, "#!/bin/sh\necho 'hisat2-align-s version 2.2.2'\n").unwrap();
+        std::fs::set_permissions(&hisat2, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = |p: &Path| p.to_str().unwrap().to_string();
+        let base = [
+            "--illumina_5base".to_string(),
+            "--hisat2".into(),
+            "--genome".into(),
+            path(&genome),
+            "--five_base_index".into(),
+            path(&idx),
+            "--path_to_hisat2".into(),
+            path(&bin),
+            "-1".into(),
+            path(&r1),
+            "-2".into(),
+            path(&r2),
+            "--multicore".into(),
+            "4".into(),
+        ];
+        for extra in [&[][..], &["-p", "8"][..]] {
+            let mut args: Vec<&str> = base.iter().map(String::as_str).collect();
+            args.extend_from_slice(extra);
+            let config = resolve(&cli_from(&args), "cmd".into()).unwrap();
+            assert_eq!(config.multicore, 4, "{extra:?}");
+            assert_eq!(config.hisat2_multicore_remap, None, "{extra:?}");
+        }
+    }
+
+    /// A converted index would invert every call with no error at any stage, so it is rejected by
+    /// name — including via a `..` path, which is why the comparison canonicalises.
+    #[test]
+    fn converted_five_base_index_is_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let genome = tmp.path().join("g");
+        let ct = genome.join("Bisulfite_Genome").join("CT_conversion");
+        let ga = genome.join("Bisulfite_Genome").join("GA_conversion");
+        std::fs::create_dir_all(&ct).unwrap();
+        std::fs::create_dir_all(&ga).unwrap();
+        std::fs::write(genome.join("genome.fa"), b">chr1\nACGT\n").unwrap();
+        let indexes = discovery::discover_genome_fasta_only(&genome).unwrap();
+
+        for probe in [ct.join("BS_CT"), ga.join("BS_GA")] {
+            let err = reject_converted_five_base_index(&probe, &indexes).unwrap_err();
+            assert!(
+                err.to_string().contains("converted bisulfite index"),
+                "{err}"
+            );
+        }
+        // Same file reached through `..`.
+        let via_dotdot = ct.join("..").join("CT_conversion").join("BS_CT");
+        assert!(reject_converted_five_base_index(&via_dotdot, &indexes).is_err());
+        // An ordinary basename is untouched.
+        assert!(reject_converted_five_base_index(&genome.join("normal_idx"), &indexes).is_ok());
+    }
+
+    /// The over-reach guard: the same folder must still be rejected without `--illumina_5base`.
+    #[test]
+    fn faithful_resolve_still_requires_the_converted_index() {
+        let (_tmp, genome, r1, _r2) = fasta_only_genome_and_reads();
+        let err = resolve(
+            &cli_from(&["--genome", genome.to_str().unwrap(), r1.to_str().unwrap()]),
+            "cmd".into(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, AlignerError::FaultyIndex { .. }),
+            "faithful runs must still require the converted index; got: {err}"
+        );
+    }
+
+    /// A `--mm2_*` flag on a non-minimap aligner must still report "unless you also use
+    /// --minimap2", NOT a preset-conflict message.
+    ///
+    /// This pins the **placement** of `resolve_mm2_preset` in `resolve` (#1092). A single
+    /// selector cannot discriminate — the resolver never errors on one — so the case has to
+    /// carry a conflicting PAIR: if the resolver were called before `resolve_mm2_max_length`,
+    /// the user would see the short⊕nanopore text instead. No other test covers this.
+    #[test]
+    fn mm2_flags_on_bowtie2_report_the_wrong_aligner_not_a_preset_conflict() {
+        let err = resolve(
+            &cli_from(&["--mm2_short_reads", "--mm2_nanopore"]),
+            "cmd".into(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("unless you also use --minimap2"),
+            "expected the wrong-aligner die, got: {err}"
+        );
+        assert!(
+            !err.contains("but not both"),
+            "the preset-conflict die must not win here — resolve_mm2_preset is placed too \
+             early: {err}"
+        );
+    }
+
+    /// The premise `perfect = 2 × read_length` rests on is `AS <= 2 × read_length` for every
+    /// preset Bismark can select. Asserted here through the `pub(crate)` seam (`bestOver <= diff`
+    /// is equivalent to `AS <= perfect`, since both subtract the same `scMin`) over the
+    /// `(len, AS)` pairs a real minimap2 2.31-r1302 actually produced — see
+    /// `plans/08012026_minimap2-mapq-denominator/SPIKE.md` §F2/§F3.
+    ///
+    /// NB this pins the arithmetic, not the aligner: it cannot detect a future minimap2 that
+    /// starts reporting `AS > 2·len`. `minimap2_reports_at_most_two_per_base` in
+    /// `tests/aligner_minimap2_as_bound.rs` is the live gate for that.
+    #[test]
+    fn minimap_like_perfect_score_bounds_observed_alignment_scores() {
+        // (read length, AS) observed across map-ont / map-pb / sr, perfect and mismatched.
+        let observed = [
+            (50usize, 100i64),
+            (50, 98),
+            (50, 96),
+            (100, 200),
+            (100, 198),
+            (100, 190),
+            (150, 300),
+            (150, 270),
+            (250, 500),
+            (250, 470),
+            (1000, 2000),
+            (1000, 1970),
+        ];
+        let model = ScoreModel::minimap_like(0.0, -0.2);
+        for (len, as_best) in observed {
+            let (best_over, diff) = model.normalize(len, None, as_best);
+            assert!(
+                best_over <= diff,
+                "len={len} AS={as_best}: AS exceeds the perfect score, so the MAPQ ratio \
+                 would exceed 1 and the ladder would saturate again (#1081)"
+            );
+        }
     }
 
     #[test]
@@ -1480,28 +2250,19 @@ mod tests {
         assert!(resolve_aligner(&cli_from(&["--minimap2", "--bowtie2"])).is_err());
     }
 
-    /// #1025: the shared paired-aligner guard — minimap2/rammap PE rejected,
-    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed. This is the
-    /// guard `lib::resolve_ubam_inputs` re-runs after the uBAM SE→PE switch so a
-    /// positional `--minimap2 <pe.bam>` fails loud exactly like `--minimap2 -1/-2`.
+    /// #1025: the paired-aligner guard — minimap2/rammap PE rejected,
+    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed.
     #[test]
     fn reject_unsupported_paired_aligner_guard() {
-        let pe = ReadLayout::PairedEnd {
-            mates1: vec!["a_1.fq".into()],
-            mates2: vec!["a_2.fq".into()],
-        };
-        let se = ReadLayout::SingleEnd {
-            reads: vec!["a.fq".into()],
-        };
         // minimap2/rammap + PE → rejected.
-        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &pe).is_err());
-        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &pe).is_err());
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, true).is_err());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, true).is_err());
         // Bowtie 2/HISAT2 + PE → allowed.
-        assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, &pe).is_ok());
-        assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, &pe).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, true).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, true).is_ok());
         // minimap2/rammap + SE → allowed (SE is their supported mode).
-        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, &se).is_ok());
-        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, &se).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, false).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::Rammap, false).is_ok());
     }
 
     /// Phase 3 (T2): `--rammap` selects [`Aligner::Rammap`].
@@ -1610,25 +2371,29 @@ mod tests {
         );
     }
 
-    /// rev2 (Alt-1): the in-process rammap pool thread count. Explicit `--multicore N` is
-    /// honored verbatim; the default auto-scales to `min(avail, CAP)`; never returns 0.
+    /// rev2 (Alt-1) + #1074: the in-process rammap pool thread count.
+    /// Args are `(bowtie_threads /* -p */, multicore, avail)`. `-p` takes precedence
+    /// when set; else explicit `--multicore N` verbatim; else auto-scale `min(avail, CAP)`.
     #[test]
     fn inprocess_rammap_threads_derivation() {
-        // explicit --multicore honored verbatim (even above the cap).
-        assert_eq!(inprocess_rammap_threads(Some(4), 32), 4);
-        assert_eq!(inprocess_rammap_threads(Some(16), 32), 16);
-        assert_eq!(inprocess_rammap_threads(Some(1), 32), 1);
-        // default (no --multicore) → capped available_parallelism.
+        // explicit --multicore (no -p) honored verbatim (even above the cap).
+        assert_eq!(inprocess_rammap_threads(None, Some(4), 32), 4);
+        assert_eq!(inprocess_rammap_threads(None, Some(16), 32), 16);
+        assert_eq!(inprocess_rammap_threads(None, Some(1), 32), 1);
+        // default (no -p, no --multicore) → capped available_parallelism.
         assert_eq!(
-            inprocess_rammap_threads(None, 32),
+            inprocess_rammap_threads(None, None, 32),
             RAMMAP_INPROCESS_THREAD_CAP
         );
         // default on a small host → the (uncapped) core count.
-        assert_eq!(inprocess_rammap_threads(None, 2), 2);
-        // never 0: a degenerate explicit 0 clamps to 1 (validate_multicore also rejects 0
-        // upstream), and avail is always ≥ 1.
-        assert_eq!(inprocess_rammap_threads(Some(0), 8), 1);
-        assert_eq!(inprocess_rammap_threads(None, 1), 1);
+        assert_eq!(inprocess_rammap_threads(None, None, 2), 2);
+        // never 0: a degenerate explicit --multicore 0 clamps to 1, avail always ≥ 1.
+        assert_eq!(inprocess_rammap_threads(None, Some(0), 8), 1);
+        assert_eq!(inprocess_rammap_threads(None, None, 1), 1);
+        // #1074: -p sizes the pool and wins over --multicore + the avail cap.
+        assert_eq!(inprocess_rammap_threads(Some(8), None, 64), 8);
+        assert_eq!(inprocess_rammap_threads(Some(8), Some(4), 64), 8);
+        assert_eq!(inprocess_rammap_threads(Some(8), None, 4), 8);
     }
 
     // ---- #787 Illumina 5-Base mode guards ----------------------------------
@@ -1929,16 +2694,11 @@ mod tests {
 
     // ---- --combined_index (v2) scope guard (Phase 2; §3.1) -----------------
 
-    fn se() -> ReadLayout {
-        ReadLayout::SingleEnd {
-            reads: vec!["r.fq".into()],
-        }
+    fn se() -> bool {
+        false
     }
-    fn pe() -> ReadLayout {
-        ReadLayout::PairedEnd {
-            mates1: vec!["r1.fq".into()],
-            mates2: vec!["r2.fq".into()],
-        }
+    fn pe() -> bool {
+        true
     }
 
     /// SE directional Bowtie 2 is the one supported combination → guard passes.
@@ -1950,7 +2710,7 @@ mod tests {
                 &cli,
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -1966,7 +2726,7 @@ mod tests {
             &cli,
             Aligner::Rammap,
             LibraryType::Directional,
-            &se(),
+            se(),
         )
         .unwrap_err();
         let m = err.to_string();
@@ -1987,7 +2747,7 @@ mod tests {
                 &cli_from(&["--combined_index"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -1997,7 +2757,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--non_directional"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2008,7 +2768,7 @@ mod tests {
     fn combined_index_guard_inert_when_flag_absent() {
         let cli = cli_from(&[]);
         assert!(
-            reject_combined_index_unsupported(&cli, Aligner::Hisat2, LibraryType::Pbat, &pe())
+            reject_combined_index_unsupported(&cli, Aligner::Hisat2, LibraryType::Pbat, pe())
                 .is_ok()
         );
     }
@@ -2022,7 +2782,7 @@ mod tests {
                 &cli_from(&["--combined_index"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2031,7 +2791,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--non_directional"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2040,7 +2800,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2060,7 +2820,7 @@ mod tests {
             ),
         ] {
             assert!(
-                reject_combined_index_unsupported(&cli_from(&args), Aligner::Hisat2, lib, &se())
+                reject_combined_index_unsupported(&cli_from(&args), Aligner::Hisat2, lib, se())
                     .is_ok(),
                 "HISAT2 SE combined should be accepted: {args:?}"
             );
@@ -2077,7 +2837,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2"]),
                 Aligner::Hisat2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2086,7 +2846,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--minimap2"]),
                 Aligner::Minimap2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2097,7 +2857,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2107,7 +2867,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2", "--pbat"]),
                 Aligner::Hisat2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2120,7 +2880,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--hisat2", "--non_directional"]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2130,7 +2890,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--minimap2"]),
                 Aligner::Minimap2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2140,7 +2900,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--multicore", "4"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2161,7 +2921,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2172,7 +2932,7 @@ mod tests {
                 &cli_from(&["--non_directional", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2183,7 +2943,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2192,7 +2952,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2207,7 +2967,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2218,7 +2978,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_single_pass"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2233,7 +2993,7 @@ mod tests {
                 ]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2248,7 +3008,7 @@ mod tests {
                 ]),
                 Aligner::Hisat2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2271,7 +3031,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_ok()
         );
@@ -2282,7 +3042,7 @@ mod tests {
                 &cli_from(&["--non_directional", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2293,7 +3053,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Directional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2302,7 +3062,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2318,7 +3078,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2333,7 +3093,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &pe()
+                pe()
             )
             .is_ok()
         );
@@ -2349,7 +3109,7 @@ mod tests {
                 ]),
                 Aligner::Bowtie2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2359,13 +3119,13 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Bowtie2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_err()
         );
         // v2.x Phase 7: HISAT2 non-dir sequential is now ACCEPTED — SE and PE (the
         // sequential model is faithful + aligner-agnostic).
-        for layout in [se(), pe()] {
+        for paired in [se(), pe()] {
             assert!(
                 reject_combined_index_unsupported(
                     &cli_from(&[
@@ -2375,7 +3135,7 @@ mod tests {
                     ]),
                     Aligner::Hisat2,
                     LibraryType::NonDirectional,
-                    &layout
+                    paired
                 )
                 .is_ok()
             );
@@ -2390,7 +3150,7 @@ mod tests {
                 ]),
                 Aligner::Minimap2,
                 LibraryType::NonDirectional,
-                &se()
+                se()
             )
             .is_err()
         );
@@ -2401,7 +3161,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--combined_index_sequential"]),
                 Aligner::Hisat2,
                 LibraryType::Directional,
-                &pe()
+                pe()
             )
             .is_err()
         );
@@ -2410,7 +3170,7 @@ mod tests {
                 &cli_from(&["--combined_index", "--pbat", "--combined_index_sequential"]),
                 Aligner::Hisat2,
                 LibraryType::Pbat,
-                &pe()
+                pe()
             )
             .is_err()
         );

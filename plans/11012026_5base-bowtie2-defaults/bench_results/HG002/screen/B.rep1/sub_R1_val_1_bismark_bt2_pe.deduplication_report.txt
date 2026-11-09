@@ -1,0 +1,7 @@
+
+Total number of alignments analysed in /var/tmp/5base_engines/runs/HG002/screen/B.rep1/sub_R1_val_1_bismark_bt2_pe.bam:	86107890
+Total number duplicated alignments removed:	2824759 (3.28%)
+Duplicated alignments were found at:	2737860 different position(s)
+
+Total count of deduplicated leftover sequences: 83283131 (96.72% of total)
+

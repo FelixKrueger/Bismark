@@ -27,11 +27,11 @@ fn fake_indexer_dir(parent: &Path) -> PathBuf {
     bin
 }
 
-/// Path to the repo-root Perl `bismark_genome_preparation` (two levels up from
-/// the crate manifest: `rust/bismark-genome-preparation/` → repo root).
+/// Path to the in-repo Perl `bismark_genome_preparation` (repo-root `legacy_perl/`,
+/// two levels up from the crate manifest).
 fn perl_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../bismark_genome_preparation")
+        .join("../../legacy_perl/bismark_genome_preparation")
         .canonicalize()
         .unwrap()
 }
@@ -181,6 +181,19 @@ fn binary_no_fasta_dir_errors() {
         .arg(&genome)
         .assert()
         .failure();
+}
+
+#[test]
+fn no_args_shows_help() {
+    // No genome folder is never a valid run, so a bare invocation renders the
+    // tool's help (exit 2) via `cli::help_if_no_args` instead of a terse error.
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "Prepare bisulfite-converted genome references",
+        ));
 }
 
 /// Run the Perl script and the Rust binary on copies of the same genome and

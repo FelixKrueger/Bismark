@@ -13,7 +13,7 @@ PBAT libraries pull down strands of DNA that are complementary to the 'usual' DN
 
 - **Mis-priming**
 
-PBAT/ single-cell libraries typically have a very biased sequence composition at the 5' end of reads which reflects the non-randomness of the priming/ pull-down process. The symptoms and possible mitigation procedures have already been discussed in more detail here: [QCFail mis-priming issues](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/). In conclusion, reads should be hard-trimmed from their 5'-ends before doing the alignments to prevent lower mapping effiency and mis-mapping/mis-calling methylation states. See also our trimming and processing notes for various library strategies in the [Bismark Manual](https://github.com/FelixKrueger/Bismark/tree/master/Docs#ix-notes-about-different-library-types-and-commercial-kits).
+PBAT/ single-cell libraries typically have a very biased sequence composition at the 5' end of reads which reflects the non-randomness of the priming/ pull-down process. The symptoms and possible mitigation procedures have already been discussed in more detail here: [QCFail mis-priming issues](https://sequencing.qcfail.com/articles/mispriming-in-pbat-libraries-causes-methylation-bias-and-poor-mapping-efficiencies/). In conclusion, reads should be hard-trimmed from their 5'-ends before doing the alignments to prevent lower mapping effiency and mis-mapping/mis-calling methylation states. See also our trimming and processing notes for various library strategies in [Library types](/Bismark/usage/library-types/).
 
 - **Chimeric reads**
 
@@ -27,7 +27,7 @@ Expanding on this idea, a recent [article in Bioinformatics](https://www.ncbi.nl
 
 To rescue as much data from a paired-end PBAT library with low mapping efficiency as possible we sometimes perform the following method (affectionately termed “Dirty Harry” because it is not the most straight forward or cleanest approach):
 
-- We would recommend running 5′ clipping and trimming first (e.g. `trim_galore --clip_r1 6 --clip_r2 6 --paired *fastq.gz`, and run Bismark in paired-end mode with `--unmapped` specified
+- We would recommend running 5′ clipping and trimming first (e.g. `trim_galore --clip_r1 8 --clip_r2 8 --paired *fastq.gz`), and run Bismark in paired-end mode with `--unmapped` specified
 
 - Properly aligned PE reads should be methylation extracted while counting overlapping reads only once (which is the default)
 - unmapped R1 is then mapped in single-end mode (`--pbat`)

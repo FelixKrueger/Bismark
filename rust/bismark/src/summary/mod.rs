@@ -39,10 +39,8 @@ pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkSummaryError;
 pub use parse::SampleMetrics;
 
-/// The Bismark version string baked into the HTML `{{bismark_version}}`
-/// footer and the `--version` banner. Matches the Perl `$bismark_version`
-/// constant (`bismark2summary:25`) so the HTML is byte-identical (SPEC O1).
-pub const BISMARK_VERSION: &str = "0.25.1";
+/// The suite version in the HTML footer, without a `v` (the template says "version").
+pub const BISMARK_VERSION: &str = crate::meta::SUITE_VERSION;
 
 /// The uniform suite `--version` one-liner via [`crate::meta::version_line`]:
 /// `bismark2summary (Bismark Rust suite) v<version> (…)`. Help/version text is

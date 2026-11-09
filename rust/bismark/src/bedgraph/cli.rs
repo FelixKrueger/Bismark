@@ -106,7 +106,7 @@ pub struct Cli {
     pub man: bool,
 
     /// Print version information and exit.
-    #[arg(short = 'V', long = "version")]
+    #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
 }
 

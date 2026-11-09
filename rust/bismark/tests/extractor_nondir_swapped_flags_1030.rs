@@ -30,6 +30,10 @@ use noodles_sam::header::record::value::Map;
 use noodles_sam::header::record::value::map::ReferenceSequence;
 use std::num::NonZeroUsize;
 
+#[path = "common/version.rs"]
+mod version;
+use version::{Form, perl_version};
+
 // ───────────────────────────── helpers ─────────────────────────────────
 
 fn header_chr1() -> Header {
@@ -259,8 +263,8 @@ fn mixed_four_strand_extractor_coexist() {
 /// Locate the in-repo Perl `bismark_methylation_extractor` and confirm perl +
 /// samtools are available. Returns `None` (caller skips) if anything is missing.
 fn perl_extractor_script() -> Option<PathBuf> {
-    let script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bismark_methylation_extractor");
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../legacy_perl/bismark_methylation_extractor");
     if !script.exists() {
         return None;
     }
@@ -325,14 +329,17 @@ fn perl_vs_rust_nondirectional_pe_extractor() {
     // Rust.
     run_extractor(&fixture, &rust_dir, &["--comprehensive"]).success();
 
-    // Every primary output byte-identical (these are plain text; the Rust port
-    // mirrors Perl's version line, so the splitting report matches too).
-    for f in [
-        "CpG_context_nondir_pe_1030.txt",
-        "CHG_context_nondir_pe_1030.txt",
-        "CHH_context_nondir_pe_1030.txt",
-        "nondir_pe_1030.M-bias.txt",
-        "nondir_pe_1030_splitting_report.txt",
+    // Every primary output byte-identical apart from the version token (#1148).
+    let header = [(Form::SplitFileHeader, 1)];
+    for (f, forms) in [
+        ("CpG_context_nondir_pe_1030.txt", &header[..]),
+        ("CHG_context_nondir_pe_1030.txt", &header[..]),
+        ("CHH_context_nondir_pe_1030.txt", &header[..]),
+        ("nondir_pe_1030.M-bias.txt", &[][..]),
+        (
+            "nondir_pe_1030_splitting_report.txt",
+            &[(Form::SplittingReport, 1)][..],
+        ),
     ] {
         let perl_f =
             fs::read(perl_dir.join(f)).unwrap_or_else(|e| panic!("perl output {f} missing: {e}"));
@@ -340,7 +347,7 @@ fn perl_vs_rust_nondirectional_pe_extractor() {
             fs::read(rust_dir.join(f)).unwrap_or_else(|e| panic!("rust output {f} missing: {e}"));
         assert_eq!(
             String::from_utf8_lossy(&perl_f),
-            String::from_utf8_lossy(&rust_f),
+            perl_version(&String::from_utf8_lossy(&rust_f), forms),
             "non-directional PE extractor output {f} differs between Perl and Rust (#1030)"
         );
     }
