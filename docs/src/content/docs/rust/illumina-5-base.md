@@ -40,6 +40,31 @@ Because it is concordance-gated rather than byte-identical, every 5-Base path is
 **never silent**: an unsupported combination (single-end, `--non_directional`, `--pbat`,
 `--combined_index`) is rejected loudly rather than silently degraded.
 
+## Known limitation: CpG-dense methylated regions
+
+5-Base reads align to the unconverted genome, so each methylated CpG (read `T`, genome `C`) is a
+mismatch to the aligner. A read from a CpG-dense, heavily methylated region can carry enough of
+them that it no longer aligns, while the same fragment unmethylated aligns normally, so methylated
+reads are lost there selectively. This applies to both engines, minimap2 (the default) and Bowtie 2.
+
+On the NA12878 and HG002 demo data, compared with a methylation-invariant alignment of the same
+reads and with DRAGEN:
+
+- CpGs in sparse and moderate CpG density (up to about 9 CpGs per 151 bp, around 85% of CpGs)
+  are unaffected.
+- Partly methylated CpGs at 15 or more CpGs per 151 bp read 6–11 points low.
+- The densest, most methylated CpGs (15 or more per 151 bp, ≥80% methylated) keep only 40–50% of
+  the expected coverage, and 20–35% of them get no coverage at all.
+- Global CpG methylation (the report's "% CpG methylated") reads about 1–1.6 points low.
+
+The regions affected are methylated CpG islands: imprinted regions, CpG islands on the inactive X,
+and hypermethylated islands in cancer or cfDNA samples. If your analysis depends on those, expect
+them to be under-covered and under-called. Filtering 5-Base BAMs by MAPQ makes the coverage loss
+worse, because methylated reads receive lower MAPQ.
+
+The genome-wide concordance with DRAGEN under [Validation](#validation) still holds: these regions
+are too small a share of all CpGs to show up in it.
+
 ## Running it
 
 Directional, paired-end, against the unconverted genome. minimap2 (`-x sr`) against the
