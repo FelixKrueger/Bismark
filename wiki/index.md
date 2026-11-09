@@ -22,4 +22,4 @@
 
 ## Troubleshooting
 
-- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, M-bias, the errors that stop a run, and the warnings that do not.
+- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, M-bias, the errors that stop a run, and the warnings that do not.

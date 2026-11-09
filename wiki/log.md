@@ -9,3 +9,4 @@
 ## [2026-11-05] update | bismark @ 4659679, #1148 suite version in the extractor header: reference/methylation-call-files.md
 ## [2026-11-06] update | bismark @ da431b7, template 0.11; sources re-confirmed after #1148: overview.md, troubleshooting.md, usage/align-reads.md, usage/extract-methylation-calls.md, usage/install.md, reference/aligner-cli.md, reference/bam-output.md, reference/run-reports.md
 ## [2026-11-07] update | bismark @ f64426c, #1157 converted-read files are temporary, #1155 container version from the binary: usage/align-reads.md, reference/aligner-cli.md, usage/install.md; sources re-confirmed: reference/bam-output.md
+## [2026-11-09] update | bismark @ 3a88185, #1161 5-Base limitation in CpG-dense methylated regions: overview.md, troubleshooting.md, ENTRY.md, index.md
