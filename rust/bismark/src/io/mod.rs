@@ -23,6 +23,7 @@ pub mod read;
 pub mod record;
 pub mod strand;
 pub mod tags;
+pub mod tap;
 pub mod umi;
 pub mod write;
 

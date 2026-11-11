@@ -67,6 +67,7 @@ fn run_subcommand(sub: &str, args_after: &[OsString]) -> Option<ExitCode> {
         "consistency" => crate::methylation_consistency::run_from_args(argv()),
         "report" => crate::report::run_from_args(argv()),
         "summary" => crate::summary::run_from_args(argv()),
+        "run" => crate::run::run_from_args(argv()),
         _ => return None,
     })
 }
@@ -121,6 +122,10 @@ fn print_top_level_help() {
     ] {
         println!("  {sub:<12}  ({classic})");
     }
+    println!(
+        "  {:<12}  align → dedup → extract → report in one command",
+        "run"
+    );
     println!("\nBare `bismark <args>` runs the aligner. Run `bismark <subcommand> --help` for a");
     println!("tool's options, or `bismark align --help` for the aligner's.");
 }

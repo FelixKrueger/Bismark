@@ -29,6 +29,7 @@ Bismark ships as a **single `bismark` binary**. `bismark <subcommand>` is the re
 | `bismark consistency` | `methylation_consistency` | split reads by methylation concordance |
 | `bismark report` | `bismark2report` | per-sample HTML report |
 | `bismark summary` | `bismark2summary` | project-level HTML summary |
+| `bismark run` | — | trim → align → dedup → extract → report for one sample ([details](../usage/run/)) |
 
 ## Genome preparation
 

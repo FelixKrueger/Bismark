@@ -34,7 +34,7 @@ sources:
 
 ## Summary
 
-Bismark aligns bisulfite-converted sequencing reads to a genome and calls the methylation state of each cytosine in CpG, CHG and CHH context. It is one Rust binary, `bismark`, with 12 subcommands that cover genome preparation, alignment, deduplication, methylation extraction, coverage and cytosine reports, and HTML reports. The developer says it is used by labs that run bisulfite, EM-seq and Illumina 5-Base sequencing.
+Bismark aligns bisulfite-converted sequencing reads to a genome and calls the methylation state of each cytosine in CpG, CHG and CHH context. It is one Rust binary, `bismark`, with 13 subcommands that cover the whole workflow in one command (`run`), genome preparation, alignment, deduplication, methylation extraction, coverage and cytosine reports, and HTML reports. The developer says it is used by labs that run bisulfite, EM-seq and Illumina 5-Base sequencing.
 
 ## Who uses it
 
@@ -51,6 +51,8 @@ The developer gave this order. Most workflows run these steps:
 | 3 | `bismark dedup` | Per sample, except for RRBS, amplicon and implicon data |
 | 4 | `bismark extract` | Per sample |
 | 5 | `bismark bedgraph`, `bismark cov2cyt` | Per sample; `extract --bedGraph --cytosine_report` runs both in the same process |
+
+`bismark run` runs Trim Galore and steps 2 to 5 plus `bismark report` for one sample in one command. Align, dedup and extract run at the same time and pass records in memory through `io/tap.rs`, so no step re-reads the previous BAM. `--preset` sets per-library options; any step option is routed by name (`route` in `run.rs`).
 
 ## When to use it
 
@@ -87,6 +89,7 @@ Each tool runs as `bismark <subcommand>` or under its classic name (`run_legacy_
 | `consistency` | `methylation_consistency` | Splits a BAM by read-level methylation consistency | No page yet |
 | `report` | `bismark2report` | HTML report for one sample | No page yet |
 | `summary` | `bismark2summary` | Multi-sample summary (`.txt` + `.html`) | No page yet |
+| `run` | — | Trim → align → dedup → extract → report, streaming between steps | No page yet |
 
 ## Components
 

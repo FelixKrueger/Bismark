@@ -247,15 +247,27 @@ fn run_pipeline(
     // SAM/CRAM (not BGZF) keep the single-threaded reader. Sniffed once, reused.
     let is_bam = matches!(AlignmentKind::from_path(input)?, AlignmentKind::Bam);
 
-    // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
-    // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
-    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.6 s / ~12.3 s with
-    // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
-    // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
-    // Output is byte-identical across worker counts (batch_seq reorder), so this
-    // floor changes timing only, not bytes.
-    let n_workers = config.parallel.max(if is_bam { 2 } else { 1 });
+    let reader = open_producer(input, is_bam, is_paired)?;
+    run_pipeline_with(input, reader, is_bam, config, is_paired)
+}
 
+/// Extract from an in-memory [`crate::io::tap::TapSource`] (`bismark run`): the
+/// records come from the previous step, not from `input`, which only names the
+/// outputs. No `--allow_discordant` record filter (the tap carries Bismark BAMs).
+pub fn extract_tapped(
+    input: &Path,
+    source: crate::io::tap::TapSource,
+    config: &ResolvedConfig,
+    is_paired: bool,
+) -> Result<(), BismarkExtractorError> {
+    run_pipeline_with(input, ProducerReader::Tap(source), true, config, is_paired)
+}
+
+fn open_producer(
+    input: &Path,
+    is_bam: bool,
+    is_paired: bool,
+) -> Result<ProducerReader, BismarkExtractorError> {
     // Open the reader on the main thread to get the header (for chr_table)
     // before we hand the reader off to the producer thread.
     //
@@ -275,7 +287,7 @@ fn run_pipeline(
     // coordinate-sorted input is valid — faithful to Perl
     // `bismark_methylation_extractor`, which only sort-checks paired-end input
     // (`test_positional_sorting` is gated `if ($paired)`).
-    let mut reader = if is_bam {
+    Ok(if is_bam {
         if is_paired {
             ProducerReader::Threaded(ThreadedBamReader::from_path(input, DECODE_THREADS)?)
         } else {
@@ -290,7 +302,24 @@ fn run_pipeline(
         ProducerReader::Any(open_reader_without_sort_check(
             input, /*cram_ref=*/ None,
         )?)
-    };
+    })
+}
+
+fn run_pipeline_with(
+    input: &Path,
+    mut reader: ProducerReader,
+    is_bam: bool,
+    config: &ResolvedConfig,
+    is_paired: bool,
+) -> Result<(), BismarkExtractorError> {
+    // #884 R3 (perf gate, oxy 10M PE): floor BAM extract workers at 2 — a single
+    // extract worker can't drain the 2-thread parallel decode (`--parallel 1` on
+    // BAM measured ~18.5 s plain / ~16 s `--mbias_only`, vs ~17.6 s / ~12.3 s with
+    // ≥2 workers), so the common `--parallel 1` default benefits fully. SAM/CRAM
+    // (single-threaded decode) keep `max(1)` — extra workers can't beat serial decode.
+    // Output is byte-identical across worker counts (batch_seq reorder), so this
+    // floor changes timing only, not bytes.
+    let n_workers = config.parallel.max(if is_bam { 2 } else { 1 });
     // `--allow_discordant`: drop + count secondary (0x100) / supplementary
     // (0x800) records at the io layer, BEFORE record validation (a SEQ-less
     // secondary can't construct a BismarkRecord) and BEFORE pairing (they break
@@ -476,6 +505,7 @@ fn run_pipeline(
 enum ProducerReader {
     Any(crate::io::AnyReader<std::io::BufReader<std::fs::File>, std::fs::File>),
     Threaded(ThreadedBamReader),
+    Tap(crate::io::tap::TapSource),
 }
 
 impl ProducerReader {
@@ -483,6 +513,7 @@ impl ProducerReader {
         match self {
             ProducerReader::Any(r) => r.header(),
             ProducerReader::Threaded(r) => r.header(),
+            ProducerReader::Tap(r) => r.header(),
         }
     }
 
@@ -490,6 +521,7 @@ impl ProducerReader {
         match self {
             ProducerReader::Any(r) => Box::new(r.records()),
             ProducerReader::Threaded(r) => Box::new(r.records()),
+            ProducerReader::Tap(r) => Box::new(r.records()),
         }
     }
 
@@ -497,6 +529,8 @@ impl ProducerReader {
         match self {
             ProducerReader::Any(r) => r.set_filter(filter),
             ProducerReader::Threaded(r) => r.set_filter(filter),
+            // Bismark BAMs from the tap carry no secondary/supplementary records.
+            ProducerReader::Tap(_) => {}
         }
     }
 
@@ -504,6 +538,7 @@ impl ProducerReader {
         match self {
             ProducerReader::Any(r) => r.skip_counts(),
             ProducerReader::Threaded(r) => r.skip_counts(),
+            ProducerReader::Tap(_) => SkipCounts::default(),
         }
     }
 }

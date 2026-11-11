@@ -25,4 +25,5 @@ pub mod meta;
 pub mod methylation_consistency;
 pub mod nome_filtering;
 pub mod report;
+pub mod run;
 pub mod summary;

@@ -38,6 +38,7 @@ export default defineConfig({
           label: 'Usage',
           items: [
             { label: 'Genome preparation', slug: 'usage/genome-preparation' },
+            { label: 'Whole workflow (bismark run)', slug: 'usage/run' },
             { label: 'Alignment', slug: 'usage/alignment' },
             { label: 'Deduplication', slug: 'usage/deduplication' },
             { label: 'Methylation extraction', slug: 'usage/methylation-extraction' },

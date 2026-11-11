@@ -502,6 +502,50 @@ pub fn run_single_parallel(
     Ok(state.into_report(file_label))
 }
 
+/// [`run_single_parallel`] / [`run_single_parallel_umi`] over an in-memory
+/// [`crate::io::tap::TapSource`] (`bismark run`): the records come from the
+/// aligner, not from a file.
+pub fn run_tapped(
+    mut source: crate::io::tap::TapSource,
+    output: &Path,
+    is_paired: bool,
+    file_label: String,
+    parallel: std::num::NonZero<usize>,
+    umi_mode: Option<UmiMode>,
+) -> Result<DedupReport, BismarkDedupError> {
+    let header = source.header().clone();
+    let intern = build_chr_intern(&header);
+    let refid_table = build_refid_table(&header, &intern);
+    let result = (|| {
+        let mut writer = crate::io::ThreadedBamWriter::from_path(output, header, parallel)?;
+        let report = match umi_mode {
+            None => {
+                let mut state = DedupState::new();
+                let records = source.records();
+                if is_paired {
+                    stream_pe(records, &refid_table, &mut state, &mut writer)?;
+                } else {
+                    stream_se(records, &refid_table, &mut state, &mut writer)?;
+                }
+                state.into_report(file_label)
+            }
+            Some(mode) => {
+                let mut state = UmiDedupState::new();
+                let records = source.records_with_umi(umi_extractor_for(mode));
+                if is_paired {
+                    stream_pe_umi(records, &refid_table, mode, &mut state, &mut writer)?;
+                } else {
+                    stream_se_umi(records, &refid_table, mode, &mut state, &mut writer)?;
+                }
+                state.into_report(file_label)
+            }
+        };
+        writer.finish()?;
+        Ok(report)
+    })();
+    cleanup_partial_output_on_err(output, result)
+}
+
 /// Run dedup on multiple BAM inputs combined into one sample, with
 /// `parallel` BGZF decoder/encoder worker threads. **BAM input + BAM
 /// output only.**

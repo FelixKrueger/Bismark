@@ -3493,7 +3493,7 @@ fn derive_output_path(
 }
 
 /// Strip the first matching FastQ suffix (Perl `s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//`).
-fn strip_fastq_suffix(name: &str) -> String {
+pub(crate) fn strip_fastq_suffix(name: &str) -> String {
     for suf in [".fastq.gz", ".fq.gz", ".fastq", ".fq"] {
         if let Some(s) = name.strip_suffix(suf) {
             return s.to_string();

@@ -30,6 +30,7 @@ use crate::io::cram_ref::build_fasta_repository;
 use crate::io::error::BismarkIoError;
 use crate::io::read::AlignmentKind;
 use crate::io::record::BismarkRecord;
+use crate::io::tap::TapSink;
 
 /// BAM writer producing BGZF-compressed BAM output.
 ///
@@ -41,6 +42,7 @@ use crate::io::record::BismarkRecord;
 pub struct BamWriter<W: Write> {
     inner: noodles_bam::io::Writer<noodles_bgzf::io::Writer<W>>,
     header: Header,
+    tap: Option<TapSink>,
 }
 
 impl BamWriter<BufWriter<File>> {
@@ -49,9 +51,11 @@ impl BamWriter<BufWriter<File>> {
     pub fn from_path(path: &Path, header: Header) -> Result<Self, BismarkIoError> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
-        Self::new(writer, header).inspect_err(|_| {
+        let mut w = Self::new(writer, header).inspect_err(|_| {
             let _ = std::fs::remove_file(path);
-        })
+        })?;
+        w.tap = TapSink::open(path, &w.header)?;
+        Ok(w)
     }
 }
 
@@ -60,7 +64,11 @@ impl<W: Write> BamWriter<W> {
     pub fn new(writer: W, header: Header) -> Result<Self, BismarkIoError> {
         let mut inner = noodles_bam::io::Writer::new(writer);
         inner.write_header(&header)?;
-        Ok(Self { inner, header })
+        Ok(Self {
+            inner,
+            header,
+            tap: None,
+        })
     }
 
     /// Header that was written at construction time.
@@ -72,6 +80,9 @@ impl<W: Write> BamWriter<W> {
     pub fn write_record(&mut self, record: &BismarkRecord) -> Result<(), BismarkIoError> {
         self.inner
             .write_alignment_record(&self.header, record.inner())?;
+        if let Some(tap) = &self.tap {
+            tap.record(record)?;
+        }
         Ok(())
     }
 
@@ -85,6 +96,10 @@ impl<W: Write> BamWriter<W> {
     /// cannot go through [`Self::write_record`]. Added in v1.0.0-beta.9.
     pub fn write_raw_record(&mut self, record: &RecordBuf) -> Result<(), BismarkIoError> {
         self.inner.write_alignment_record(&self.header, record)?;
+        if let Some(tap) = &self.tap {
+            // Only a Bismark BAM is tapped (the aligner's `--multicore` merge copies raw records).
+            tap.record(&BismarkRecord::from_noodles_record(record.clone())?)?;
+        }
         Ok(())
     }
 
@@ -97,6 +112,9 @@ impl<W: Write> BamWriter<W> {
     /// only be written via Drop, which silently swallows errors.
     pub fn finish(mut self) -> Result<(), BismarkIoError> {
         self.inner.try_finish()?;
+        if let Some(tap) = self.tap.take() {
+            tap.end()?;
+        }
         Ok(())
     }
 }
@@ -126,6 +144,7 @@ impl<W: Write> BamWriter<W> {
 pub struct ThreadedBamWriter {
     inner: noodles_bam::io::Writer<noodles_bgzf::io::MultithreadedWriter<File>>,
     header: Header,
+    tap: Option<TapSink>,
 }
 
 impl ThreadedBamWriter {
@@ -146,7 +165,8 @@ impl ThreadedBamWriter {
         inner.write_header(&header).inspect_err(|_| {
             let _ = std::fs::remove_file(path);
         })?;
-        Ok(Self { inner, header })
+        let tap = TapSink::open(path, &header)?;
+        Ok(Self { inner, header, tap })
     }
 
     /// Header that was written at construction time.
@@ -158,6 +178,9 @@ impl ThreadedBamWriter {
     pub fn write_record(&mut self, record: &BismarkRecord) -> Result<(), BismarkIoError> {
         self.inner
             .write_alignment_record(&self.header, record.inner())?;
+        if let Some(tap) = &self.tap {
+            tap.record(record)?;
+        }
         Ok(())
     }
 
@@ -182,6 +205,9 @@ impl ThreadedBamWriter {
         // + flushes pending blocks, returning the underlying File.
         let bgzf = self.inner.get_mut();
         bgzf.finish()?;
+        if let Some(tap) = self.tap.take() {
+            tap.end()?;
+        }
         Ok(())
     }
 }
