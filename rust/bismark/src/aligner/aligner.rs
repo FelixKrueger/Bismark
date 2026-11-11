@@ -156,7 +156,11 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     });
 
     let pinned = pinned_version(kind);
-    if version != pinned {
+    if version != pinned && kind == Aligner::BwaMem3 {
+        eprintln!(
+            "Warning: detected bwa-mem3 {version}; Bismark's 5-Base engine is validated against {pinned}."
+        );
+    } else if version != pinned {
         eprintln!(
             "Warning: detected {} {version}, but byte-identity is only guaranteed against the \
              pinned version {pinned}.",

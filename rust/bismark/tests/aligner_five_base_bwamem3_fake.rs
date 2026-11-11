@@ -436,3 +436,22 @@ fn bwamem3_missing_meth_files_fail_before_spawn() {
         .stderr(predicate::str::contains("meth.bwt.2bit.64"));
     assert!(!dump.exists(), "bwa-mem3 was spawned");
 }
+
+/// 5-Base is concordance-validated, so another bwa-mem3 version warns without promising byte-identity.
+#[cfg(unix)]
+#[test]
+fn bwamem3_other_version_warns_and_runs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let fake = run.bins.path().join("bwa-mem3");
+    let script = fs::read_to_string(&fake)
+        .unwrap()
+        .replace("echo 0.16.0", "echo 0.17.0");
+    write_exec(&fake, &script);
+    bwamem3_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Warning: detected bwa-mem3 0.17.0; Bismark's 5-Base engine is validated against 0.16.0.",
+        ))
+        .stderr(predicate::str::contains("byte-identity").not());
+}
