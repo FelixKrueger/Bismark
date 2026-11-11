@@ -2632,7 +2632,7 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
     w.flush()?;
     eprintln!(
         "5-Base deconvolution: {} variant CpG(s), {} methylation site(s), {} undetermined \
-         ({}/{} methylated calls kept). Report: {}",
+         ({} of {} calls at non-variant sites are methylated). Report: {}",
         s.variants,
         s.methylation_sites,
         s.undetermined,
