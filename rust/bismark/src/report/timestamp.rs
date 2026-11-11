@@ -68,7 +68,7 @@ pub(crate) fn local_utc_offset(secs: i64) -> i64 {
         let t = secs as libc::time_t;
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
-        tm.tm_gmtoff as i64
+        tm.tm_gmtoff
     }
 }
 
