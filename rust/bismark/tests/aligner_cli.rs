@@ -1081,35 +1081,36 @@ fn multicore_zero_errors() {
         ));
 }
 
+/// Flags that are parsed but not wired are rejected instead of silently doing nothing
+/// (#1167 finding 23).
 #[cfg(unix)]
 #[test]
-fn deferred_flag_emits_notice() {
+fn unwired_flags_are_rejected() {
     let genome = TempDir::new().unwrap();
     make_genome(genome.path());
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2(bins.path());
     let read = make_read(genome.path());
-    let temp = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--path_to_bowtie2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(temp.path())
-        // --nucleotide_coverage is still deferred (wired in a later phase);
-        // --unmapped/--ambiguous/--ambig_bam are now ACTIVE (Phase 6).
-        .arg("--nucleotide_coverage")
-        .arg(&read)
-        .assert()
-        .success()
-        .stderr(
-            predicate::str::contains("not yet active")
-                .and(predicate::str::contains("--nucleotide_coverage")),
-        );
+    for (flag, hint) in [
+        ("--nucleotide_coverage", "bismark bam2nuc"),
+        ("--old_flag", "not supported"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(temp.path())
+            .arg(flag)
+            .arg(&read)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(flag).and(predicate::str::contains(hint)));
+    }
 }
 
 #[cfg(unix)]

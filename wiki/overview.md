@@ -65,6 +65,7 @@ The developer gave this order. Most workflows run these steps:
 - 5-Base runs align the raw reads to the unconverted genome with the engine's normal scoring, so each methylated CpG is a mismatch, and there is no methylation-aware seeding or scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` and `default_linear_score` in `aligner/options.rs`). The developer measured that, as a result, CpG-dense, heavily methylated regions are under-covered and under-called with both minimap2 and Bowtie 2; see [troubleshooting.md](troubleshooting.md).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
+- `--nucleotide_coverage` and `--old_flag` stop the run; run `bismark bam2nuc` on the BAM instead of `--nucleotide_coverage` (`reject_unwired_flags` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
 - `extract --cytosine_report` needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
 - The extractor reads only BAMs with Bismark `XM`/`XR`/`XG` tags. For a BAM from another aligner, `extract --allow_discordant` handles cross-chromosome and discordant pairs, orphan reads, and secondary or supplementary records (`classify_pair` in `extractor/pair_class.rs`).

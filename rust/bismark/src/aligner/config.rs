@@ -755,6 +755,7 @@ fn discover_genome_for_run(
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
+    reject_unwired_flags(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
     // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
     // that dies in `resolve_aligner`).
@@ -1576,24 +1577,24 @@ fn validate_multicore(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// Flags that are recognised (parsed) but not yet *active* in this build — they
-/// take effect in a later phase. Returned so the caller can warn the user
-/// rather than silently accepting and ignoring them (code-review finding).
-pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
-    let mut v = Vec::new();
-    let mut push = |cond: bool, name: &'static str| {
-        if cond {
-            v.push(name);
-        }
-    };
-    // NB: --skip/--upto/--gzip/--prefix ACTIVE as of Phase 2; --basename as of
-    // Phase 5; --unmapped/--ambiguous/--ambig_bam as of Phase 6; --multicore/
-    // --parallel as of Phase 9b — none listed here. --rg_tag/--slam/--non_bs_mm/
-    // --sam-no-hd are HARD-REJECTED (see reject_unsupported_output_flags).
-    // --nucleotide_coverage is wired in a later phase (reports).
-    push(cli.nucleotide_coverage, "--nucleotide_coverage");
-    push(cli.old_flag, "--old_flag");
-    v
+/// Reject the flags that are parsed but not wired in this build, rather than
+/// accepting them and writing output that ignores them.
+fn reject_unwired_flags(cli: &Cli) -> Result<()> {
+    if cli.nucleotide_coverage {
+        return Err(AlignerError::Unsupported(
+            "--nucleotide_coverage is not supported by the aligner in this build. Run \
+             `bismark bam2nuc` on the BAM afterwards instead; `bismark report` picks up its \
+             nucleotide_stats.txt."
+                .into(),
+        ));
+    }
+    if cli.old_flag {
+        return Err(AlignerError::Unsupported(
+            "--old_flag (the legacy pre-v0.8.3 SAM FLAG values) is not supported in this build."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_format(cli: &Cli) -> Result<ReadFormat> {

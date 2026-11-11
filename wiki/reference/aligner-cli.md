@@ -105,6 +105,7 @@ With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above,
 |---|---|
 | `--sam`, `--cram` | `resolve_output` |
 | `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
+| `--nucleotide_coverage` (run `bismark bam2nuc` afterwards), `--old_flag` | `reject_unwired_flags` |
 | minimap2 or rammap with paired-end reads, or a positional paired uBAM/BINSEQ (outside 5-Base) | `reject_unsupported_paired_aligner` |
 | Read files with Windows (CRLF) line endings | `reject_crlf_inputs` in `aligner/mod.rs`, before any aligner starts |
 | `--local` with minimap2, rammap or `--combined_index` | `resolve` |
@@ -114,7 +115,7 @@ With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above,
 | 5-Base Bowtie 2 with `-I` larger than the maximum insert (`-X`, or 800) | `build_five_base_aligner_options` |
 | `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
 
-`--nucleotide_coverage` and `--old_flag` are accepted, print a note that they are not active, and change nothing (`deferred_flags`). `--most_valid_alignments` and `--dovetail` have no effect.
+`--most_valid_alignments` and `--dovetail` have no effect.
 
 ## Links
 

@@ -214,14 +214,6 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // the run (the transcode FASTQ is consumed by BOTH the convert step and the
     // methylation-call re-read, so cleanup must follow the pipeline).
     let alt_input_temp_dirs = resolve_alt_inputs(&mut config)?;
-    let deferred = config::deferred_flags(cli);
-    if !deferred.is_empty() {
-        eprintln!(
-            "Note: these options are recognised but not yet active in this build \
-             (wired in a later phase): {}",
-            deferred.join(", ")
-        );
-    }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
