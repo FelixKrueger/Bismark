@@ -85,6 +85,9 @@ pub struct Counters {
     /// whose R2 is not flagged proper. Not written.
     pub five_base_pair_orientation_rejected: u64,
 
+    /// 5-Base only: aligned read bases past the mate's 5' end, never called.
+    pub five_base_overhang_bases_masked: u64,
+
     // ---- Phase 5: per-strand counts (Perl 4402/4411/4426/4441) -------------
     // Incremented in genomic extraction, ONLY when no chromosome-edge guard
     // fired (so an edge read counts in `unique_best` but in no strand bucket).

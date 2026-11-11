@@ -191,7 +191,9 @@ threads. Versions before 0.16.0 are rejected, and other versions run with a warn
 `@PG ID:bwa-mem3` line, and the report states the version.
 
 As with the other engines, Bismark keeps proper pairs at any MAPQ; about 5% of bwa-mem3's
-records have MAPQ 0.
+records have MAPQ 0. Dovetailed pairs are kept too, but bases that run past the mate's 5' end
+are adapter read-through rather than genome, so they are not called; the report counts them as
+"Dovetail overhang bases not called". This applies to minimap2 as well.
 
 `bismark2summary` does not discover 5-Base BAMs on its own, for any engine. Pass them to it
 explicitly: `bismark2summary *_bismark_*_pe.bam`.

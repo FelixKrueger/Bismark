@@ -6,7 +6,7 @@
 ### bismark (aligner)
 
 - **New `--bwamem3` adds bwa-mem3 0.16.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered; see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
-- **Illumina 5-Base runs now reject same-strand or cross-contig "proper" pairs, keep inline UMIs out of the methylation calls, stop cleanly with `--upto`, and report an engine that crashed or produced extra records, for every engine.**
+- **Illumina 5-Base runs now reject same-strand or cross-contig "proper" pairs, keep inline UMIs and dovetail overhangs out of the methylation calls, stop cleanly with `--upto`, and report an engine that crashed or produced extra records, for every engine.**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)

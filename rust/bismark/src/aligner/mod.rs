@@ -2402,6 +2402,11 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             "Proper pairs rejected (same strand, other contig, or R2 not proper):\t{}",
             counters.five_base_pair_orientation_rejected
         )?;
+        writeln!(
+            report,
+            "Dovetail overhang bases not called:\t{}",
+            counters.five_base_overhang_bases_masked
+        )?;
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
@@ -2708,6 +2713,96 @@ fn five_base_check_cigar_covers_read(
     )))
 }
 
+/// CIGAR as `(length, op)` pairs; an unparseable CIGAR yields none.
+fn cigar_ops(cigar: &str) -> Vec<(u64, u8)> {
+    let mut ops = Vec::new();
+    let mut n = 0u64;
+    for b in cigar.bytes() {
+        if b.is_ascii_digit() {
+            n = n * 10 + u64::from(b - b'0');
+        } else {
+            ops.push((n, b));
+            n = 0;
+        }
+    }
+    ops
+}
+
+/// Read bases of each mate past the other mate's 5' end (a dovetail overhang), as
+/// `(R1 trailing bases, R2 trailing bases, aligned bases among them)`, counted in read orientation.
+fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> (usize, usize, u64) {
+    let span = |r: &SamRecord| {
+        let start = u64::from(r.pos.saturating_sub(1));
+        let len: u64 = cigar_ops(&r.cigar)
+            .iter()
+            .filter(|(_, op)| matches!(op, b'M' | b'D' | b'N' | b'=' | b'X'))
+            .map(|(n, _)| n)
+            .sum();
+        (start, start + len)
+    };
+    let (fwd, rev, r1_forward) = if rec1.flag & 0x10 == 0 {
+        (rec1, rec2, true)
+    } else {
+        (rec2, rec1, false)
+    };
+    let ((fs, _), (rs, re)) = (span(fwd), span(rev));
+    // The reverse mate's SEQ prefix left of the forward mate's start.
+    let (mut q_rev, mut al_rev, mut rp) = (0u64, 0u64, rs);
+    for (n, op) in cigar_ops(&rev.cigar) {
+        match op {
+            b'S' => q_rev += n,
+            b'M' | b'=' | b'X' => {
+                let take = n.min(fs.saturating_sub(rp));
+                q_rev += take;
+                al_rev += take;
+                rp += take;
+                if take < n {
+                    break;
+                }
+            }
+            b'I' if rp < fs => {
+                q_rev += n;
+                al_rev += n;
+            }
+            b'I' => break,
+            b'D' | b'N' => rp += n,
+            _ => {}
+        }
+    }
+    // The forward mate's SEQ suffix right of the reverse mate's end.
+    let (mut q_fwd, mut al_fwd, mut rp) = (0u64, 0u64, span(fwd).1);
+    for (n, op) in cigar_ops(&fwd.cigar).into_iter().rev() {
+        match op {
+            b'S' => q_fwd += n,
+            b'M' | b'=' | b'X' => {
+                let take = n.min(rp.saturating_sub(re));
+                q_fwd += take;
+                al_fwd += take;
+                rp -= take;
+                if take < n {
+                    break;
+                }
+            }
+            b'I' if rp > re => {
+                q_fwd += n;
+                al_fwd += n;
+            }
+            b'I' => break,
+            b'D' | b'N' => rp = rp.saturating_sub(n),
+            _ => {}
+        }
+    }
+    // Clipped bases are masked with an overhang but never on their own.
+    let k_rev = if al_rev > 0 { q_rev as usize } else { 0 };
+    let k_fwd = if al_fwd > 0 { q_fwd as usize } else { 0 };
+    let aligned = al_rev + al_fwd;
+    if r1_forward {
+        (k_fwd, k_rev, aligned)
+    } else {
+        (k_rev, k_fwd, aligned)
+    }
+}
+
 /// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
 /// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
@@ -2782,6 +2877,13 @@ fn five_base_emit_pe_record(
     for b in call2.iter_mut().take(umi_len) {
         *b = b'N';
     }
+    // Bases past the mate's 5' end are adapter read-through, not genome.
+    let (k1, k2, overhang) = five_base_overhang_lens(rec1, rec2);
+    let n1 = call1.len();
+    call1[n1.saturating_sub(k1)..].fill(b'N');
+    let n2 = call2.len();
+    call2[n2.saturating_sub(k2)..].fill(b'N');
+    counters.five_base_overhang_bases_masked += overhang;
     let mc1 = methylation_call(
         &call1,
         &ext.unmodified_genomic_sequence_1,
@@ -8331,6 +8433,68 @@ mod tests {
         };
         assert_eq!(call(0), b"Z.Z.".to_vec(), "unmasked baseline");
         assert_eq!(call(2), b"..Z.".to_vec(), "the 2 UMI bases are no-calls");
+    }
+
+    fn sam(line: &str) -> SamRecord {
+        SamRecord::parse(line).unwrap()
+    }
+
+    /// (R1 bases, R2 bases, aligned bases) past the mate's 5' end; R1 forward unless noted.
+    #[test]
+    fn five_base_overhang_lens_counts_bases_past_the_mates_5_prime_end() {
+        let f = |pos: u32, cig: &str| sam(&format!("p\t99\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
+        let r =
+            |pos: u32, cig: &str| sam(&format!("p\t147\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
+        // Dovetail both ways: F [10,20), R [7,17).
+        assert_eq!(
+            five_base_overhang_lens(&f(11, "10M"), &r(8, "10M")),
+            (3, 3, 6)
+        );
+        // R contained in F: F [0,10), R [2,6); F reads 4 bases past R's 5' end.
+        assert_eq!(
+            five_base_overhang_lens(&f(1, "10M"), &r(3, "4M")),
+            (4, 0, 4)
+        );
+        // Ordinary FR pair.
+        assert_eq!(
+            five_base_overhang_lens(&f(1, "10M"), &r(6, "10M")),
+            (0, 0, 0)
+        );
+        // R [7,15) with a leading soft clip and an insertion in the overhang: the clip is masked
+        // with it but is not counted as aligned.
+        assert_eq!(
+            five_base_overhang_lens(&f(11, "10M"), &r(8, "2S2M1I6M")),
+            (5, 6, 9)
+        );
+        // R1 reverse (OB): the forward mate is R2.
+        let r1 = sam("p\t83\tchr1\t8\t60\t10M\t=\t11\t0\t*\t*");
+        let r2 = sam("p\t163\tchr1\t11\t60\t10M\t=\t8\t0\t*\t*");
+        assert_eq!(five_base_overhang_lens(&r1, &r2), (3, 3, 6));
+    }
+
+    /// A dovetail overhang is adapter read-through: its bases are never called.
+    #[test]
+    fn five_base_dovetail_overhang_is_never_called() {
+        // A CHH C at 9; R1 "TTTTTT" over [4,10) reads it as T, which calls H.
+        let genome = five_base_genome("chr1", b"TTTTTTTTTCTTTTTTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t5\t60\t6M\t=\t3\t6\tTTTTTT\tIIIIII\tAS:i:0");
+        let xm = |r2: &SamRecord| {
+            let mut c = Counters::default();
+            let (o1, _) = five_base_emit_pe_record(
+                &r1, r2, "p", b"TTTTTT", b"IIIIII", b"AAAAAA", b"IIIIII", &genome, &refid, false,
+                true, false, 0, 0, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            let xm = crate::io::tags::xm(o1.inner().data()).unwrap().to_vec();
+            (xm, c.five_base_overhang_bases_masked)
+        };
+        let ordinary = sam("p\t147\tchr1\t7\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
+        assert_eq!(xm(&ordinary), (b".....H".to_vec(), 0));
+        // R2 over [2,8) ends before R1 does: R1's bases at 8 and 9 are past R2's 5' end.
+        let dovetail = sam("p\t147\tchr1\t3\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
+        assert_eq!(xm(&dovetail), (b"......".to_vec(), 4));
     }
 
     /// `five_base_next_primary` skips `@` headers + secondary (0x100) / supplementary
