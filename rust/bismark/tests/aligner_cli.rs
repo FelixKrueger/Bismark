@@ -971,6 +971,45 @@ exit 1
     }
 }
 
+/// Two inputs that would write the same output name are rejected rather than the second
+/// silently overwriting the first (#1167 finding 22).
+#[cfg(unix)]
+#[test]
+fn inputs_sharing_an_output_name_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let (a, b) = (genome.path().join("a"), genome.path().join("b"));
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    let read = b"@r1\nACGTACGT\n+\nIIIIIIII\n";
+    for p in [a.join("x.fq"), b.join("x.fastq"), a.join("y.fq")] {
+        fs::write(p, read).unwrap();
+    }
+    let cases: [(&[&str], Vec<PathBuf>); 2] = [
+        (&[], vec![a.join("x.fq"), b.join("x.fastq")]),
+        (&["--basename", "foo"], vec![a.join("x.fq"), a.join("y.fq")]),
+    ];
+    for (flags, reads) in cases {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args(flags)
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .args(&reads)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("would both write"));
+        assert_eq!(fs::read_dir(outdir.path()).unwrap().count(), 0);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_index_errors() {
