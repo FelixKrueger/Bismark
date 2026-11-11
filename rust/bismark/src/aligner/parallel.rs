@@ -148,9 +148,10 @@ fn count_effective(
 
 /// Split a single SE input into `n` contiguous plain subset files under `temp_dir`,
 /// applying `skip`/`upto` once (the converter's `(skip, upto]` arithmetic). Subsets
-/// are named off the ORIGINAL basename (`<basename>.temp.<chunk>`, NO prefix, NO
-/// `.gz` — written plain so the converter's suffix-based gz detection reads them
-/// plain; A-Imp7/B-I5). Returns the `n` subset paths in chunk order.
+/// are named off the ORIGINAL basename (`<basename>.temp.<pid>.<chunk>`, NO prefix,
+/// NO `.gz` — written plain so the converter's suffix-based gz detection reads them
+/// plain; A-Imp7/B-I5). The pid keeps concurrent runs sharing a temp dir apart.
+/// Returns the `n` subset paths in chunk order.
 fn split_contiguous(
     input: &Path,
     temp_dir: &Path,
@@ -172,7 +173,12 @@ fn split_contiguous(
         std::fs::create_dir_all(temp_dir)?;
     }
     let paths: Vec<PathBuf> = (0..n)
-        .map(|i| temp_join(temp_dir, &format!("{base_name}.temp.{i}")))
+        .map(|i| {
+            temp_join(
+                temp_dir,
+                &format!("{base_name}.temp.{}.{i}", std::process::id()),
+            )
+        })
         .collect();
     let mut writers: Vec<BufWriter<File>> = paths
         .iter()
@@ -240,8 +246,9 @@ fn count_effective_pe(
 }
 
 /// PE lockstep split: partition the COMMON (min) pair count into `n` contiguous
-/// chunks, writing both mates' subset files on identical boundaries. Returns
-/// `(r1 subset paths, r2 subset paths)`.
+/// chunks, writing both mates' subset files on identical boundaries
+/// (`<basename>.temp.<pid>.<mate>.<chunk>`: the mate number keeps same-basename
+/// R1/R2 from different dirs apart). Returns `(r1 subset paths, r2 subset paths)`.
 fn split_contiguous_pe(
     r1: &Path,
     r2: &Path,
@@ -269,11 +276,12 @@ fn split_contiguous_pe(
     if !temp_dir.as_os_str().is_empty() {
         std::fs::create_dir_all(temp_dir)?;
     }
+    let pid = std::process::id();
     let paths1: Vec<PathBuf> = (0..n)
-        .map(|i| temp_join(temp_dir, &format!("{name1}.temp.{i}")))
+        .map(|i| temp_join(temp_dir, &format!("{name1}.temp.{pid}.1.{i}")))
         .collect();
     let paths2: Vec<PathBuf> = (0..n)
-        .map(|i| temp_join(temp_dir, &format!("{name2}.temp.{i}")))
+        .map(|i| temp_join(temp_dir, &format!("{name2}.temp.{pid}.2.{i}")))
         .collect();
     let mut w1: Vec<BufWriter<File>> = paths1
         .iter()
@@ -1100,6 +1108,31 @@ mod tests {
         assert_eq!(recs(&p1[1]), recs(&p2[1]));
         // 5 pairs over 2 chunks → 3 + 2.
         assert_eq!(recs(&p1[0]) + recs(&p1[1]), 5);
+    }
+
+    #[test]
+    fn pe_split_same_basename_mates_get_distinct_subsets() {
+        // R1/s.fq and R2/s.fq: one shared subset name would let R2 overwrite R1.
+        let dir = TempDir::new().unwrap();
+        for d in ["R1", "R2"] {
+            std::fs::create_dir(dir.path().join(d)).unwrap();
+        }
+        let r1 = fq_file(&dir.path().join("R1"), "s.fq", 3);
+        let r2 = dir.path().join("R2").join("s.fq");
+        write(
+            &r2,
+            b"@m\nTTTT\n+\nIIII\n@m\nTTTT\n+\nIIII\n@m\nTTTT\n+\nIIII\n",
+        );
+        let (p1, p2) = split_contiguous_pe(&r1, &r2, dir.path(), 2, 4, None, None).unwrap();
+        for (a, b) in p1.iter().zip(&p2) {
+            assert_ne!(a, b);
+            assert!(
+                a.to_string_lossy()
+                    .contains(&std::process::id().to_string())
+            );
+        }
+        assert!(read_all(&p1[0]).starts_with(b"@r"));
+        assert!(read_all(&p2[0]).starts_with(b"@m"));
     }
 
     #[test]

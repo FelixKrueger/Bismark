@@ -387,10 +387,11 @@ fn check_merged(
 /// fails loud (pass the collated PE uBAM positionally instead); uBAM + `--fasta`
 /// is rejected (BAM carries qualities → FASTQ).
 ///
-/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<i>/` so the
-/// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
-/// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
-/// Returns the created subdirs for the caller to clean up after the pipeline.
+/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<pid>.<i>/` so
+/// the temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
+/// same-basename uBAMs, or two concurrent runs sharing a temp dir, can't collide.
+/// Returns the created subdirs for the caller to clean up after the pipeline; on a
+/// transcode failure the subdirs made so far are removed here.
 /// An alternative (non-FASTQ/FASTA) read-input backend: a binary format that is
 /// detected, then **transcoded to a temp FASTQ** and fed to the byte-frozen
 /// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
@@ -502,6 +503,12 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
+    let pid = std::process::id();
+    let remove_dirs = |dirs: &[PathBuf]| {
+        for d in dirs {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
 
     let decoder_idx = |path: &str| decoders.iter().position(|d| d.detect(Path::new(path)));
 
@@ -575,11 +582,13 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let (r1, r2) = dec.transcode_pe(Path::new(r), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let (r1, r2) = dec
+                .transcode_pe(Path::new(r), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             mates1.push(r1.to_string_lossy().into_owned());
             mates2.push(r2.to_string_lossy().into_owned());
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
@@ -595,10 +604,12 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let temp = dec.transcode_se(Path::new(read), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let temp = dec
+                .transcode_se(Path::new(read), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             *read = temp.to_string_lossy().into_owned();
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::SingleEnd { reads: new_reads };
         config.format = ReadFormat::FastQ;
