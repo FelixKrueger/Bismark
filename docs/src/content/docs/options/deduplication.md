@@ -60,6 +60,10 @@ All specified input files are treated as one sample and concatenated together fo
 
 Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required
 
+- `--cram_ref [path]`
+
+CRAM reference FASTA, with a `.fai` index next to it. Required when the input is CRAM. Reads from CRAM keep every field, but for about half of the pairs the TLEN sign can differ from `samtools view`; use BAM input if TLEN matters.
+
 - `--version`
 
 Print version information and exit

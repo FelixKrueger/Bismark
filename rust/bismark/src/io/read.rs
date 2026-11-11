@@ -573,6 +573,7 @@ impl CramReader<File> {
     /// FASTA reference with an existing `.fai` index alongside.
     pub fn from_path(path: &Path, cram_ref: &Path) -> Result<Self, BismarkIoError> {
         let repo = build_fasta_repository(cram_ref)?;
+        // shortcut: noodles-cram re-signs TLEN of attached mates (first record positive, not htslib's leftmost rule), upgrade when noodles fixes resolve_mates
         let mut inner = noodles_cram::io::reader::Builder::default()
             .set_reference_sequence_repository(repo.clone())
             .build_from_path(path)?;
@@ -1690,6 +1691,38 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
         let read_back: Vec<RecordBuf> =
             cram.records().map(|r| r.unwrap().inner().clone()).collect();
         assert_eq!(read_back.len(), 8);
+        assert_eq!(read_back, original);
+    }
+
+    /// `tests/data/cram_pe/tlen_pe.cram` is `tlen_pe.bam` (14 Bismark PE pairs)
+    /// written by samtools. Every field and tag reads back as in the BAM except
+    /// TLEN: noodles re-signs TLEN of attached mates (first record positive),
+    /// while htslib uses the leftmost rule, so 4 of the 14 pairs come back with
+    /// the sign flipped. TLEN is cleared on both sides so this pins the rest.
+    #[test]
+    fn samtools_pe_cram_reads_back_as_bam_except_tlen() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/cram_pe");
+        let mut bam = noodles_bam::io::reader::Builder
+            .build_from_path(data.join("tlen_pe.bam"))
+            .unwrap();
+        let header = bam.read_header().unwrap();
+        let clear_tlen = |mut r: RecordBuf| {
+            *r.template_length_mut() = 0;
+            r
+        };
+        let original: Vec<RecordBuf> = bam
+            .record_bufs(&header)
+            .map(|r| clear_tlen(r.unwrap()))
+            .collect();
+
+        let mut cram =
+            CramReader::from_path(&data.join("tlen_pe.cram"), &data.join("ecoli_window.fa"))
+                .unwrap();
+        let read_back: Vec<RecordBuf> = cram
+            .records()
+            .map(|r| clear_tlen(r.unwrap().inner().clone()))
+            .collect();
+        assert_eq!(read_back.len(), 28);
         assert_eq!(read_back, original);
     }
 }
