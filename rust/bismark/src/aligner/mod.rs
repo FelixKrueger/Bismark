@@ -1887,6 +1887,9 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The bwa-mem3 environment variable that would override `--meth-seed-prune`.
+const BWAMEM3_SEED_PRUNE_ENV: &str = "BWAMEM3_METH_SEED_PRUNE";
+
 /// Effective 5-Base options with single-instance threading and input ordering.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
     let n = five_base_threads(
@@ -1903,7 +1906,8 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
         // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
         // base string carries a resolved `-t {p}` (#1074 C2).
-        _ => replace_minimap2_threads(&config.aligner_options, n),
+        Aligner::Minimap2 | Aligner::Rammap => replace_minimap2_threads(&config.aligner_options, n),
+        Aligner::BwaMem3 => format!("{} -t {n}", config.aligner_options),
     }
 }
 
@@ -1962,7 +1966,17 @@ fn five_base_build_argv(
             args.push("-2".into());
             args.push(reads[1].as_os_str().to_owned());
         }
-        _ => {
+        // `mem <opts> <prefix> r1 r2`: the options already begin with the `mem` subcommand.
+        Aligner::BwaMem3 => {
+            let idx = config
+                .five_base_index
+                .as_ref()
+                .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+            args.push(idx.as_os_str().to_owned());
+            args.push(reads[0].as_os_str().to_owned());
+            args.push(reads[1].as_os_str().to_owned());
+        }
+        Aligner::Minimap2 | Aligner::Rammap => {
             // minimap2: positional <genome.fa> then the read file(s).
             args.push(ref_path.as_os_str().to_owned());
             for r in reads {
@@ -2000,6 +2014,101 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
     }
     out.flush()?;
     Ok((tmp.clone(), Some(tmp)))
+}
+
+/// `(name, length)` per contig from a BWA `.ann`: a `<len> <n_seqs> <seed>` header line, then
+/// `<gi> <name> [comment]` and `<offset> <len> <n_ambs>` per contig.
+fn read_bwa_ann(prefix: &Path) -> Result<Vec<(String, u64)>> {
+    let path = PathBuf::from(format!("{}.ann", prefix.display()));
+    let bad =
+        || AlignerError::Validation(format!("{} is not a valid BWA .ann file", path.display()));
+    let text = std::fs::read_to_string(&path)?;
+    let mut lines = text.lines();
+    let n_seqs: usize = lines
+        .next()
+        .and_then(|h| h.split_whitespace().nth(1))
+        .and_then(|n| n.parse().ok())
+        .ok_or_else(bad)?;
+    let mut out = Vec::with_capacity(n_seqs);
+    while let (Some(id), Some(pos)) = (lines.next(), lines.next()) {
+        let name = id.split_whitespace().nth(1).ok_or_else(bad)?;
+        let len = pos
+            .split_whitespace()
+            .nth(1)
+            .and_then(|l| l.parse::<u64>().ok())
+            .ok_or_else(bad)?;
+        out.push((name.to_string(), len));
+    }
+    if out.len() != n_seqs {
+        return Err(bad());
+    }
+    Ok(out)
+}
+
+/// Fail unless `got` has exactly the `(name, length)` set of `expected` (the genome folder).
+fn check_contigs_match(
+    expected: &[(String, u64)],
+    got: &[(String, u64)],
+    what: &str,
+) -> Result<()> {
+    use std::collections::BTreeSet;
+    let e: BTreeSet<&(String, u64)> = expected.iter().collect();
+    let g: BTreeSet<&(String, u64)> = got.iter().collect();
+    if e == g {
+        return Ok(());
+    }
+    let list = |s: Vec<&&(String, u64)>| {
+        s.iter()
+            .take(5)
+            .map(|(n, l)| format!("{n}:{l}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(AlignerError::Validation(format!(
+        "the {what} does not match the genome folder (contig:length). Only in the genome folder: \
+         [{}]; only in the {what}: [{}]. Build the index from the same FASTA as the genome folder.",
+        list(e.difference(&g).collect()),
+        list(g.difference(&e).collect())
+    )))
+}
+
+/// Consume the `@` header lines (peeking, so the first record stays unread) and return the
+/// `@SQ` `(SN, LN)` pairs.
+fn five_base_read_sq_header<R: BufRead>(reader: &mut R) -> Result<Vec<(String, u64)>> {
+    let mut sq = Vec::new();
+    let mut line = String::new();
+    while reader.fill_buf()?.first() == Some(&b'@') {
+        line.clear();
+        reader.read_line(&mut line)?;
+        if let Some(rest) = line.strip_prefix("@SQ\t") {
+            let (mut sn, mut ln) = (None, None);
+            for field in rest.trim_end().split('\t') {
+                if let Some(v) = field.strip_prefix("SN:") {
+                    sn = Some(v.to_string());
+                } else if let Some(v) = field.strip_prefix("LN:") {
+                    ln = v.parse::<u64>().ok();
+                }
+            }
+            if let (Some(s), Some(l)) = (sn, ln) {
+                sq.push((s, l));
+            }
+        }
+    }
+    Ok(sq)
+}
+
+/// The genome folder's contigs as `(name, length)`, in `@SQ` order.
+fn genome_contigs(genome: &Genome) -> Vec<(String, u64)> {
+    genome
+        .sq_order
+        .iter()
+        .map(|n| {
+            (
+                n.clone(),
+                genome.chromosomes.get(n).map_or(0, Vec::len) as u64,
+            )
+        })
+        .collect()
 }
 
 /// Read the next PRIMARY SAM record from minimap2's stdout, skipping `@` headers
@@ -2129,11 +2238,27 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
     let started = Instant::now();
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
+    if config.aligner == Aligner::BwaMem3 {
+        let index = config
+            .five_base_index
+            .as_ref()
+            .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+        check_contigs_match(
+            &genome_contigs(&genome),
+            &read_bwa_ann(index)?,
+            "bwa-mem3 index",
+        )?;
+    }
     let header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
     let fb_opts = five_base_aligner_options(config);
-    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+    // Only minimap2 reads the genome FASTA; the other engines align against an index.
+    let (ref_path, ref_tmp) = if config.aligner == Aligner::Minimap2 {
+        five_base_reference_fasta(config)?
+    } else {
+        (PathBuf::new(), None)
+    };
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
         let bam_path =
@@ -2266,8 +2391,16 @@ fn five_base_align_and_call_pe(
     let bin = &config.detected_aligner.path;
     let opts = five_base_aligner_options(config);
     let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
+    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
+        eprintln!(
+            "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
+             --meth-seed-prune=spec30)."
+        );
+    }
     let mut child = std::process::Command::new(bin)
         .args(&args)
+        // The variable overrides bwa-mem3's --meth-seed-prune flag.
+        .env_remove(BWAMEM3_SEED_PRUNE_ENV)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -2284,6 +2417,10 @@ fn five_base_align_and_call_pe(
         .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
+    if config.aligner == Aligner::BwaMem3 {
+        let sq = five_base_read_sq_header(&mut sam)?;
+        check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
+    }
 
     let mut r1 = open_maybe_gz(read_1)?;
     let mut r2 = open_maybe_gz(read_2)?;
@@ -2299,8 +2436,8 @@ fn five_base_align_and_call_pe(
             break;
         };
         count += 1;
-        // Each pair always yields TWO minimap2 primaries (mapped or unmapped); consume
-        // them to stay in lockstep even for skipped reads.
+        // Each pair always yields TWO primaries (mapped or unmapped); consume them to stay
+        // in lockstep even for skipped reads.
         let a = five_base_next_primary(&mut sam, &mut sam_line)?;
         let b = five_base_next_primary(&mut sam, &mut sam_line)?;
         if let Some(s) = skip
@@ -8419,10 +8556,74 @@ mod tests {
         c.five_base = true;
         c.aligner_options = match aligner {
             Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
+            Aligner::BwaMem3 => crate::aligner::options::bwamem3_options(),
             _ => "-q --score-min L,0,-0.6 --maxins 800".into(),
         };
         c.bowtie_threads = Some(4);
         c
+    }
+
+    #[test]
+    fn five_base_sq_header_is_read_without_consuming_the_first_record() {
+        let sam = "@HD\tVN:1.5\n@SQ\tSN:chr1\tLN:8\n@PG\tID:x\n\
+                   p\t99\tchr1\t1\t60\t4M\t=\t1\t4\tACGT\tIIII\n";
+        let mut r = std::io::BufReader::new(sam.as_bytes());
+        assert_eq!(
+            five_base_read_sq_header(&mut r).unwrap(),
+            vec![("chr1".to_string(), 8)]
+        );
+        let mut line = String::new();
+        let rec = five_base_next_primary(&mut r, &mut line).unwrap().unwrap();
+        assert_eq!(rec.qname, "p");
+    }
+
+    #[test]
+    fn bwa_ann_parse_and_contig_match_catches_length_mismatch() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("g.fa");
+        std::fs::write(
+            format!("{}.ann", p.display()),
+            "18 2 11\n0 chr1 (null)\n0 8 0\n0 chr2 some comment\n8 10 0\n",
+        )
+        .unwrap();
+        let ann = read_bwa_ann(&p).unwrap();
+        assert_eq!(ann, vec![("chr1".to_string(), 8), ("chr2".to_string(), 10)]);
+
+        let genome = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 10)];
+        assert!(check_contigs_match(&genome, &ann, "bwa-mem3 index").is_ok());
+
+        let same_names = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 11)];
+        let e = check_contigs_match(&same_names, &ann, "bwa-mem3 index")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("chr2:10") && e.contains("chr2:11"), "{e}");
+
+        let renamed = vec![("1".to_string(), 8u64), ("2".to_string(), 10)];
+        assert!(check_contigs_match(&renamed, &ann, "bwa-mem3 index").is_err());
+
+        std::fs::write(format!("{}.ann", p.display()), "18 2 11\n0 chr1\n").unwrap();
+        assert!(read_bwa_ann(&p).is_err());
+    }
+
+    #[test]
+    fn bwamem3_options_append_threads_and_argv_is_prefix_then_mates() {
+        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
+        let opts = five_base_aligner_options(&c);
+        assert!(opts.starts_with("mem --meth=5base"), "{opts}");
+        assert!(opts.ends_with("-K 100000000 -t 4"), "{opts}");
+        let argv: Vec<String> = five_base_build_argv(
+            &c,
+            &opts,
+            Path::new("/unused.fa"),
+            &[Path::new("r1.fq"), Path::new("r2.fq")],
+        )
+        .into_iter()
+        .map(|s| s.into_string().unwrap())
+        .collect();
+        assert_eq!(argv.first().map(String::as_str), Some("mem"));
+        assert_eq!(&argv[argv.len() - 3..], ["/idx/g.fa", "r1.fq", "r2.fq"]);
+        assert!(!argv.iter().any(|a| a == "/unused.fa"), "{argv:?}");
     }
 
     #[test]

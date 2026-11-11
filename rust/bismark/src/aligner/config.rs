@@ -35,6 +35,8 @@ pub enum Aligner {
     /// `--combined_index` rejects. Opt-in `--rammap`, never-silent — NOT
     /// byte-identical to minimap2 (validated by concordance, not the gate).
     Rammap,
+    /// bwa-mem3 `--meth=5base` (5-Base only): methylation-aware placement; Bismark makes the calls.
+    BwaMem3,
 }
 
 impl Aligner {
@@ -49,6 +51,7 @@ impl Aligner {
             // Design#7: the full word `rammap` (NOT abbreviated like `mm2`) →
             // `_bismark_rammap.bam` / `_rammap_SE_report.txt`.
             Aligner::Rammap => "rammap",
+            Aligner::BwaMem3 => "bwamem3",
         }
     }
 
@@ -62,6 +65,7 @@ impl Aligner {
             Aligner::Minimap2 => "minimap2",
             // The report "Bismark was run with rammap against …" line.
             Aligner::Rammap => "rammap",
+            Aligner::BwaMem3 => "bwa-mem3",
         }
     }
 }
@@ -165,7 +169,7 @@ impl ScoreModel {
                 // NOT gated on `local`: minimap2/rammap align locally by design and their
                 // `--local` is rejected, so there is no zero-bonus variant to fall back to.
                 Aligner::Minimap2 | Aligner::Rammap => MINIMAP2_MATCH_BONUS,
-                _ => 0.0,
+                Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3 => 0.0,
             },
         }
     }
@@ -462,6 +466,7 @@ pub fn resolve_stream_converted(
                  in-process backend takes them in memory)",
             );
         }
+        Aligner::BwaMem3 => return no("bwa-mem3 is a 5-Base engine; there are no converted reads"),
     }
     if combined_index {
         return no("the combined-index alignment models still read the converted reads as files");
@@ -715,6 +720,33 @@ fn same_index_basename(a: &Path, b: &Path) -> bool {
         (Some(x), Some(y)) => x == y,
         _ => a == b,
     }
+}
+
+/// The files `bwa-mem3 mem --meth` opens; `.meth.fa` is not among them.
+const BWAMEM3_INDEX_SUFFIXES: [&str; 8] = [
+    "amb",
+    "ann",
+    "pac",
+    "bwt.2bit.64",
+    "meth.amb",
+    "meth.ann",
+    "meth.pac",
+    "meth.bwt.2bit.64",
+];
+
+/// Fail, naming the first missing file, unless `prefix` is a complete bwa-mem3 meth index.
+fn check_bwamem3_index_files(prefix: &Path) -> Result<()> {
+    for suffix in BWAMEM3_INDEX_SUFFIXES {
+        let file = PathBuf::from(format!("{}.{suffix}", prefix.display()));
+        if !file.is_file() {
+            return Err(AlignerError::Validation(format!(
+                "bwa-mem3 index file {} is missing. Build the index once with `bwa-mem3 index \
+                 --meth <genome.fa>` and pass that FASTA path as --five_base_index.",
+                file.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Reject a BISULFITE-converted basename for `--five_base_index`.
@@ -1015,20 +1047,29 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         let env = discovery::index_env_for(aligner);
         discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
     }
+    if aligner == Aligner::BwaMem3
+        && let Some(index) = cli.five_base_index.as_deref()
+    {
+        check_bwamem3_index_files(index)?;
+    }
 
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
         Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
         Aligner::Rammap => cli.path_to_rammap.as_deref(),
+        Aligner::BwaMem3 => cli.path_to_bwamem3.as_deref(),
     };
     let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
-    let (aligner_options, gap_penalties) =
-        if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
-            options::build_five_base_aligner_options(cli, aligner, format)?
-        } else {
-            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
-        };
+    let (aligner_options, gap_penalties) = if cli.illumina_5base
+        && matches!(
+            aligner,
+            Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3
+        ) {
+        options::build_five_base_aligner_options(cli, aligner, format)?
+    } else {
+        options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+    };
     // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
     // and the in-process rammap backend cannot drift (#1092). Must stay after
     // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
@@ -1409,6 +1450,25 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
             "You may not select both --rammap and --minimap2. Make your pick!".into(),
         ));
     }
+    if cli.bwamem3 {
+        for (set, flag) in [
+            (cli.bowtie2, "--bowtie2"),
+            (cli.hisat2, "--hisat2"),
+            (cli.minimap2, "--minimap2"),
+            (cli.rammap, "--rammap"),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "You may not select both --bwamem3 and {flag}. Make your pick!"
+                )));
+            }
+        }
+        if !cli.illumina_5base {
+            return Err(AlignerError::Validation(
+                "--bwamem3 is only supported as a 5-Base engine (--illumina_5base).".into(),
+            ));
+        }
+    }
     // --illumina_5base (5-Base, #787) aligns to the UNCONVERTED genome with minimap2
     // (v1). It is mutually exclusive with the bisulfite engines that have no
     // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
@@ -1420,6 +1480,17 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
                  --five_base_index) or the default minimap2 (genome FASTA)."
                     .into(),
             ));
+        }
+        if cli.bwamem3 {
+            if cli.five_base_index.is_none() {
+                return Err(AlignerError::Validation(
+                    "--illumina_5base --bwamem3 requires --five_base_index <prefix>: the prefix of \
+                     a bwa-mem3 methylation index, built once with `bwa-mem3 index --meth \
+                     <genome.fa>` (pass that FASTA path)."
+                        .into(),
+                ));
+            }
+            return Ok(Aligner::BwaMem3);
         }
         // bowtie2/hisat2 5-Base align the RAW reads to a user-provided UNCONVERTED
         // index (5-Base keeps full complexity, so a normal index works). minimap2 (the
@@ -1442,8 +1513,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
         }
         if cli.five_base_index.is_some() {
             return Err(AlignerError::Validation(
-                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2; the \
-                 default minimap2 5-Base path reads the genome FASTA directly."
+                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2/--bwamem3; \
+                 the default minimap2 5-Base path reads the genome FASTA directly."
                     .into(),
             ));
         }
@@ -1451,7 +1522,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     }
     if cli.five_base_index.is_some() {
         return Err(AlignerError::Validation(
-            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2.".into(),
+            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2/--bwamem3."
+                .into(),
         ));
     }
     if cli.hisat2 {
@@ -2226,6 +2298,75 @@ mod tests {
             resolve_aligner(&cli_from(&["--minimap2"])).unwrap(),
             Aligner::Minimap2
         );
+    }
+
+    #[test]
+    fn bwamem3_index_files_checked_with_build_hint() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("g.fa");
+        let all = [
+            "amb",
+            "ann",
+            "pac",
+            "bwt.2bit.64",
+            "meth.amb",
+            "meth.ann",
+            "meth.pac",
+            "meth.bwt.2bit.64",
+        ];
+        for s in all {
+            std::fs::write(format!("{}.{s}", p.display()), b"").unwrap();
+        }
+        assert!(check_bwamem3_index_files(&p).is_ok());
+        for missing in all {
+            let f = format!("{}.{missing}", p.display());
+            std::fs::remove_file(&f).unwrap();
+            let e = check_bwamem3_index_files(&p).unwrap_err().to_string();
+            assert!(
+                e.contains(&format!("g.fa.{missing}")) && e.contains("bwa-mem3 index --meth"),
+                "{e}"
+            );
+            std::fs::write(&f, b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn resolve_aligner_bwamem3_rules() {
+        let ok = cli_from(&[
+            "--illumina_5base",
+            "--bwamem3",
+            "--five_base_index",
+            "/x/idx.fa",
+        ]);
+        assert_eq!(resolve_aligner(&ok).unwrap(), Aligner::BwaMem3);
+
+        let e = resolve_aligner(&cli_from(&["--bwamem3"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("only supported as a 5-Base engine"), "{e}");
+
+        let e = resolve_aligner(&cli_from(&["--illumina_5base", "--bwamem3"]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("--five_base_index") && e.contains("bwa-mem3 index --meth"),
+            "{e}"
+        );
+
+        for other in ["--bowtie2", "--hisat2", "--minimap2", "--rammap"] {
+            let c = cli_from(&[
+                "--illumina_5base",
+                "--bwamem3",
+                other,
+                "--five_base_index",
+                "/x/idx.fa",
+            ]);
+            let e = resolve_aligner(&c).unwrap_err().to_string();
+            assert!(
+                e.contains("--bwamem3") && e.contains("Make your pick"),
+                "{other}: {e}"
+            );
+        }
     }
 
     #[test]

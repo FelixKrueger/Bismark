@@ -127,6 +127,9 @@ fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
         }
         // rammap is minimap-like — the same single `<stem>.mmi` (no large variant).
         Aligner::Minimap2 | Aligner::Rammap => vec![format!("{stem}.mmi")],
+        Aligner::BwaMem3 => {
+            unreachable!("bwa-mem3 meth indexes are checked by config::check_bwamem3_index_files")
+        }
     }
 }
 
@@ -177,7 +180,7 @@ fn index_env_name(aligner: Aligner) -> Option<&'static str> {
     match aligner {
         Aligner::Bowtie2 => Some("BOWTIE2_INDEXES"),
         Aligner::Hisat2 => Some("HISAT2_INDEXES"),
-        Aligner::Minimap2 | Aligner::Rammap => None,
+        Aligner::Minimap2 | Aligner::Rammap | Aligner::BwaMem3 => None,
     }
 }
 
@@ -230,6 +233,7 @@ pub(crate) fn validate_unconverted_index(
         Aligner::Bowtie2 => "bowtie2-build",
         Aligner::Hisat2 => "hisat2-build",
         Aligner::Minimap2 | Aligner::Rammap => "the aligner's indexer",
+        Aligner::BwaMem3 => "bwa-mem3 index --meth",
     };
     let env_note = match (index_env_name(aligner), index_env, &suppressed_by) {
         (Some(var), None, _) => format!(" (${var} is not set)"),
