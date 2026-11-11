@@ -1689,11 +1689,21 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
 }
 
 fn check_exists(file: &str) -> Result<()> {
-    if Path::new(file).exists() {
-        Ok(())
-    } else {
-        Err(AlignerError::InputFileMissing(file.to_string()))
+    let path = Path::new(file);
+    if !path.exists() {
+        return Err(AlignerError::InputFileMissing(file.to_string()));
     }
+    // CRAM is not detected as an alternative input and would reach Bowtie 2 as FASTQ.
+    if matches!(
+        crate::io::AlignmentKind::from_path(path),
+        Ok(crate::io::AlignmentKind::Cram)
+    ) {
+        return Err(AlignerError::Validation(format!(
+            "{file}: CRAM read input is not supported by the aligner: convert it first with \
+             `samtools fastq` (an unaligned BAM is accepted as is)"
+        )));
+    }
+    Ok(())
 }
 
 fn resolve_output(cli: &Cli) -> Result<OutputTarget> {
