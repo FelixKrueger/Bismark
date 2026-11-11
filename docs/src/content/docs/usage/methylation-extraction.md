@@ -190,11 +190,11 @@ bismark extract --gzip sample_bismark_bt2_pe.bam
 The methylation extractor can also auto-detect the alignment mode and will set the options above automatically. A typical command including the optional `bedGraph` output could look like this:
 
 ```
-bismark extract --gzip --bedGraph --buffer_size 10G sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph sample_bismark_bt2.bam
 ```
 
 A typical command including the optional genome-wide cytosine methylation report could look like this:
 
 ```
-bismark extract --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
 ```
