@@ -216,6 +216,94 @@ fn bwamem3_engine_sq_mismatch_fails() {
         .stderr(predicate::str::contains("bwa-mem3 output header"));
 }
 
+/// Replace the fake engine with one whose alignment output is `body`, a shell fragment run
+/// after the header; `$r1` holds the R1 FASTQ path.
+#[cfg(unix)]
+fn custom_fake(run: &FakeRun, body: &str) {
+    let script = format!(
+        r#"#!/bin/sh
+[ "$1" = version ] && {{ echo 0.16.0; exit 0; }}
+n=$#
+eval r1=\${{$((n-1))}}
+printf '@HD\tVN:1.5\n@SQ\tSN:chr1\tLN:8\n'
+{body}
+"#
+    );
+    write_exec(&run.bins.path().join("bwa-mem3"), &script);
+}
+
+/// One mapped 99/147 pair per R1 read, as awk.
+const PAIRS_AWK: &str = r#"awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
+     NR%4==2 {
+       print id "\t99\tchr1\t1\t60\t6M\t=\t1\t6\t" $0 "\tFFFFFF\tAS:i:6"
+       print id "\t147\tchr1\t1\t60\t6M\t=\t1\t-6\t" $0 "\tFFFFFF\tAS:i:6"
+     }' "$r1""#;
+
+fn many_pairs(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("@p{i}\nATGTAC\n+\nIIIIII\n"))
+        .collect()
+}
+
+/// An engine writing far more than a pipe buffer must not hang an `--upto` run.
+#[cfg(unix)]
+#[test]
+fn bwamem3_upto_terminates_with_a_large_engine_output() {
+    let run = fake_run(&many_pairs(5000), &[("chr1", 8)], SQ_OK);
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .args(["--upto", "10"])
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
+    assert!(
+        rep.contains("Sequence pairs analysed in total:\t10\n"),
+        "{rep}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_trailing_records_after_last_pair_are_an_error() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let body = format!(
+        "{PAIRS_AWK}\nprintf 'extra\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\n\
+         extra\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tIIIIII\\n'"
+    );
+    custom_fake(&run, &body);
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("more records than read pairs"));
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_r2_with_fewer_reads_than_r1_is_an_error() {
+    let run = fake_run(&many_pairs(3), &[("chr1", 8)], SQ_OK);
+    fs::write(&run.r2, many_pairs(2)).unwrap();
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("fewer reads"));
+}
+
+/// An engine killed mid-stream (e.g. out of memory) is reported with its exit status.
+#[cfg(unix)]
+#[test]
+fn bwamem3_killed_engine_reports_exit_status() {
+    let run = fake_run(&many_pairs(3), &[("chr1", 8)], SQ_OK);
+    let body = format!("{PAIRS_AWK} | head -n 2\nkill -9 $$");
+    custom_fake(&run, &body);
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("bwa-mem3"))
+        .stderr(predicate::str::contains("signal: 9").or(predicate::str::contains("137")));
+}
+
 #[cfg(unix)]
 #[test]
 fn bwamem3_notice_names_bwamem3() {

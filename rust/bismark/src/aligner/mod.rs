@@ -1887,6 +1887,63 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// The 5-Base engine process. Unless [`finish`](Self::finish) reaps it, it is killed and reaped
+/// on drop, so an early stop or an error never leaves it blocked on a full pipe.
+struct EngineChild {
+    child: std::process::Child,
+    name: &'static str,
+    reaped: bool,
+}
+
+impl EngineChild {
+    /// Wait for the engine to exit, and fail on a non-zero status.
+    fn finish(mut self) -> Result<()> {
+        let status = self.child.wait()?;
+        self.reaped = true;
+        if !status.success() {
+            return Err(AlignerError::Validation(format!(
+                "{} exited with status {status}",
+                self.name
+            )));
+        }
+        Ok(())
+    }
+
+    /// An error for `what`, naming the engine's exit status if it has ended within 2 s.
+    fn failure(&mut self, what: &str) -> AlignerError {
+        let mut status = None;
+        for _ in 0..40 {
+            if let Ok(Some(s)) = self.child.try_wait() {
+                status = Some(s);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let ended = match status {
+            Some(s) => {
+                self.reaped = true;
+                let oom = if s.success() {
+                    ""
+                } else {
+                    " (a kill by signal 9 usually means it ran out of memory)"
+                };
+                format!("; {} exited with {s}{oom}", self.name)
+            }
+            None => String::new(),
+        };
+        AlignerError::Validation(format!("{} {what}{ended}", self.name))
+    }
+}
+
+impl Drop for EngineChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
 /// The bwa-mem3 environment variable that would override `--meth-seed-prune`.
 const BWAMEM3_SEED_PRUNE_ENV: &str = "BWAMEM3_METH_SEED_PRUNE";
 
@@ -2301,6 +2358,11 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         )?;
 
         report::print_final_analysis_report_paired_ends(&mut report, &counters, true)?;
+        writeln!(
+            report,
+            "Proper pairs rejected (same strand, other contig, or R2 not proper):\t{}",
+            counters.five_base_pair_orientation_rejected
+        )?;
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
@@ -2397,7 +2459,7 @@ fn five_base_align_and_call_pe(
              --meth-seed-prune=spec30)."
         );
     }
-    let mut child = std::process::Command::new(bin)
+    let child = std::process::Command::new(bin)
         .args(&args)
         // The variable overrides bwa-mem3's --meth-seed-prune flag.
         .env_remove(BWAMEM3_SEED_PRUNE_ENV)
@@ -2411,10 +2473,14 @@ fn five_base_align_and_call_pe(
                 bin.display()
             ))
         })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut engine = EngineChild {
+        child,
+        name: config.aligner.name(),
+        reaped: false,
+    };
+    let stdout = engine.child.stdout.take().ok_or_else(|| {
+        AlignerError::Validation(format!("{} stdout was not captured", config.aligner.name()))
+    })?;
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
     if config.aligner == Aligner::BwaMem3 {
@@ -2431,15 +2497,22 @@ fn five_base_align_and_call_pe(
     let mut seen: std::collections::HashSet<(Vec<u8>, Vec<u8>, String, u32, u16)> =
         std::collections::HashSet::new();
     let mut dups: u64 = 0;
+    let mut stopped_early = false;
     while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
         let Some((id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
-            break;
+            return Err(AlignerError::Validation(format!(
+                "{} has fewer reads than {}",
+                read_2.display(),
+                read_1.display()
+            )));
         };
         count += 1;
         // Each pair always yields TWO primaries (mapped or unmapped); consume them to stay
         // in lockstep even for skipped reads.
-        let a = five_base_next_primary(&mut sam, &mut sam_line)?;
-        let b = five_base_next_primary(&mut sam, &mut sam_line)?;
+        let a = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        let b = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
         if let Some(s) = skip
             && s > 0
             && count <= s
@@ -2450,13 +2523,11 @@ fn five_base_align_and_call_pe(
             && u > 0
             && count > u
         {
+            stopped_early = true;
             break;
         }
         let (Some(a), Some(b)) = (a, b) else {
-            return Err(AlignerError::Validation(format!(
-                "{} produced fewer PE records than read pairs (desync)",
-                config.aligner.name()
-            )));
+            return Err(engine.failure("produced fewer PE records than read pairs (desync)"));
         };
         // Identify R1 (FLAG 0x40) and R2 (FLAG 0x80) within the pair.
         let (rec1, rec2) = if a.flag & 0x40 != 0 {
@@ -2507,6 +2578,7 @@ fn five_base_align_and_call_pe(
             config.dovetail,
             config.strand_id,
             config.five_base_baseq,
+            umi_len,
             counters,
         )? {
             // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
@@ -2524,11 +2596,24 @@ fn five_base_align_and_call_pe(
         }
     }
 
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(AlignerError::Validation(format!(
-            "minimap2 exited with status {status}"
-        )));
+    if stopped_early {
+        // `--upto` was reached: the engine's remaining output is not needed.
+        drop(sam);
+        drop(engine);
+    } else {
+        let extra = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        if extra.is_some() {
+            return Err(engine.failure("produced more records than read pairs"));
+        }
+        if read_fastq_record(&mut r2)?.is_some() {
+            return Err(AlignerError::Validation(format!(
+                "{} has more reads than {}",
+                read_2.display(),
+                read_1.display()
+            )));
+        }
+        engine.finish()?;
     }
     if umi_len > 0 {
         eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).");
@@ -2603,12 +2688,20 @@ fn five_base_emit_pe_record(
     dovetail: bool,
     strand_id: bool,
     baseq: u8,
+    umi_len: usize,
     counters: &mut Counters,
 ) -> Result<Option<(crate::io::BismarkRecord, crate::io::BismarkRecord)>> {
     // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
     let proper = rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 && rec2.flag & 0x4 == 0;
     if !proper {
         counters.no_single_alignment_found += 1;
+        return Ok(None);
+    }
+    // R2's strand is derived from R1's below, so the pair must be FR/RF on one contig.
+    let concordant =
+        rec2.flag & 0x2 != 0 && rec1.rname == rec2.rname && (rec1.flag ^ rec2.flag) & 0x10 != 0;
+    if !concordant {
+        counters.five_base_pair_orientation_rejected += 1;
         return Ok(None);
     }
     five_base_check_cigar_covers_read(identifier, "R1", &rec1.cigar, seq1_uc.len())?;
@@ -2641,8 +2734,15 @@ fn five_base_emit_pe_record(
         return Ok(None);
     }
     let off = if phred64 { 64 } else { 33 };
-    let call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
-    let call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+    let mut call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
+    let mut call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+    // Each mate's inline 5' UMI is never a methylation call, whether or not it was soft-clipped.
+    for b in call1.iter_mut().take(umi_len) {
+        *b = b'N';
+    }
+    for b in call2.iter_mut().take(umi_len) {
+        *b = b'N';
+    }
     let mc1 = methylation_call(
         &call1,
         &ext.unmodified_genomic_sequence_1,
@@ -8094,7 +8194,7 @@ mod tests {
         let mut c = Counters::default();
         let (o1, o2) = five_base_emit_pe_record(
             &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
-            0, &mut c,
+            0, 0, &mut c,
         )
         .unwrap()
         .expect("proper pair emits two records");
@@ -8121,12 +8221,77 @@ mod tests {
         let mut c = Counters::default();
         let out = five_base_emit_pe_record(
             &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
-            0, &mut c,
+            0, 0, &mut c,
         )
         .unwrap();
         assert!(out.is_none());
         assert_eq!(c.no_single_alignment_found, 1);
         assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// Engines may set 0x2 on same-strand or cross-contig pairs; only opposite-strand,
+    /// same-contig pairs with BOTH mates 0x2 are emitted.
+    #[test]
+    fn five_base_emit_pe_rejects_same_strand_cross_contig_and_one_sided_proper() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        let cases = [
+            // FF
+            (
+                "p\t67\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t131\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+            // RR
+            (
+                "p\t115\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t179\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+            // cross-contig
+            (
+                "p\t99\tchr1\t3\t60\t4M\tchr2\t5\t0\tTGAA\tIIII",
+                "p\t147\tchr2\t5\t60\t4M\tchr1\t3\t0\tGAAT\tIIII",
+            ),
+            // R2 not flagged proper
+            (
+                "p\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t145\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+        ];
+        for (a, b) in cases {
+            let (r1, r2) = (SamRecord::parse(a).unwrap(), SamRecord::parse(b).unwrap());
+            let mut c = Counters::default();
+            let out = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true,
+                false, 0, 0, &mut c,
+            )
+            .unwrap();
+            assert!(out.is_none(), "{a} / {b}");
+            assert_eq!(c.five_base_pair_orientation_rejected, 1, "{a} / {b}");
+            assert_eq!(c.unique_best_alignment_count, 0, "{a} / {b}");
+        }
+    }
+
+    /// A UMI the engine aligned instead of soft-clipping is never called: bwa-mem3 scores a
+    /// read T at a genomic C as free, so it can extend into a UMI.
+    #[test]
+    fn five_base_umi_prefix_is_never_called() {
+        // R1 "TGTG" fully aligned over genomic CGCG: unmasked it calls Z.Z.
+        let genome = five_base_genome("chr1", b"AACGCGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t4M\t=\t7\t8\tTGTG\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t147\tchr1\t7\t60\t4M\t=\t3\t-8\tAATT\tIIII\tAS:i:0").unwrap();
+        let call = |umi_len: usize| {
+            let mut c = Counters::default();
+            let (o1, _) = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TGTG", b"IIII", b"AATT", b"IIII", &genome, &refid, false, true,
+                false, 0, umi_len, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            crate::io::tags::xm(o1.inner().data()).unwrap().to_vec()
+        };
+        assert_eq!(call(0), b"Z.Z.".to_vec(), "unmasked baseline");
+        assert_eq!(call(2), b"..Z.".to_vec(), "the 2 UMI bases are no-calls");
     }
 
     /// `five_base_next_primary` skips `@` headers + secondary (0x100) / supplementary
@@ -8727,6 +8892,7 @@ mod tests {
             false,
             true,
             false,
+            0,
             0,
             &mut Counters::default(),
         )
