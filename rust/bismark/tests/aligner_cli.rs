@@ -3295,6 +3295,50 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// A minimap2 run prints no developer text, and the Bowtie 2 effort options `-D` / `-R`,
+/// which minimap2 cannot take, are rejected rather than dropped (#1167 finding 31).
+#[cfg(unix)]
+#[test]
+fn minimap2_summary_is_clean_and_bowtie2_effort_options_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    for (extra, ok) in [
+        (&[][..], true),
+        (&["-D", "20"][..], false),
+        (&["-R", "3"][..], false),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--minimap2")
+            .arg("--path_to_minimap2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(temp.path())
+            .args(extra)
+            .arg(&read)
+            .assert();
+        if ok {
+            assert
+                .success()
+                .stderr(predicate::str::contains("unique best alignments:   1"))
+                .stderr(predicate::str::contains("Phase 6").not());
+        } else {
+            assert.failure().code(1).stderr(
+                predicate::str::contains(format!("'{} <int>'", extra[0]))
+                    .and(predicate::str::contains("--minimap2")),
+            );
+        }
+    }
+}
+
 /// Run `bismark --minimap2` on the 6 bp fixture read and return the single record's MAPQ.
 #[cfg(unix)]
 fn minimap2_bam_mapq(genome: &Path, bins: &Path) -> u8 {

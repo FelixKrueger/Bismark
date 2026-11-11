@@ -1533,13 +1533,12 @@ fn run_se_instances_streamed(
     ) {
         // An instance that died starves the merge, which then fails on the
         // symptom; report the instance itself.
-        return Err(streams
-            .iter_mut()
-            .find_map(|s| s.failure())
-            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+        return Err(streams.iter_mut().find_map(|s| s.failure()).map_or(e, |f| {
+            stream::with_wrapper_hint(f, streamed.gzipped(), false)
+        }));
     }
     Ok(finish_concurrently(streams, AlignerStream::finish)
-        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped(), false))?
         .into_iter()
         .enumerate()
         .collect())
@@ -5391,7 +5390,9 @@ fn run_pe_instances_streamed(
             .iter_mut()
             .flatten()
             .find_map(|s| s.failure())
-            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+            .map_or(e, |f| {
+                stream::with_wrapper_hint(f, streamed.gzipped(), true)
+            }));
     }
     // Instance i reads pipes 2i (`-1`) and 2i+1 (`-2`) and sits at its plan slot.
     let in_plan_order = plan
@@ -5400,7 +5401,7 @@ fn run_pe_instances_streamed(
         .collect();
     Ok(
         finish_concurrently(in_plan_order, PairedAlignerStream::finish)
-            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped(), true))?
             .into_iter()
             .enumerate()
             .flat_map(|(i, n)| [(2 * i, n), (2 * i + 1, n)])
@@ -6972,8 +6973,7 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
            ambiguous (unsuitable):   {}\n\
            directional-rejected:     {}\n\
            could-not-extract genomic:{}\n\
-           strand OT/OB/CTOT/CTOB:   {}/{}/{}/{}\n\
-           (full report layout is Phase 6)",
+           strand OT/OB/CTOT/CTOB:   {}/{}/{}/{}",
         c.sequences_count,
         c.unique_best_alignment_count,
         c.no_single_alignment_found,
