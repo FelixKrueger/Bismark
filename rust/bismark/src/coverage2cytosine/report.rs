@@ -40,6 +40,11 @@ pub(crate) enum ReportWriter {
     Gz(GzEncoder<BufWriter<File>>),
 }
 
+/// Report bytes buffered by the GpC / DRACH walks are written out once they pass
+/// this size, so a whole chromosome is never held in memory. Tiny under
+/// `cfg(test)` so unit tests cross it.
+pub(crate) const CHUNK_FLUSH_BYTES: usize = if cfg!(test) { 64 } else { 1 << 20 };
+
 impl ReportWriter {
     /// Create (truncating) the file at `path`; wrap in a gzip encoder when
     /// `gzip`. Truncation is load-bearing for `--split_by_chromosome`'s
@@ -58,6 +63,15 @@ impl ReportWriter {
             ReportWriter::Plain(w) => w.write_all(buf),
             ReportWriter::Gz(w) => w.write_all(buf),
         }
+    }
+
+    /// Write and clear `buf` once it holds [`CHUNK_FLUSH_BYTES`] or more.
+    pub(crate) fn write_if_full(&mut self, buf: &mut Vec<u8>) -> io::Result<()> {
+        if buf.len() >= CHUNK_FLUSH_BYTES {
+            self.write_all(buf)?;
+            buf.clear();
+        }
+        Ok(())
     }
 
     /// Flush/finish the underlying stream. For gzip this writes the trailer —
