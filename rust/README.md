@@ -31,8 +31,8 @@ During the beta the host binaries carried an `_rs` suffix (`deduplicate_bismark_
      section in the docs site (`docs/src/content/docs/installation.md`). The `:latest` container tag
      and `cargo install bismark` (+ `--force`) track the newest release automatically. -->
 
-Three ways to get the suite, easiest first — pick **one**. (A bioconda `mamba install bismark`
-giving the Rust suite is coming as a fast-follow; until then `bismark` on bioconda is the Perl v0.25.x.)
+Three ways to get the suite, easiest first — pick **one**. (`mamba install -c bioconda -c conda-forge bismark`
+also works: the bioconda `bismark` package is now the Rust suite (v3.0.0+); `bismark=0.25.1` still gets the legacy Perl.)
 
 ### 1. Prebuilt binaries (no Rust toolchain needed)
 
@@ -136,8 +136,7 @@ bismark --combined_index --genome /path/to/genome/ -p 16 reads.fq.gz
 bismark --combined_index --non_directional --genome /path/to/genome/ -p 16 reads.fq.gz
 ```
 
-**Memory characteristics** (real 10M WGBS SE, GRCh38, 16-core budget — see
-`plans/06092026_bismark-beta/BENCHMARK_RESULTS_alignment_modes.md`): the combined index is one *large* index
+**Memory characteristics** (real 10M WGBS SE, GRCh38, 16-core budget): the combined index is one *large* index
 (~9.5 GB resident), so the **RAM win is the low-RAM non-directional variants**, not combined-parallel: non-dir
 faithful **16.3 GB** / 4 small indices · combined parallel (a) **19.0 GB** / 2 large · combined
 **sequential / single-pass 11.1 GB / 1 large** (−32 % vs faithful, −41 % vs parallel (a)). Combined directional /
