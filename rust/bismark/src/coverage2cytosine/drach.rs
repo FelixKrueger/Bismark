@@ -38,8 +38,12 @@ use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::report::{self, ReportWriter, perl_substr, revcomp};
 
 /// Standalone DRACH/m6A early-exit mode (Perl `generate_DRACH_report`).
-pub fn run_drach(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+pub fn run_drach(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
+    let mut reader = open_cov()?;
     if config.split_by_chromosome {
         run_drach_split(config, genome, reader.as_mut())
     } else {
