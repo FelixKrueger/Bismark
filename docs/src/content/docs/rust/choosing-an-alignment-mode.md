@@ -90,3 +90,10 @@ The combined index is **opt-in and never silent**; it trades exact reproduction 
 
 If your pipeline requires bit-for-bit reproduction of Perl Bismark output, stay on the standard index.
 For everything else, the combined index is the faster choice.
+
+## Illumina 5-Base libraries
+
+5-Base reads align to the unconverted genome, so none of the modes above apply. minimap2 is the
+default engine; `--illumina_5base --bwamem3` is the choice when methylated CpG islands matter, at the
+cost of a 39 GB index and about 28 GiB of memory. See
+[Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
