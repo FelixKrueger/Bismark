@@ -40,9 +40,33 @@ use crate::io::tap::TapSink;
 #[must_use = "BamWriter must be finalised with finish() before being dropped; \
               otherwise EOF marker errors are silently lost via Drop"]
 pub struct BamWriter<W: Write> {
-    inner: noodles_bam::io::Writer<noodles_bgzf::io::Writer<W>>,
+    inner: noodles_bam::io::Writer<Bgzf<W>>,
     header: Header,
     tap: Option<TapSink>,
+}
+
+/// The BGZF layer of a [`BamWriter`]: compressed on the calling thread, or by
+/// worker threads ([`BamWriter::from_path_threaded`]). Both cut the same blocks and
+/// compress them the same way, so the file is the same byte for byte.
+enum Bgzf<W: Write> {
+    Single(noodles_bgzf::io::Writer<W>),
+    Threaded(noodles_bgzf::io::MultithreadedWriter<File>),
+}
+
+impl<W: Write> Write for Bgzf<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Bgzf::Single(w) => w.write(buf),
+            Bgzf::Threaded(w) => w.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Bgzf::Single(w) => w.flush(),
+            Bgzf::Threaded(w) => w.flush(),
+        }
+    }
 }
 
 impl BamWriter<BufWriter<File>> {
@@ -57,12 +81,30 @@ impl BamWriter<BufWriter<File>> {
         w.tap = TapSink::open(path, &w.header)?;
         Ok(w)
     }
+
+    /// [`Self::from_path`] with BGZF compression on `workers` threads, so the
+    /// thread writing the records does not also compress them.
+    pub fn from_path_threaded(
+        path: &Path,
+        header: Header,
+        workers: std::num::NonZero<usize>,
+    ) -> Result<Self, BismarkIoError> {
+        let file = File::create(path)?;
+        let bgzf = noodles_bgzf::io::MultithreadedWriter::with_worker_count(workers, file);
+        let mut inner = noodles_bam::io::Writer::from(Bgzf::Threaded(bgzf));
+        inner.write_header(&header).inspect_err(|_| {
+            let _ = std::fs::remove_file(path);
+        })?;
+        let tap = TapSink::open(path, &header)?;
+        Ok(Self { inner, header, tap })
+    }
 }
 
 impl<W: Write> BamWriter<W> {
     /// Create a BAM writer over any `Write`. Writes the header eagerly.
     pub fn new(writer: W, header: Header) -> Result<Self, BismarkIoError> {
-        let mut inner = noodles_bam::io::Writer::new(writer);
+        let mut inner =
+            noodles_bam::io::Writer::from(Bgzf::Single(noodles_bgzf::io::Writer::new(writer)));
         inner.write_header(&header)?;
         Ok(Self {
             inner,
@@ -111,7 +153,10 @@ impl<W: Write> BamWriter<W> {
     /// a no-op in noodles-bam 0.89; the BGZF EOF marker would otherwise
     /// only be written via Drop, which silently swallows errors.
     pub fn finish(mut self) -> Result<(), BismarkIoError> {
-        self.inner.try_finish()?;
+        match self.inner.get_mut() {
+            Bgzf::Single(w) => w.try_finish()?,
+            Bgzf::Threaded(w) => drop(w.finish()?),
+        }
         if let Some(tap) = self.tap.take() {
             tap.end()?;
         }
@@ -583,6 +628,40 @@ mod tests {
         let read_back = records.into_iter().next().unwrap().unwrap();
         assert_eq!(read_back.record_strand(), BismarkStrand::OT);
         assert_eq!(read_back.xm(), b".....");
+    }
+
+    #[test]
+    fn threaded_compression_writes_the_same_bytes() {
+        // Enough records for several BGZF blocks.
+        let tmp = TempDir::new().unwrap();
+        let rec = synth_bismark_record();
+        let write = |name: &str, threaded: bool| {
+            let path = tmp.path().join(name);
+            let mut w = if threaded {
+                BamWriter::from_path_threaded(&path, synth_header(), 3.try_into().unwrap())
+            } else {
+                BamWriter::from_path(&path, synth_header())
+            }
+            .unwrap();
+            for _ in 0..20_000 {
+                w.write_record(&rec).unwrap();
+            }
+            w.finish().unwrap();
+            std::fs::read(path).unwrap()
+        };
+        let (single, threaded) = (write("single.bam", false), write("threaded.bam", true));
+        let blocks = |b: &[u8]| b.windows(4).filter(|w| w == &[0x1f, 0x8b, 8, 4]).count();
+        assert!(blocks(&single) > 3, "{} blocks", blocks(&single));
+        // The single-threaded writer ends with a second EOF block: noodles' `Drop`
+        // finishes again after `try_finish`. Every data block is the same.
+        let eof = &single[single.len() - 28..];
+        assert!(blocks(eof) == 1 && threaded.ends_with(eof));
+        assert!(
+            single == [&threaded[..], eof].concat(),
+            "{} vs {} bytes",
+            single.len(),
+            threaded.len()
+        );
     }
 
     #[test]

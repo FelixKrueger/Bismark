@@ -3453,6 +3453,10 @@ impl Sinks {
     }
 }
 
+/// BGZF compression threads for the main BAM: compressing on the merge thread
+/// took about half of it and held back the aligners (measured with `-p 8`).
+const BAM_WORKERS: std::num::NonZero<usize> = std::num::NonZero::new(4).unwrap();
+
 /// Open the BAM and the optional `--ambig_bam` / `--unmapped` / `--ambiguous` sinks.
 fn open_sinks(
     read_file: &str,
@@ -3460,7 +3464,7 @@ fn open_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<Sinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path_threaded(bam_path, header.clone(), BAM_WORKERS)
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -5656,7 +5660,7 @@ fn open_pe_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<PeSinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path_threaded(bam_path, header.clone(), BAM_WORKERS)
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {

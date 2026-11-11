@@ -8,7 +8,7 @@
 //! of its start (the CRLF check). So the stream keeps its first [`PREFIX`] bytes
 //! for those, and frees every later chunk once [`FULL_READERS`] readers have
 //! read it. The producer waits while more than [`LIMIT`] bytes are held, which
-//! bounds memory to the lag between the two passes.
+//! bounds memory when Trim Galore runs ahead of the aligner.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -19,8 +19,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 const PREFIX: usize = 1 << 20;
 /// Readers that read the whole stream: the conversion pass and the merge.
 const FULL_READERS: u8 = 2;
-/// Bytes beyond the prefix the producer may hold before it waits.
-const LIMIT: usize = 256 << 20;
+/// Bytes beyond the prefix the producer may hold before it waits. It must stay
+/// above the lag between the two passes (what the converter and the aligner hold:
+/// about 1.8 MiB measured at `-p 1` and `-p 8`), or the passes wait on each other.
+const LIMIT: usize = 32 << 20;
 
 #[derive(Default)]
 struct State {
