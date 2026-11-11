@@ -432,8 +432,10 @@ fn file_fingerprint(path: &Path) -> Option<(std::time::SystemTime, u64)> {
 
 /// After a failed run, remove what the input being processed when it failed wrote: the
 /// last input (drivers take them in order) with a file that is new or rewritten since
-/// `before`. Earlier inputs finished and keep their outputs; files the run never touched
-/// stay. A partial BAM still gets its EOF marker, so it would pass `samtools quickcheck`.
+/// `before`, unless its report already ends with `Bismark completed in` (that input
+/// finished; the failure came before the next one wrote anything). Earlier inputs keep
+/// their outputs; files the run never touched stay. A partial BAM still gets its EOF
+/// marker, so it would pass `samtools quickcheck`.
 fn remove_failed_input_outputs(
     outputs: &[Vec<PathBuf>],
     before: &[Vec<Option<(std::time::SystemTime, u64)>>],
@@ -454,6 +456,13 @@ fn remove_failed_input_outputs(
     else {
         return;
     };
+    // A finished input's report ends with the completion line: keep its outputs.
+    if stale.iter().any(|p| {
+        p.to_string_lossy().ends_with("_report.txt")
+            && std::fs::read_to_string(p).is_ok_and(|r| r.contains("\nBismark completed in "))
+    }) {
+        return;
+    }
     for path in stale {
         if let Err(e) = std::fs::remove_file(path)
             && e.kind() != std::io::ErrorKind::NotFound
@@ -7754,6 +7763,35 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failure_cleanup_keeps_a_finished_input_when_the_next_wrote_nothing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = |n: &str| dir.path().join(n);
+        let outputs = vec![
+            vec![p("a.bam"), p("a_SE_report.txt")],
+            vec![p("b.bam"), p("b_SE_report.txt")],
+        ];
+        let before: Vec<Vec<_>> = outputs
+            .iter()
+            .map(|ps| ps.iter().map(|q| file_fingerprint(q)).collect())
+            .collect();
+        // Input a finished; input b failed before writing anything.
+        std::fs::write(p("a.bam"), b"bam").unwrap();
+        std::fs::write(
+            p("a_SE_report.txt"),
+            b"header\nBismark completed in 0d 0h 0m 1s\n",
+        )
+        .unwrap();
+        remove_failed_input_outputs(&outputs, &before);
+        assert!(p("a.bam").exists() && p("a_SE_report.txt").exists());
+        // Input b started (header-only report) and then failed: its files go.
+        std::fs::write(p("b.bam"), b"partial").unwrap();
+        std::fs::write(p("b_SE_report.txt"), b"header\n").unwrap();
+        remove_failed_input_outputs(&outputs, &before);
+        assert!(!p("b.bam").exists() && !p("b_SE_report.txt").exists());
+        assert!(p("a.bam").exists());
+    }
+
     use super::*;
 
     #[test]
