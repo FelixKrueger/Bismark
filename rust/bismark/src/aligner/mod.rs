@@ -8428,6 +8428,11 @@ mod tests {
             false,
             ReadFormat::FastQ
         ));
+        assert!(!inprocess_rammap_selected(
+            Aligner::BwaMem3,
+            false,
+            ReadFormat::FastQ
+        ));
         // FastA → subprocess even by default (the in-process stream is 4-line FastQ-only).
         assert!(!inprocess_rammap_selected(
             Aligner::Rammap,
@@ -8864,6 +8869,7 @@ mod tests {
             config::Aligner::Minimap2,
             config::Aligner::Bowtie2,
             config::Aligner::Hisat2,
+            config::Aligner::BwaMem3,
         ] {
             let notice = five_base_notice(aligner);
             assert!(

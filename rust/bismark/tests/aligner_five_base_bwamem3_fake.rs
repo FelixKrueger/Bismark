@@ -352,3 +352,87 @@ fn bwamem3_bam_header_has_engine_pg_and_stays_paired() {
     let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
     assert!(rep.contains("bwa-mem3 version: 0.16.0\n"), "{rep}");
 }
+
+fn bam_records(run: &FakeRun) -> Vec<bismark::io::BismarkRecord> {
+    let path = run.out.path().join("r_1_bismark_bwamem3_pe.bam");
+    let mut reader = bismark::io::BamReader::from_path(&path).unwrap();
+    reader.records().map(|r| r.unwrap()).collect()
+}
+
+fn report(run: &FakeRun) -> String {
+    fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap()
+}
+
+/// A read T at the genomic CpG C (position 2) is methylated in 5-Base polarity.
+#[cfg(unix)]
+#[test]
+fn bwamem3_end_to_end_inverts_polarity() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&run).assert().success();
+    let recs = bam_records(&run);
+    assert_eq!(recs.len(), 2);
+    let r1 = recs
+        .iter()
+        .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+        .expect("R1");
+    assert_eq!(bismark::io::tags::xm(r1.inner().data()).unwrap(), b".Z...z");
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_supplementary_between_mates_is_skipped() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    custom_fake(
+        &run,
+        "printf 'p\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tFFFFFF\\tAS:i:6\\n\
+         p\\t2147\\tchr1\\t3\\t60\\t4M2S\\t=\\t1\\t6\\tATGTAC\\tFFFFFF\\tAS:i:4\\n\
+         p\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tFFFFFF\\tAS:i:6\\n'",
+    );
+    bwamem3_cmd(&run).assert().success();
+    assert_eq!(bam_records(&run).len(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_unmapped_mate_is_dropped() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    custom_fake(
+        &run,
+        "printf 'p\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tATGTAC\\tFFFFFF\\tAS:i:6\\n\
+         p\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tATGTAC\\tFFFFFF\\n'",
+    );
+    bwamem3_cmd(&run).assert().success();
+    assert!(bam_records(&run).is_empty());
+    let rep = report(&run);
+    assert!(
+        rep.contains("Sequence pairs with no alignments under any condition:\t1\n"),
+        "{rep}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_empty_input_writes_empty_outputs() {
+    let run = fake_run("", &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&run).assert().success();
+    assert!(bam_records(&run).is_empty());
+    let rep = report(&run);
+    assert!(
+        rep.contains("Sequence pairs analysed in total:\t0\n"),
+        "{rep}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_missing_meth_files_fail_before_spawn() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    fs::remove_file(format!("{}.meth.bwt.2bit.64", run.index.display())).unwrap();
+    let dump = run.out.path().join("argv.txt");
+    bwamem3_cmd(&run)
+        .env("FAKE_ARGV_DUMP", &dump)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("meth.bwt.2bit.64"));
+    assert!(!dump.exists(), "bwa-mem3 was spawned");
+}
