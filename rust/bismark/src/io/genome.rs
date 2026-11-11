@@ -2,9 +2,9 @@
 //! `read_genome_into_memory` + `extract_chromosome_name` (as used by both
 //! `coverage2cytosine` and the standalone `NOMe_filtering`).
 //!
-//! This is a **shared, tier-parameterized** promotion of the reader that
-//! `bismark-coverage2cytosine` originally carried crate-locally, so NOMe-style
-//! ports stop re-deriving it. It is distinct from [`crate::io::cram_ref`] (which
+//! This is the **shared, tier-parameterized** reader used by
+//! `coverage2cytosine`, `bam2nuc` and `NOMe_filtering` (each maps
+//! [`GenomeError`] onto its own error type). It is distinct from [`crate::io::cram_ref`] (which
 //! reconstitutes a CRAM reference and does NOT uppercase).
 //!
 //! Quirks reproduced:
@@ -35,6 +35,11 @@ type FastaRecords = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// The tophat whole-mouse FASTA Perl explicitly skips.
 const MUS_SKIP: &str = "Mus_musculus.NCBIM37.fa";
+
+/// The four-suffix glob priority of Perl `coverage2cytosine` / `bam2nuc`
+/// `read_genome_into_memory`. Suffixes are disjoint by construction (`.fa`
+/// does not match `.fa.gz` or `.fasta`).
+pub const FASTA_TIERS_WITH_GZ: [&str; 4] = [".fa", ".fa.gz", ".fasta", ".fasta.gz"];
 
 /// Errors raised by the Bismark whole-genome FASTA reader.
 ///
@@ -97,8 +102,8 @@ impl Genome {
     ///
     /// `NOMe_filtering` passes `&[".fa", ".fasta"]` (two PLAIN suffixes — Perl
     /// `NOMe_filtering` never reads gzipped FASTA, so a `.fa.gz`-only folder
-    /// correctly yields [`GenomeError::NoGenomeFasta`]). `coverage2cytosine`
-    /// would pass the four-tier list including `.gz` suffixes.
+    /// correctly yields [`GenomeError::NoGenomeFasta`]). `coverage2cytosine` and
+    /// `bam2nuc` pass [`FASTA_TIERS_WITH_GZ`].
     ///
     /// # Errors
     /// - [`GenomeError::NoGenomeFasta`] if no file matches any tier.
@@ -413,6 +418,56 @@ mod tests {
         e.finish().unwrap();
         let g = Genome::load(t.path(), &[".fa", ".fa.gz"]).unwrap();
         assert_eq!(g.get(b"chrG").unwrap(), b"ACGTACGT");
+    }
+
+    #[test]
+    fn glob_priority_fa_beats_fa_gz() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "chr.fa", ">chr1\nACGT\n");
+        write(t.path(), "chr.fa.gz", "ignored — wrong tier, never read");
+        let g = Genome::load(t.path(), &FASTA_TIERS_WITH_GZ).unwrap();
+        assert_eq!(g.len(), 1);
+        assert_eq!(g.get(b"chr1").unwrap(), b"ACGT");
+    }
+
+    #[test]
+    fn loads_bgzf_fa_gz() {
+        let t = tempfile::tempdir().unwrap();
+        let mut w =
+            noodles_bgzf::io::Writer::new(std::fs::File::create(t.path().join("g.fa.gz")).unwrap());
+        w.write_all(b">chrB\nACGT\n").unwrap();
+        w.finish().unwrap();
+        let g = Genome::load(t.path(), &FASTA_TIERS_WITH_GZ).unwrap();
+        assert_eq!(g.get(b"chrB").unwrap(), b"ACGT");
+    }
+
+    #[test]
+    fn empty_file_in_winning_tier_errors() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "bad.fa", "");
+        assert!(matches!(
+            Genome::load(t.path(), &FASTA_TIERS_WITH_GZ).unwrap_err(),
+            GenomeError::MalformedFastaHeader { .. }
+        ));
+    }
+
+    #[test]
+    fn headerless_file_errors() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "bad.fa", "no-header-line\nACGT\n");
+        assert!(matches!(
+            Genome::load(t.path(), &FASTA_TIERS_WITH_GZ).unwrap_err(),
+            GenomeError::MalformedFastaHeader { .. }
+        ));
+    }
+
+    #[test]
+    fn empty_sequence_record_kept() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "g.fa", ">chrEmpty\n>chr1\nACGT\n");
+        let g = Genome::load(t.path(), &FASTA_TIERS_WITH_GZ).unwrap();
+        assert_eq!(g.get(b"chrEmpty").unwrap(), b"");
+        assert_eq!(g.get(b"chr1").unwrap(), b"ACGT");
     }
 
     #[test]

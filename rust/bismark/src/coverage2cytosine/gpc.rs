@@ -29,10 +29,10 @@ use std::path::PathBuf;
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::report::{
     self, Context, ReportWriter, classify_context, perl_substr, revcomp,
 };
+use crate::io::genome::Genome;
 
 /// Generate the GpC-context report + cov (Perl `generate_GC_context_report`).
 ///

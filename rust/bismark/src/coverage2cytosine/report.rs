@@ -24,8 +24,8 @@ use flate2::write::GzEncoder;
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::summary::ContextSummary;
+use crate::io::genome::Genome;
 
 /// Output sink for a report file — plain or gzip, with an explicit `finish()`
 /// (Phase C). The context summary is never routed through this (always plain).
