@@ -111,7 +111,8 @@ pub struct Cli {
     /// Sample name for the output files (default: the first read file without its FastQ suffix).
     #[arg(short = 'B', long = "basename", value_name = "NAME")]
     pub basename: Option<String>,
-    /// Threads for every step (trim `--cores`, align `--multicore`, dedup and extract `--parallel`).
+    /// Threads for every step (trim `--cores`, dedup and extract `--parallel`; the
+    /// aligner gets about N threads over its instances).
     #[arg(long = "parallel", visible_alias = "multicore", default_value_t = 1u32, value_parser = clap::value_parser!(u32).range(1..))]
     pub parallel: u32,
     /// The reads are already trimmed: skip Trim Galore.
@@ -564,13 +565,15 @@ fn align_argv(ctx: &Ctx, reads: &Reads, streamed: bool) -> Vec<String> {
         "--basename".into(),
         ctx.base.clone(),
     ];
+    let mut opts: Vec<String> = ctx.spec.align.iter().map(|s| s.to_string()).collect();
+    opts.extend(user);
+    let n = aligner_threads(ctx.cli.parallel, has(&opts, &["--non_directional"])).to_string();
     if !streamed {
-        args.extend(["--multicore".into(), ctx.threads.clone()]);
-    } else if ctx.cli.parallel > 1 && !has(&user, &["-p"]) {
-        args.extend(["-p".into(), ctx.threads.clone()]);
+        args.extend(["--multicore".into(), n]);
+    } else if n != "1" && !has(&opts, &["-p"]) {
+        args.extend(["-p".into(), n]);
     }
-    args.extend(ctx.spec.align.iter().map(|s| s.to_string()));
-    args.extend(user);
+    args.extend(opts);
     match &reads.1 {
         Some(r2) => args.extend(["-1".into(), reads.0.clone(), "-2".into(), r2.clone()]),
         None => args.push(reads.0.clone()),
@@ -578,6 +581,15 @@ fn align_argv(ctx: &Ctx, reads: &Reads, streamed: bool) -> Vec<String> {
     std::iter::once(String::from("bismark align"))
         .chain(args)
         .collect()
+}
+
+/// Threads (`-p`) or workers (`--multicore`) per aligner instance, so that
+/// `--parallel N` runs about `N` aligner threads in all. Each `-p`/worker runs
+/// one thread per instance (2, or 4 non-directional); more threads than that
+/// mostly spin: `-p 8` with 2 instances took 28% more CPU than `-p 4` (and 7x
+/// the system time) for the same wall time on 16 cores.
+fn aligner_threads(parallel: u32, non_directional: bool) -> u32 {
+    (parallel / if non_directional { 4 } else { 2 }).max(1)
 }
 
 /// Trim Galore options whose output cannot go through a pipe to the aligner
@@ -865,6 +877,15 @@ fn report(ctx: &Ctx, plan: &Plan) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_is_split_over_the_aligner_instances() {
+        assert_eq!(aligner_threads(1, false), 1);
+        assert_eq!(aligner_threads(8, false), 4);
+        assert_eq!(aligner_threads(9, false), 4);
+        assert_eq!(aligner_threads(8, true), 2);
+        assert_eq!(aligner_threads(3, true), 1);
+    }
 
     #[test]
     fn plan_names_match_each_steps_outputs() {

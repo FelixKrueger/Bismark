@@ -23,7 +23,7 @@ The genome must already be prepared with `bismark prepare`. All files go to `--o
 
 Steps 1 to 4 run at the same time, each handing its output to the next step in memory, so no step reads the previous step's output back from disk. The output is the same as running the steps one after the other.
 
-- Trim Galore's trimmed reads go straight to the aligner and are not written to disk. With `--parallel N` the aligner then runs one Bowtie 2 (or minimap2) instance with `N` threads (`-p N`) instead of `--multicore N`, which would split the reads into chunk files first.
+- Trim Galore's trimmed reads go straight to the aligner and are not written to disk. The aligner then runs its instances multi-threaded (`-p`) instead of with `--multicore`, which would split the reads into chunk files first.
 - The aligner still writes its BAM, and deduplication still writes the deduplicated BAM, but each also hands its records to the next step.
 
 Trim Galore writes the trimmed FastQ to disk first, and the aligner reads it back, when the run cannot stream it: with the Trim Galore options `--fastqc`, `--fastqc_args`, `--gzip`, `--dont_gzip`, `--output-format`, `--hardtrim5`, `--hardtrim3`, `--clock`, `--implicon` or `--demux`, and with an alignment that does not stream its input (HISAT2, rammap, `--no_stream_converted`, `--combined_index`, 5-Base). A note says so.
@@ -66,7 +66,7 @@ Here `--length` goes to Trim Galore, `--score_min` to the aligner, `--barcode` t
 | `--preset <library>` | Library type (see above); default `wgbs` |
 | `-o`, `--output_dir <dir>` | Output folder, created if missing; default the current folder |
 | `-B`, `--basename <name>` | Sample name for the output files |
-| `--parallel <n>` | Threads for every step: Trim Galore `--cores`, aligner `-p` (`--multicore` when the trimmed reads are on disk), dedup and extract `--parallel`; default 1 |
+| `--parallel <n>` | Threads for every step: Trim Galore `--cores`, dedup and extract `--parallel`, and about `n` aligner threads in all: `-p n/2` for the 2 Bowtie 2 instances of a directional library, `n/4` for the 4 of a non-directional one (`--multicore` instead when the trimmed reads are on disk). More threads than cores mostly spin. Default 1 |
 | `--skip_trim` | The reads are already trimmed |
 | `--skip_dedup` | Do not deduplicate, whatever the preset |
 
