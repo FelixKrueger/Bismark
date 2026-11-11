@@ -171,11 +171,11 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `-o/--output_dir <dir>`
 
-  Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
+  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
 
 - `--temp_dir <dir>`
 
-  Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
+  Write temporary files to this directory instead of into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
 
 - `--non_bs_mm`
 
