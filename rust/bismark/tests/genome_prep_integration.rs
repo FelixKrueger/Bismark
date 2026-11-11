@@ -218,8 +218,10 @@ fn perl_vs_rust_byte_identical_mfa() {
             b">chr1 Homo sapiens chromosome 1\nACGTacgtNRYKMSWB\nTTTTCCCCGGGGAAAA\n",
         )
         .unwrap();
-        fs::write(dir.join("chr10.fa"), b">chr10\nGGGCCCttt").unwrap();
-        fs::write(dir.join("chr2.fa"), b">chr2\nacgtACGT\n").unwrap();
+        fs::write(dir.join("chr10.fa"), b">chr10\nGGGCCCttt\n").unwrap();
+        // Last in glob order: final-no-newline (a no-newline file followed by
+        // another header is a deliberate divergence from Perl, see convert.rs).
+        fs::write(dir.join("chr2.fa"), b">chr2\nacgtACGT").unwrap();
     };
 
     let perl_dir = tmp.path().join("perl_genome");
@@ -416,8 +418,9 @@ fn perl_vs_rust_edge_inputs_mfa() {
             fs::write(dir.join("a.fa"), b">chr1 desc\r\nACGTacgtNRYK\r\nTTTT\r\n").unwrap();
             // zero-sequence record (header at EOF).
             fs::write(dir.join("b.fa"), b">chrB\n").unwrap();
-            // header→header (chrC empty) then final-no-newline (chrD).
-            fs::write(dir.join("c.fa"), b">chrC\n>chrD\nGGGCCC").unwrap();
+            // header→header (chrC empty) then final-no-newline (chrD); named
+            // e.fa so it is last in glob order (see the divergence note in convert.rs).
+            fs::write(dir.join("e.fa"), b">chrC\n>chrD\nGGGCCC").unwrap();
             // CR-only file (read as a single header line by both).
             fs::write(dir.join("d.fa"), b">chrE\rACGTACGT\r").unwrap();
         },
@@ -551,8 +554,10 @@ fn perl_vs_rust_prepare_subcommand() {
             b">chr1 Homo sapiens chromosome 1\nACGTacgtNRYKMSWB\nTTTTCCCCGGGGAAAA\n",
         )
         .unwrap();
-        fs::write(dir.join("chr10.fa"), b">chr10\nGGGCCCttt").unwrap();
-        fs::write(dir.join("chr2.fa"), b">chr2\nacgtACGT\n").unwrap();
+        fs::write(dir.join("chr10.fa"), b">chr10\nGGGCCCttt\n").unwrap();
+        // Last in glob order: final-no-newline (a no-newline file followed by
+        // another header is a deliberate divergence from Perl, see convert.rs).
+        fs::write(dir.join("chr2.fa"), b">chr2\nacgtACGT").unwrap();
     };
 
     let perl_dir = tmp.path().join("perl_genome");

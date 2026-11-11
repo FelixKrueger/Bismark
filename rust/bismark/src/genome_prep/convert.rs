@@ -3,6 +3,9 @@
 //! Faithful to Perl `process_sequence_files` (lines 360–516). The transform
 //! operates on **raw line bytes including the terminator**, so CRLF stays CRLF
 //! and a final line without a newline keeps none — never trim-and-re-emit.
+//! The one exception (a deliberate divergence from Perl): when such a line is
+//! followed by another header in the same output, a `\n` is written first so
+//! the header is not glued onto the previous sequence.
 //!
 //! Per sequence byte: uppercase → map anything not in `{A,T,C,G,N,\r,\n}` to
 //! `N` → then `tr` (`C→T`/`G→A`, or slam `T→C`/`A→G`). Headers are rewritten as
@@ -159,6 +162,7 @@ fn handle_header(
     ct_w: &mut Box<dyn Write>,
     ga_w: &mut Box<dyn Write>,
     hbuf: &mut Vec<u8>,
+    open_line: &mut bool,
 ) -> Result<(), GenomePrepError> {
     let name = extract_chromosome_name(line, file)?.to_vec();
     if !seen.insert(name.clone()) {
@@ -181,7 +185,12 @@ fn handle_header(
             &name,
             Side::Ga,
         ))?));
+    } else if *open_line {
+        // Previous sequence line had no `\n`: end it so the header stays on its own line.
+        ct_w.write_all(b"\n")?;
+        ga_w.write_all(b"\n")?;
     }
+    *open_line = false;
     header_line(&name, Side::Ct, hbuf);
     ct_w.write_all(hbuf)?;
     header_line(&name, Side::Ga, hbuf);
@@ -206,6 +215,8 @@ pub fn convert_split(
     let mut ctbuf = Vec::new();
     let mut gabuf = Vec::new();
     let mut hbuf = Vec::new();
+    // True when the last sequence line written did not end in `\n`.
+    let mut open_line = false;
 
     // MFA writers are created once and reused; in single_fasta mode they start
     // as sinks and are replaced at each header by `handle_header`.
@@ -240,6 +251,7 @@ pub fn convert_split(
             &mut ct_w,
             &mut ga_w,
             &mut hbuf,
+            &mut open_line,
         )?;
         loop {
             line.clear();
@@ -258,12 +270,14 @@ pub fn convert_split(
                     &mut ct_w,
                     &mut ga_w,
                     &mut hbuf,
+                    &mut open_line,
                 )?;
             } else {
                 counts.ct += map_into(&line, Side::Ct, slam, &mut ctbuf);
                 ct_w.write_all(&ctbuf)?;
                 counts.ga += map_into(&line, Side::Ga, slam, &mut gabuf);
                 ga_w.write_all(&gabuf)?;
+                open_line = line.last() != Some(&b'\n');
             }
         }
     }
@@ -284,6 +298,8 @@ pub fn write_combined(
 ) -> Result<(), GenomePrepError> {
     let mut w = BufWriter::new(File::create(combined_path)?);
     let mut buf = Vec::new();
+    // True when the last sequence line written did not end in `\n`.
+    let mut open_line = false;
     for side in [Side::Ct, Side::Ga] {
         for file in files {
             let mut reader = open_fasta(file)?;
@@ -293,6 +309,9 @@ pub fn write_combined(
                 return Err(GenomePrepError::NotFasta(file.clone()));
             }
             let name = extract_chromosome_name(&line, file)?.to_vec();
+            if std::mem::take(&mut open_line) {
+                w.write_all(b"\n")?;
+            }
             header_line(&name, side, &mut buf);
             w.write_all(&buf)?;
             loop {
@@ -303,11 +322,15 @@ pub fn write_combined(
                 }
                 if line.first() == Some(&b'>') {
                     let name = extract_chromosome_name(&line, file)?.to_vec();
+                    if std::mem::take(&mut open_line) {
+                        w.write_all(b"\n")?;
+                    }
                     header_line(&name, side, &mut buf);
                     w.write_all(&buf)?;
                 } else {
                     map_into(&line, side, slam, &mut buf);
                     w.write_all(&buf)?;
+                    open_line = line.last() != Some(&b'\n');
                 }
             }
         }
@@ -468,6 +491,38 @@ mod tests {
         let mut expected = fs::read(ct_dir.join("genome_mfa.CT_conversion.fa")).unwrap();
         expected.extend(fs::read(ga_dir.join("genome_mfa.GA_conversion.fa")).unwrap());
         assert_eq!(fs::read(&combined_path).unwrap(), expected);
+    }
+
+    #[test]
+    fn missing_final_newline_does_not_glue_next_header() {
+        let d = tempdir().unwrap();
+        let gdir = d.path().join("genome");
+        let ct_dir = d.path().join("CT");
+        let ga_dir = d.path().join("GA");
+        for p in [&gdir, &ct_dir, &ga_dir] {
+            fs::create_dir_all(p).unwrap();
+        }
+        // a.fa ends without `\n`, then b.fa's header follows in the same output.
+        fs::write(gdir.join("a.fa"), b">chr1\nACGT\n>chr2\nAC").unwrap();
+        fs::write(gdir.join("b.fa"), b">chr3\nGG\n").unwrap();
+        let files = vec![gdir.join("a.fa"), gdir.join("b.fa")];
+        convert_split(&files, &ct_dir, &ga_dir, false, false).unwrap();
+        let ct = b">chr1_CT_converted\nATGT\n>chr2_CT_converted\nAT\n>chr3_CT_converted\nGG\n";
+        let ga = b">chr1_GA_converted\nACAT\n>chr2_GA_converted\nAC\n>chr3_GA_converted\nAA\n";
+        assert_eq!(
+            fs::read(ct_dir.join("genome_mfa.CT_conversion.fa")).unwrap(),
+            ct.to_vec()
+        );
+        assert_eq!(
+            fs::read(ga_dir.join("genome_mfa.GA_conversion.fa")).unwrap(),
+            ga.to_vec()
+        );
+        let combined_path = d.path().join("combined.fa");
+        write_combined(&files, &combined_path, false).unwrap();
+        assert_eq!(
+            fs::read(&combined_path).unwrap(),
+            [&ct[..], &ga[..]].concat()
+        );
     }
 
     #[test]
