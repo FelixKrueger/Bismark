@@ -1,9 +1,11 @@
 //! `bismark run` — raw FastQ to coverage for one sample in one command:
 //! trim (Trim Galore) → align → dedup → extract (bedGraph + `.cov` + CpG report) → HTML report.
 //!
-//! Align, dedup and extract run at the same time. Each BAM is still written to
-//! disk, and its records also go to the next step in memory through an
-//! [`crate::io::tap`], so no step re-reads the previous step's BAM. Each step runs
+//! All steps run at the same time. Trim Galore's trimmed reads reach the aligner
+//! through [`crate::aligner::input`] without being written ([`TrimStream`]). Each
+//! BAM is still written to disk, and its records also go to the next step in
+//! memory through an [`crate::io::tap`], so no step re-reads the previous step's
+//! output. Each step runs
 //! the same code as its subcommand. `--preset` applies the library-type table of
 //! the docs (`docs/src/content/docs/usage/library-types.md`). Any option of
 //! `bismark align`, `dedup` or `extract` can be given to `bismark run` as is; it
@@ -425,25 +427,26 @@ fn run(cli: Cli, routed: Routed) -> Result<()> {
     std::fs::create_dir_all(&ctx.cli.output_dir)
         .with_context(|| format!("--output_dir {}", ctx.cli.output_dir.display()))?;
 
-    let reads = if ctx.cli.skip_trim {
-        raw
-    } else {
-        trim(&ctx, &raw)?
-    };
-
     let plan = Plan::new(
         &ctx.cli.output_dir,
         &ctx.base,
         ctx.paired,
         ctx.spec.dedup && !ctx.cli.skip_dedup,
     );
-    stream_align_dedup_extract(&ctx, &plan, &reads)?;
+    if ctx.cli.skip_trim {
+        stream_align_dedup_extract(&ctx, &plan, &raw, None)?;
+    } else if let Some(trimmed) = TrimStream::prepare(&ctx)? {
+        let reads = trimmed.reads();
+        stream_align_dedup_extract(&ctx, &plan, &reads, Some((trimmed, &raw)))?;
+    } else {
+        let reads = trim(&ctx, &raw)?;
+        stream_align_dedup_extract(&ctx, &plan, &reads, None)?;
+    }
     report(&ctx, &plan)
 }
 
-/// Trim Galore writes `<base>_val_1/2.fq.gz` (paired) or `<base>_trimmed.fq.gz`.
-fn trim(ctx: &Ctx, raw: &Reads) -> Result<Reads> {
-    eprintln!("\n=== bismark run: trim (Trim Galore) ===\n");
+/// `trim_galore` writing to `out`, with `bismark run`'s and the user's options.
+fn trim_command(ctx: &Ctx, raw: &Reads, out: &Path) -> Result<std::process::Command> {
     let exe = which::which("trim_galore")
         .context("trim_galore is not on PATH; install Trim Galore 2 or pass --skip_trim")?;
     let mut user = ctx.routed[0].clone();
@@ -451,7 +454,6 @@ fn trim(ctx: &Ctx, raw: &Reads) -> Result<Reads> {
     if ctx.cli.preset != Preset::Rrbs {
         user.retain(|a| a != "--non_directional");
     }
-    let out = &ctx.cli.output_dir;
     let mut cmd = std::process::Command::new(exe);
     if ctx.paired {
         cmd.arg("--paired");
@@ -459,6 +461,14 @@ fn trim(ctx: &Ctx, raw: &Reads) -> Result<Reads> {
     cmd.arg("-o").arg(out).args(["--basename", &ctx.base]);
     cmd.args(["--cores", &ctx.threads]);
     cmd.args(ctx.spec.trim).args(&user).arg(&raw.0).args(&raw.1);
+    Ok(cmd)
+}
+
+/// Trim Galore writes `<base>_val_1/2.fq.gz` (paired) or `<base>_trimmed.fq.gz`.
+fn trim(ctx: &Ctx, raw: &Reads) -> Result<Reads> {
+    eprintln!("\n=== bismark run: trim (Trim Galore) ===\n");
+    let out = &ctx.cli.output_dir;
+    let mut cmd = trim_command(ctx, raw, out)?;
     let status = cmd.status().context("could not start trim_galore")?;
     if !status.success() {
         bail!("trim_galore failed ({status})");
@@ -477,30 +487,44 @@ fn trim(ctx: &Ctx, raw: &Reads) -> Result<Reads> {
 
 /// Align, dedup and extract at the same time, each step reading the previous
 /// step's records from memory.
-fn stream_align_dedup_extract(ctx: &Ctx, plan: &Plan, reads: &Reads) -> Result<()> {
-    eprintln!("\n=== bismark run: align → dedup → extract (streaming) ===\n");
+fn stream_align_dedup_extract(
+    ctx: &Ctx,
+    plan: &Plan,
+    reads: &Reads,
+    trimmed: Option<(TrimStream, &Reads)>,
+) -> Result<()> {
+    let streamed = trimmed.as_ref().map(|(t, _)| t.virt.clone());
+    eprintln!(
+        "\n=== bismark run: {}align → dedup → extract (streaming) ===\n",
+        if streamed.is_some() { "trim → " } else { "" }
+    );
     let aligned_rx = tap::register(&plan.aligned_bam);
     let dedup_rx = plan.dedup.as_ref().map(|(bam, _)| tap::register(bam));
 
-    let (aligned, deduped, extracted) = std::thread::scope(|s| {
+    let (trim, aligned, deduped, extracted) = std::thread::scope(|s| {
+        let trim = trimmed.map(|(t, raw)| s.spawn(move || t.run(ctx, raw)));
         let (extract_rx, dedup) = match dedup_rx {
             Some(rx) => (rx, Some(s.spawn(move || dedup(ctx, plan, aligned_rx)))),
             None => (aligned_rx, None),
         };
         let extract = s.spawn(move || extract(ctx, plan, extract_rx));
-        let aligned = align(ctx, plan, reads);
+        let aligned = align(ctx, plan, reads, streamed.is_some());
         // An aligner that stopped before opening its BAM never took its tap:
-        // drop it so the next step stops waiting.
+        // drop it so the next step stops waiting; likewise stop Trim Galore.
         drop(tap::take(&plan.aligned_bam));
+        for p in streamed.iter().flatten() {
+            crate::aligner::input::unregister(p);
+        }
         let join = |h: std::thread::ScopedJoinHandle<'_, Result<()>>| {
             h.join()
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("thread panicked")))
         };
-        (aligned, dedup.map(join), join(extract))
+        (trim.map(join), aligned, dedup.map(join), join(extract))
     });
 
     // A step that failed only because its neighbour stopped is a symptom: name the cause.
     let failed: Vec<(&str, anyhow::Error)> = [
+        ("trim", trim),
         ("align", Some(aligned)),
         ("dedup", deduped),
         ("extract", Some(extracted)),
@@ -516,7 +540,21 @@ fn stream_align_dedup_extract(ctx: &Ctx, plan: &Plan, reads: &Reads) -> Result<(
     }
 }
 
-fn align(ctx: &Ctx, plan: &Plan, reads: &Reads) -> Result<()> {
+fn align(ctx: &Ctx, plan: &Plan, reads: &Reads, streamed: bool) -> Result<()> {
+    let argv = align_argv(ctx, reads, streamed);
+    let command_line = argv[1..].join(" ");
+    if crate::aligner::run_dispatch(argv, command_line) != ExitCode::SUCCESS {
+        bail!(
+            "see the aligner error above ({} not finished)",
+            plan.aligned_bam.display()
+        );
+    }
+    Ok(())
+}
+
+/// `bismark align …` for `reads`. Streamed reads are read by one aligner instance
+/// (`-p N` threads): `--multicore` would split them into chunk files first.
+fn align_argv(ctx: &Ctx, reads: &Reads, streamed: bool) -> Vec<String> {
     let user = ctx.routed[1].clone();
     let mut args: Vec<String> = vec![
         "--genome".into(),
@@ -526,24 +564,211 @@ fn align(ctx: &Ctx, plan: &Plan, reads: &Reads) -> Result<()> {
         "--basename".into(),
         ctx.base.clone(),
     ];
-    args.extend(["--multicore".into(), ctx.threads.clone()]);
+    if !streamed {
+        args.extend(["--multicore".into(), ctx.threads.clone()]);
+    } else if ctx.cli.parallel > 1 && !has(&user, &["-p"]) {
+        args.extend(["-p".into(), ctx.threads.clone()]);
+    }
     args.extend(ctx.spec.align.iter().map(|s| s.to_string()));
     args.extend(user);
     match &reads.1 {
         Some(r2) => args.extend(["-1".into(), reads.0.clone(), "-2".into(), r2.clone()]),
         None => args.push(reads.0.clone()),
     }
-    let command_line = args.join(" ");
-    let argv = std::iter::once(String::from("bismark align"))
+    std::iter::once(String::from("bismark align"))
         .chain(args)
-        .collect();
-    if crate::aligner::run_dispatch(argv, command_line) != ExitCode::SUCCESS {
-        bail!(
-            "see the aligner error above ({} not finished)",
-            plan.aligned_bam.display()
-        );
+        .collect()
+}
+
+/// Trim Galore options whose output cannot go through a pipe to the aligner
+/// (FastQC reads the trimmed file back; the others change what is written).
+const TRIM_TO_DISK: &[&str] = &[
+    "--fastqc",
+    "--fastqc_args",
+    "--gzip",
+    "--dont_gzip",
+    "--output-format",
+    "--hardtrim5",
+    "--hardtrim3",
+    "--clock",
+    "--implicon",
+    "--demux",
+];
+
+/// Trim Galore's trimmed FastQ streamed to the aligner, not written to disk.
+///
+/// Trim Galore writes each output to `<dir>/.<name>.partial` and renames it when
+/// done. A named pipe at that name in a private folder takes the bytes; a thread per
+/// pipe pushes them to [`crate::aligner::input`] under the name the aligner is
+/// given (`<out>/<base>_val_1.fq`, …), which never exists on disk.
+struct TrimStream {
+    /// Private folder Trim Galore writes to; its reports move to `--output_dir`.
+    dir: PathBuf,
+    fifos: Vec<PathBuf>,
+    /// The read paths the aligner is given.
+    virt: Vec<PathBuf>,
+    writers: Vec<crate::aligner::input::StreamWriter>,
+}
+
+impl TrimStream {
+    /// `None` when this run must trim to disk first (a note says why).
+    fn prepare(ctx: &Ctx) -> Result<Option<Self>> {
+        use crate::aligner::input;
+        if let Some(flag) = TRIM_TO_DISK.iter().find(|f| has(&ctx.routed[0], &[f])) {
+            eprintln!("Note: with {flag} Trim Galore writes the trimmed reads to disk first.");
+            return Ok(None);
+        }
+        let out = &ctx.cli.output_dir;
+        let names: &[&str] = if ctx.paired {
+            &["_val_1.fq", "_val_2.fq"]
+        } else {
+            &["_trimmed.fq"]
+        };
+        let virt: Vec<PathBuf> = names
+            .iter()
+            .map(|n| out.join(format!("{}{n}", ctx.base)))
+            .collect();
+        let writers = virt.iter().map(|p| input::register(p)).collect();
+        let unregister = || virt.iter().for_each(|p| input::unregister(p));
+        let path = |p: &PathBuf| p.to_string_lossy().into_owned();
+        let reads = (path(&virt[0]), virt.get(1).map(path));
+        match crate::aligner::streamed_reads_blocker(&align_argv(ctx, &reads, true)) {
+            Ok(None) => {}
+            Ok(Some(why)) => {
+                unregister();
+                eprintln!("Note: Trim Galore writes the trimmed reads to disk first: {why}.");
+                return Ok(None);
+            }
+            Err(e) => {
+                unregister();
+                bail!("align: {e}");
+            }
+        }
+        let dir = out.join(format!(".bismark_run_trim.{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).with_context(|| format!("create {}", dir.display()))?;
+        let fifos: Vec<PathBuf> = names
+            .iter()
+            .map(|n| dir.join(format!(".{}{n}.partial", ctx.base)))
+            .collect();
+        for f in &fifos {
+            let c = std::ffi::CString::new(f.as_os_str().as_encoded_bytes())?;
+            // SAFETY: `c` is a valid NUL-terminated path.
+            if unsafe { libc::mkfifo(c.as_ptr(), 0o600) } != 0 {
+                let e = std::io::Error::last_os_error();
+                unregister();
+                let _ = std::fs::remove_dir_all(&dir);
+                bail!(
+                    "mkfifo {}: {e}; pass --skip_trim after trimming",
+                    f.display()
+                );
+            }
+        }
+        Ok(Some(TrimStream {
+            dir,
+            fifos,
+            virt,
+            writers,
+        }))
     }
-    Ok(())
+
+    fn reads(&self) -> Reads {
+        let path = |p: &PathBuf| p.to_string_lossy().into_owned();
+        (path(&self.virt[0]), self.virt.get(1).map(path))
+    }
+
+    /// Run Trim Galore, pumping each pipe into its stream; then keep its reports.
+    fn run(mut self, ctx: &Ctx, raw: &Reads) -> Result<()> {
+        let result = self.pump(ctx, raw);
+        // Trim Galore has exited: the aligner may now see the end of the reads.
+        let end = result.as_ref().map(|_| ()).map_err(|e| format!("{e:#}"));
+        for w in self.writers.drain(..) {
+            w.finish(end.clone());
+        }
+        if let Ok(entries) = std::fs::read_dir(&self.dir) {
+            for e in entries.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_file()) {
+                    let _ = std::fs::rename(e.path(), ctx.cli.output_dir.join(e.file_name()));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.dir);
+        result
+    }
+
+    fn pump(&self, ctx: &Ctx, raw: &Reads) -> Result<()> {
+        use std::io::Read;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::os::unix::io::AsRawFd;
+        // Open both ends first: the read end (non-blocking, so this does not wait for
+        // Trim Galore) and a write end held until Trim Galore exits, so a reader never
+        // sees the end of the data before Trim Galore has even opened its output.
+        let mut ends = Vec::new();
+        for f in &self.fifos {
+            let r = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(f)?;
+            let w = std::fs::OpenOptions::new().write(true).open(f)?;
+            // SAFETY: plain fcntl flag calls on an fd we own.
+            unsafe {
+                let flags = libc::fcntl(r.as_raw_fd(), libc::F_GETFL);
+                libc::fcntl(r.as_raw_fd(), libc::F_SETFL, flags & !libc::O_NONBLOCK);
+            }
+            ends.push((r, w));
+        }
+        eprintln!("\n=== bismark run: trim (Trim Galore, streamed to the aligner) ===\n");
+        let mut child = trim_command(ctx, raw, &self.dir)?
+            .arg("--dont_gzip")
+            .spawn()
+            .context("could not start trim_galore")?;
+        let pid = child.id() as libc::pid_t;
+        let (status, pumped) = std::thread::scope(|s| {
+            let (readers, keep): (Vec<_>, Vec<_>) = ends.into_iter().unzip();
+            let pumps: Vec<_> = readers
+                .into_iter()
+                .zip(&self.writers)
+                .map(|(mut r, w)| {
+                    s.spawn(move || -> std::io::Result<()> {
+                        let mut buf = vec![0u8; 1 << 20];
+                        loop {
+                            let n = r.read(&mut buf)?;
+                            if n == 0 {
+                                return Ok(());
+                            }
+                            if let Err(e) = w.push(buf[..n].to_vec()) {
+                                // The aligner stopped: stop Trim Galore too.
+                                // SAFETY: signalling our own child.
+                                unsafe { libc::kill(pid, libc::SIGTERM) };
+                                return Err(e);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            let status = child.wait();
+            drop(keep);
+            let pumped: Vec<std::io::Result<()>> = pumps
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(std::io::Error::other("panic")))
+                })
+                .collect();
+            (status, pumped)
+        });
+        let status = status.context("trim_galore")?;
+        if let Some(Err(e)) = pumped.iter().find(|r| r.is_err()) {
+            if status.success() {
+                bail!("reading Trim Galore's output: {e}");
+            }
+            bail!("`bismark run` step stopped ({e})");
+        }
+        if !status.success() {
+            bail!("trim_galore failed ({status})");
+        }
+        Ok(())
+    }
 }
 
 fn dedup(ctx: &Ctx, plan: &Plan, rx: crossbeam_channel::Receiver<Tapped>) -> Result<()> {

@@ -52,7 +52,7 @@ The developer gave this order. Most workflows run these steps:
 | 4 | `bismark extract` | Per sample |
 | 5 | `bismark bedgraph`, `bismark cov2cyt` | Per sample; `extract --bedGraph --cytosine_report` runs both in the same process |
 
-`bismark run` runs Trim Galore and steps 2 to 5 plus `bismark report` for one sample in one command. Align, dedup and extract run at the same time and pass records in memory through `io/tap.rs`, so no step re-reads the previous BAM. `--preset` sets per-library options; any step option is routed by name (`route` in `run.rs`).
+`bismark run` runs Trim Galore and steps 2 to 5 plus `bismark report` for one sample in one command. All steps run at the same time: Trim Galore writes into named pipes that `run.rs` pumps into `aligner/input.rs` (read files served from memory), and align, dedup and extract pass records through `io/tap.rs`, so no step re-reads the previous step's output. `--preset` sets per-library options; any step option is routed by name (`route` in `run.rs`).
 
 ## When to use it
 

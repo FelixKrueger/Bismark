@@ -273,7 +273,7 @@ pub(crate) fn converted_name(
 /// Open a read file for conversion, transparently decompressing a `.gz` one
 /// (suffix-sniffed, as Perl does). Shared by the file and streaming paths.
 pub(crate) fn open_reader(input: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(input)?;
+    let file = super::input::open(input)?;
     Ok(if input.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -622,7 +622,7 @@ pub fn convert_se_tagged_interleaved(
     let full_path = PathBuf::from(&full);
 
     // ---- reader / writer (gz or plain) — same as the single-kind cores -----
-    let file = File::open(input)?;
+    let file = super::input::open(input)?;
     let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -796,7 +796,7 @@ pub fn convert_pe_tagged_interleaved(
     let (name2, path2) = build_name(input2)?;
 
     let open_reader = |input: &Path| -> Result<Box<dyn BufRead>> {
-        let file = File::open(input)?;
+        let file = super::input::open(input)?;
         Ok(if input.to_string_lossy().ends_with(".gz") {
             Box::new(BufReader::new(MultiGzDecoder::new(file)))
         } else {

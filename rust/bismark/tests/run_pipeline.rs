@@ -175,3 +175,105 @@ fn streamed_run_matches_the_steps_run_one_by_one() {
         "the HTML report is written"
     );
 }
+
+#[test]
+fn trim_galore_streamed_to_the_aligner_matches_trimmed_files() {
+    if !on_path("bowtie2") || !on_path("trim_galore") {
+        eprintln!(
+            "SKIP trim_galore_streamed_to_the_aligner_matches_trimmed_files: bowtie2 or trim_galore not on PATH"
+        );
+        return;
+    }
+    let Some(genome) = prepared_genome() else {
+        eprintln!(
+            "SKIP trim_galore_streamed_to_the_aligner_matches_trimmed_files: genome prep failed"
+        );
+        return;
+    };
+    let g = genome.to_str().unwrap();
+    let root = repo_root();
+    let (r1, r2) = (
+        root.join("test_files/test_R1.fastq.gz"),
+        root.join("test_files/test_R2.fastq.gz"),
+    );
+    let tmp = TempDir::new().unwrap();
+    let (streamed, disk) = (tmp.path().join("streamed"), tmp.path().join("disk"));
+    let bismark = || {
+        let mut c = Command::cargo_bin("bismark").unwrap();
+        c.timeout(std::time::Duration::from_secs(900));
+        c
+    };
+
+    bismark()
+        .args(["run", "--parallel", "2", "-B", "s", "--genome", g])
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .arg("-o")
+        .arg(&streamed)
+        .assert()
+        .success()
+        .stderr(contains("streamed to the aligner"));
+    // No trimmed FastQ and no private trimming folder left behind.
+    let left: Vec<String> = std::fs::read_dir(&streamed)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !left
+            .iter()
+            .any(|f| f.contains("_val_") || f.starts_with('.')),
+        "{left:?}"
+    );
+    assert!(
+        left.iter().any(|f| f.ends_with("_trimming_report.txt")),
+        "{left:?}"
+    );
+
+    assert!(
+        StdCommand::new("trim_galore")
+            .args(["--paired", "--cores", "2", "--basename", "s", "-o"])
+            .arg(&disk)
+            .arg(&r1)
+            .arg(&r2)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    bismark()
+        .args([
+            "run",
+            "--skip_trim",
+            "--parallel",
+            "2",
+            "-B",
+            "s",
+            "--genome",
+            g,
+        ])
+        .arg("-1")
+        .arg(disk.join("s_val_1.fq.gz"))
+        .arg("-2")
+        .arg(disk.join("s_val_2.fq.gz"))
+        .arg("-o")
+        .arg(&disk)
+        .assert()
+        .success();
+
+    let dedup = records(&streamed.join("s_pe.deduplicated.bam"));
+    assert!(!dedup.is_empty(), "the fixture must actually align");
+    assert_eq!(dedup, records(&disk.join("s_pe.deduplicated.bam")));
+    for f in [
+        "s_pe.deduplicated.bismark.cov.gz",
+        "s_pe.deduplicated.CpG_report.txt.gz",
+        "CpG_OT_s_pe.deduplicated.txt.gz",
+    ] {
+        assert_eq!(
+            gunzip(&streamed.join(f)),
+            gunzip(&disk.join(f)),
+            "{f} differs"
+        );
+    }
+}

@@ -39,6 +39,7 @@ pub mod five_base_deconv;
 pub mod five_base_duplex;
 pub mod genome;
 pub mod inprocess;
+pub mod input;
 pub mod mapq;
 
 // Phase 1 (epic 06152026): re-export the `rammap-core` crate (its lib name is
@@ -150,6 +151,48 @@ pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::Ex
     }
 }
 
+/// Why this run cannot read its streamed reads ([`input`]), if it has any. They are
+/// read exactly twice, start to end, in step (conversion + merge): only the streaming
+/// single-core Bowtie 2 / minimap2 path does that.
+fn stream_blocker(config: &RunConfig) -> Option<String> {
+    let mut reads = match &config.layout {
+        ReadLayout::SingleEnd { reads } => reads.iter().chain(&[]),
+        ReadLayout::PairedEnd { mates1, mates2 } => mates1.iter().chain(mates2),
+    };
+    if !reads.any(|r| input::is_stream(Path::new(r))) {
+        return None;
+    }
+    if config.five_base || config.combined_index {
+        Some("5-Base or --combined_index".into())
+    } else if !matches!(config.aligner, Aligner::Bowtie2 | Aligner::Minimap2) {
+        Some(config.aligner.name().into())
+    } else if !config.stream_converted.enabled {
+        Some(
+            config
+                .stream_converted
+                .reason
+                .clone()
+                .unwrap_or("--no_stream_converted".into()),
+        )
+    } else if config.multicore > 1 {
+        Some("--multicore".into())
+    } else {
+        None
+    }
+}
+
+/// For `bismark run`, before it streams Trim Galore's output: why these aligner
+/// arguments (with the streamed paths already registered) cannot read it, if so.
+pub fn streamed_reads_blocker(argv: &[String]) -> std::result::Result<Option<String>, String> {
+    use clap::Parser;
+    let cli = cli::Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
+    let config = resolve(&cli, String::new()).map_err(|e| e.to_string())?;
+    if !stream::temp_dir_supports_fifo(&config.output.temp_dir) {
+        return Ok(Some("the temp dir cannot hold a named pipe".into()));
+    }
+    Ok(stream_blocker(&config))
+}
+
 /// Never-silent notice for the HISAT2 `--multicore N` → `-p N` semantic remap (Approach
 /// B-faithful). Pure so it is unit-testable; emitted by `run` when the remap fires.
 fn hisat2_multicore_remap_notice(n: u32) -> String {
@@ -235,6 +278,12 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                 temp_dir_label(&config.output.temp_dir)
             )),
         };
+    }
+    if let Some(blocker) = stream_blocker(&config) {
+        return Err(AlignerError::Validation(format!(
+            "the trimmed reads are streamed from Trim Galore, which this alignment cannot \
+             read ({blocker}); trim first and pass --skip_trim"
+        )));
     }
     // Announce any automatic fallback to files. An explicit `--no_stream_converted`
     // carries no reason and prints nothing.
@@ -3291,7 +3340,7 @@ fn run_five_base_consensus(
 
 /// Open a (optionally gzipped) reader.
 fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
+    let file = input::open(path)?;
     if path.to_string_lossy().ends_with(".gz") {
         Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
     } else {
@@ -3518,7 +3567,7 @@ fn drive_merge<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
+    let file = input::open(read_file)?;
     let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -4042,7 +4091,7 @@ fn drive_merge_combined<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
+    let file = input::open(read_file)?;
     let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -4352,7 +4401,7 @@ fn drive_merge_combined_nondir<C: SamStream, G: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
+    let file = input::open(read_file)?;
     let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -4988,7 +5037,7 @@ fn drive_merge_combined_nondir_tagged<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
+    let file = input::open(read_file)?;
     let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {
@@ -5693,7 +5742,7 @@ fn open_pe_sinks(
 
 /// Open a FastQ reader (gz or plain) for the PE lockstep.
 fn open_reader(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
+    let file = input::open(path)?;
     Ok(if path.to_string_lossy().ends_with(".gz") {
         Box::new(BufReader::new(MultiGzDecoder::new(file)))
     } else {

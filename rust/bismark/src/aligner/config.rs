@@ -1689,7 +1689,7 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
 }
 
 fn check_exists(file: &str) -> Result<()> {
-    if Path::new(file).exists() {
+    if Path::new(file).exists() || super::input::is_stream(Path::new(file)) {
         Ok(())
     } else {
         Err(AlignerError::InputFileMissing(file.to_string()))

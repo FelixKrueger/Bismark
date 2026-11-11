@@ -1,6 +1,6 @@
 ---
 title: "Whole workflow in one command"
-description: "bismark run takes one sample from raw FastQ to coverage files: Trim Galore, alignment, deduplication, methylation extraction and the HTML report, with the alignment, deduplication and extraction steps streaming their records to each other in memory."
+description: "bismark run takes one sample from raw FastQ to coverage files: Trim Galore, alignment, deduplication, methylation extraction and the HTML report, with each step streaming its output to the next in memory."
 ---
 
 **USAGE:**
@@ -19,11 +19,14 @@ bismark run --genome <genome_folder> [--preset <library>] [options] {-1 <R1> -2 
 
 The genome must already be prepared with `bismark prepare`. All files go to `--output_dir`, named after `--basename` (default: the first read file without its FastQ suffix).
 
-## No intermediate BAM is read back
+## No intermediate file is read back
 
-Steps 2 to 4 run at the same time. The aligner still writes its BAM, and deduplication still writes the deduplicated BAM, but each step also hands its records to the next step in memory, so no step reads the previous step's BAM back from disk. The output is the same as running the steps one after the other.
+Steps 1 to 4 run at the same time, each handing its output to the next step in memory, so no step reads the previous step's output back from disk. The output is the same as running the steps one after the other.
 
-Two files are still read back: the aligner reads the trimmed FastQ files written by Trim Galore, and the cytosine report reads the (small) `.bismark.cov.gz` coverage file.
+- Trim Galore's trimmed reads go straight to the aligner and are not written to disk. With `--parallel N` the aligner then runs one Bowtie 2 (or minimap2) instance with `N` threads (`-p N`) instead of `--multicore N`, which would split the reads into chunk files first.
+- The aligner still writes its BAM, and deduplication still writes the deduplicated BAM, but each also hands its records to the next step.
+
+Trim Galore writes the trimmed FastQ to disk first, and the aligner reads it back, when the run cannot stream it: with the Trim Galore options `--fastqc`, `--fastqc_args`, `--gzip`, `--dont_gzip`, `--output-format`, `--hardtrim5`, `--hardtrim3`, `--clock`, `--implicon` or `--demux`, and with an alignment that does not stream its input (HISAT2, rammap, `--no_stream_converted`, `--combined_index`, 5-Base). A note says so.
 
 ## Presets
 
@@ -63,7 +66,7 @@ Here `--length` goes to Trim Galore, `--score_min` to the aligner, `--barcode` t
 | `--preset <library>` | Library type (see above); default `wgbs` |
 | `-o`, `--output_dir <dir>` | Output folder, created if missing; default the current folder |
 | `-B`, `--basename <name>` | Sample name for the output files |
-| `--parallel <n>` | Threads for every step: Trim Galore `--cores`, aligner `--multicore`, dedup and extract `--parallel`; default 1 |
+| `--parallel <n>` | Threads for every step: Trim Galore `--cores`, aligner `-p` (`--multicore` when the trimmed reads are on disk), dedup and extract `--parallel`; default 1 |
 | `--skip_trim` | The reads are already trimmed |
 | `--skip_dedup` | Do not deduplicate, whatever the preset |
 
@@ -73,7 +76,7 @@ For paired-end sample `s` with deduplication:
 
 | Step | Files |
 |---|---|
-| Trim | `s_val_1.fq.gz`, `s_val_2.fq.gz`, `*_trimming_report.txt` |
+| Trim | `*_trimming_report.txt` (plus `s_val_1.fq.gz`, `s_val_2.fq.gz` when they are written to disk) |
 | Align | `s_pe.bam`, `s_PE_report.txt` |
 | Dedup | `s_pe.deduplicated.bam`, `s_pe.deduplication_report.txt` |
 | Extract | call files, `s_pe.deduplicated.M-bias.txt`, `s_pe.deduplicated_splitting_report.txt`, `s_pe.deduplicated.bedGraph.gz`, `s_pe.deduplicated.bismark.cov.gz`, `s_pe.deduplicated.CpG_report.txt.gz` |
