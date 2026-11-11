@@ -30,7 +30,8 @@ fn civil_from_epoch_utc(epoch: i64) -> (String, String) {
 }
 
 /// Howard Hinnant's `civil_from_days`: days-since-1970-01-01 → (year, month, day).
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
+/// Shared with `bismark2summary`'s ctime formatter.
+pub(crate) fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097; // [0, 146096]
@@ -45,26 +46,29 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 
 /// Local time via `libc::localtime_r` (matches Perl `localtime(time)`).
 fn local_now() -> (String, String) {
+    let secs = now_epoch();
+    civil_from_epoch_utc(secs + local_utc_offset(secs))
+}
+
+/// Seconds since the UNIX epoch (0 if the clock is before 1970).
+pub(crate) fn now_epoch() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// The local timezone's offset from UTC (seconds east) at `secs`, via
+/// `libc::localtime_r`; local wall-clock time is the UTC time of `secs + offset`.
+pub(crate) fn local_utc_offset(secs: i64) -> i64 {
     // SAFETY: `localtime_r` writes into a zeroed `tm` we own; `t` outlives the
     // call. Contained here per PLAN §11 (this path is not byte-gated).
     unsafe {
         let t = secs as libc::time_t;
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
-        (
-            format!(
-                "{:04}-{:02}-{:02}",
-                tm.tm_year + 1900,
-                tm.tm_mon + 1,
-                tm.tm_mday
-            ),
-            format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec),
-        )
+        tm.tm_gmtoff as i64
     }
 }
 
@@ -84,6 +88,11 @@ mod tests {
             timestamp(Some(1_534_418_743)),
             ("2018-08-16".into(), "11:25:43".into())
         );
+    }
+
+    #[test]
+    fn local_offset_is_a_real_timezone() {
+        assert!(local_utc_offset(now_epoch()).abs() <= 14 * 3600);
     }
 
     #[test]

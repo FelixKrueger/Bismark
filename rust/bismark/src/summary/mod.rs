@@ -137,7 +137,7 @@ fn run(cli: Cli) -> Result<(), BismarkSummaryError> {
     // ─── .html output ────────────────────────────────────────────────────
     let stamp = match config.test_timestamp {
         Some(epoch) => timestamp::format_ctime_utc(epoch),
-        None => timestamp::now_ctime_utc(),
+        None => timestamp::now_ctime_local(),
     };
     let html_content = html::build_html(&samples, &config.page_title, &stamp)?;
     let html_path = PathBuf::from(format!("{}.html", config.report_basename));
