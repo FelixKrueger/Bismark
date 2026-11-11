@@ -2154,6 +2154,35 @@ fn five_base_read_sq_header<R: BufRead>(reader: &mut R) -> Result<Vec<(String, u
     Ok(sq)
 }
 
+/// Record the bwa-mem3 run as its own `@PG` (`PP:Bismark`); its ID must not contain "Bismark".
+fn add_bwamem3_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &str) {
+    use noodles_sam::header::record::value::Map;
+    use noodles_sam::header::record::value::map::Program;
+    use noodles_sam::header::record::value::map::program::tag::{
+        COMMAND_LINE, NAME, PREVIOUS_PROGRAM_ID, VERSION,
+    };
+    let index = config
+        .five_base_index
+        .as_ref()
+        .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+    let mut prog = Map::<Program>::default();
+    let fields = prog.other_fields_mut();
+    fields.insert(NAME, bstr::BString::from("bwa-mem3"));
+    fields.insert(PREVIOUS_PROGRAM_ID, bstr::BString::from("Bismark"));
+    fields.insert(
+        VERSION,
+        bstr::BString::from(config.detected_aligner.version.as_bytes()),
+    );
+    fields.insert(
+        COMMAND_LINE,
+        bstr::BString::from(format!("bwa-mem3 {opts} {} <R1> <R2>", index.display())),
+    );
+    header
+        .programs_mut()
+        .as_mut()
+        .insert(bstr::BString::from("bwa-mem3"), prog);
+}
+
 /// The genome folder's contigs as `(name, length)`, in `@SQ` order.
 fn genome_contigs(genome: &Genome) -> Vec<(String, u64)> {
     genome
@@ -2306,10 +2335,13 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             "bwa-mem3 index",
         )?;
     }
-    let header = generate_sam_header(&genome, &config.command_line);
+    let mut header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
     let fb_opts = five_base_aligner_options(config);
+    if config.aligner == Aligner::BwaMem3 {
+        add_bwamem3_pg(&mut header, config, &fb_opts);
+    }
     // Only minimap2 reads the genome FASTA; the other engines align against an index.
     let (ref_path, ref_tmp) = if config.aligner == Aligner::Minimap2 {
         five_base_reference_fasta(config)?
@@ -2344,6 +2376,13 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 library: config.library,
             },
         )?;
+        if config.aligner == Aligner::BwaMem3 {
+            writeln!(
+                report,
+                "bwa-mem3 version: {}\n",
+                config.detected_aligner.version
+            )?;
+        }
 
         let mut counters = Counters::default();
         five_base_align_and_call_pe(

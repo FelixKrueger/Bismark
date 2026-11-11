@@ -316,3 +316,39 @@ fn bwamem3_notice_names_bwamem3() {
         ))
         .stderr(predicate::str::contains("aligned with minimap2").not());
 }
+
+fn read_bam_header(path: &Path) -> noodles_sam::Header {
+    let file = fs::File::open(path).unwrap();
+    noodles_bam::io::Reader::new(std::io::BufReader::new(file))
+        .read_header()
+        .unwrap()
+}
+
+fn header_text(header: &noodles_sam::Header) -> String {
+    let mut buf = Vec::new();
+    noodles_sam::io::Writer::new(&mut buf)
+        .write_header(header)
+        .unwrap();
+    String::from_utf8(buf).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_bam_header_has_engine_pg_and_stays_paired() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&run).assert().success();
+    let header = read_bam_header(&run.out.path().join("r_1_bismark_bwamem3_pe.bam"));
+    let text = header_text(&header);
+    let pg = text
+        .lines()
+        .find(|l| l.starts_with("@PG\tID:bwa-mem3\t"))
+        .unwrap_or_else(|| panic!("no bwa-mem3 @PG:\n{text}"));
+    assert!(pg.contains("\tPN:bwa-mem3"), "{pg}");
+    assert!(pg.contains("\tPP:Bismark"), "{pg}");
+    assert!(pg.contains("\tVN:0.16.0"), "{pg}");
+    assert!(pg.contains("\tCL:bwa-mem3 mem --meth=5base "), "{pg}");
+    assert!(text.contains("@PG\tID:Bismark\t"), "{text}");
+    assert_eq!(bismark::io::detect_paired_from_header(&header), Some(true));
+    let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
+    assert!(rep.contains("bwa-mem3 version: 0.16.0\n"), "{rep}");
+}
