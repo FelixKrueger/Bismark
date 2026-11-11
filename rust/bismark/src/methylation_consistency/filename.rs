@@ -15,12 +15,15 @@ use std::path::{Path, PathBuf};
 use crate::methylation_consistency::classify::Bucket;
 
 /// Derive the output root from the input path: strip one trailing `.bam`
-/// only (Perl `s/\.bam$//`). The directory prefix and the rest of the
+/// (Perl `s/\.bam$//`) or `.cram`. The directory prefix and the rest of the
 /// basename are preserved verbatim.
 #[must_use]
 pub fn output_root(input: &Path) -> String {
     let raw = input.to_string_lossy();
-    match raw.strip_suffix(".bam") {
+    match raw
+        .strip_suffix(".bam")
+        .or_else(|| raw.strip_suffix(".cram"))
+    {
         Some(stem) => stem.to_string(),
         None => raw.into_owned(),
     }
@@ -65,6 +68,7 @@ mod tests {
     #[test]
     fn output_root_no_directory() {
         assert_eq!(output_root(Path::new("sample.bam")), "sample");
+        assert_eq!(output_root(Path::new("sample.cram")), "sample");
     }
 
     #[test]

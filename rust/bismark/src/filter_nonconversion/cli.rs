@@ -42,7 +42,7 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
     after_help = HELP_FOOTER
 )]
 pub struct Cli {
-    /// Bismark BAM file(s) to filter. Each is processed independently.
+    /// Bismark BAM or CRAM file(s) to filter. Each is processed independently.
     pub files: Vec<PathBuf>,
 
     /// Force single-end mode (auto-detected from the @PG line if unset).
@@ -77,6 +77,10 @@ pub struct Cli {
     #[arg(long = "samtools_path")]
     pub samtools_path: Option<PathBuf>,
 
+    /// CRAM reference FASTA (required when an input is CRAM; needs a `.fai`).
+    #[arg(long = "cram_ref")]
+    pub cram_ref: Option<PathBuf>,
+
     /// Print version information and exit.
     #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
@@ -91,6 +95,8 @@ pub struct ResolvedConfig {
     pub explicit_mode: Option<bool>,
     /// The resolved decision mode + parameters.
     pub mode: FilterMode,
+    /// CRAM reference path, if `--cram_ref` was supplied.
+    pub cram_ref: Option<PathBuf>,
 }
 
 impl Cli {
@@ -173,6 +179,7 @@ impl Cli {
             files: self.files,
             explicit_mode,
             mode,
+            cram_ref: self.cram_ref,
         })
     }
 }

@@ -4,7 +4,7 @@
 //! Mirrors Perl `methylation_consistency`'s `process_file` (lines 138–352).
 //! Per-file flow:
 //!
-//! 1. Open the BAM **no-sort-check** (`BamReader::without_sort_check`) — SE is
+//! 1. Open the BAM/CRAM **no-sort-check** (`open_reader_without_sort_check`) — SE is
 //!    never sort-checked in Perl, so the reader must not reject coordinate
 //!    sort itself; we apply the guard for PE only (SPEC §4.11).
 //! 2. **Empty check** (`bam_isEmpty`): zero records → skip the file, no
@@ -22,11 +22,11 @@
 //!    the summary to STDERR (unless `--quiet`).
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 use std::iter::Peekable;
 use std::path::Path;
 
-use crate::io::{BamReader, BamWriter, BismarkIoError, BismarkRecord};
+use crate::io::{BamWriter, BismarkIoError, BismarkRecord};
 use noodles_sam::Header;
 use noodles_sam::header::record::value::map::header::sort_order::COORDINATE;
 use noodles_sam::header::record::value::map::header::tag::SORT_ORDER;
@@ -114,9 +114,9 @@ fn process_file(
     let file_label = path.to_string_lossy().into_owned();
     logger.processing_file(&file_label);
 
-    // v1.0 is BAM-only (Perl is BAM-only in practice). Open no-sort-check so
-    // SE input is accepted regardless of sort order; PE applies its own guard.
-    let mut reader = BamReader::without_sort_check(BufReader::new(File::open(path)?))?;
+    // BAM, SAM or CRAM. Open no-sort-check so SE input is accepted regardless
+    // of sort order; PE applies its own guard.
+    let mut reader = crate::io::open_reader_without_sort_check(path, config.cram_ref.as_deref())?;
     let header = reader.header().clone();
     let mut records = reader.records().peekable();
 

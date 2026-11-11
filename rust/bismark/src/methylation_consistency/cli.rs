@@ -29,7 +29,7 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
     after_help = HELP_FOOTER
 )]
 pub struct Cli {
-    /// Bismark BAM file(s) to split by read methylation consistency.
+    /// Bismark BAM or CRAM file(s) to split by read methylation consistency.
     pub files: Vec<PathBuf>,
 
     /// Force paired-end mode (R1+R2 calls are summed). Default: auto-detect.
@@ -73,6 +73,10 @@ pub struct Cli {
     #[arg(long = "quiet")]
     pub quiet: bool,
 
+    /// CRAM reference FASTA (required when an input is CRAM; needs a `.fai`).
+    #[arg(long = "cram_ref")]
+    pub cram_ref: Option<PathBuf>,
+
     /// Print version information and exit.
     #[arg(short = 'V', short_alias = 'v', long = "version")]
     pub version: bool,
@@ -108,6 +112,8 @@ pub struct ResolvedConfig {
     pub min_count: u32,
     /// Suppress STDERR diagnostics.
     pub quiet: bool,
+    /// CRAM reference path, if `--cram_ref` was supplied.
+    pub cram_ref: Option<PathBuf>,
 }
 
 impl Cli {
@@ -163,6 +169,7 @@ impl Cli {
             upper,
             min_count: self.min_count,
             quiet: self.quiet,
+            cram_ref: self.cram_ref,
         })
     }
 }
