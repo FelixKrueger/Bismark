@@ -285,10 +285,11 @@ fn run_pipeline(
             )?)
         }
     } else if is_paired {
-        ProducerReader::Any(open_reader(input, /*cram_ref=*/ None)?)
+        ProducerReader::Any(open_reader(input, config.cram_ref.as_deref())?)
     } else {
         ProducerReader::Any(open_reader_without_sort_check(
-            input, /*cram_ref=*/ None,
+            input,
+            config.cram_ref.as_deref(),
         )?)
     };
     // `--allow_discordant`: drop + count secondary (0x100) / supplementary
@@ -355,6 +356,9 @@ fn run_pipeline(
     let allow_discordant = config.allow_discordant;
     let producer_handle = std::thread::Builder::new()
         .name("bismark-extractor-producer".to_string())
+        // noodles' CRAM 3.1 decoders (rANS Nx16, name tokenizer) keep big tables on the stack:
+        // ~2.5 MiB in release, whatever the input size, over the 2 MiB thread default.
+        .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             producer_loop(
                 reader,

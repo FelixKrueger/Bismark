@@ -25,6 +25,10 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   Input file(s) are Bismark result file(s) generated from paired-end read data. If neither `-s` nor `-p` is set the type of experiment will be determined automatically.
 
+- `--cram_ref <path>`
+
+  Reference FastA file used to decode CRAM input. It must be the reference the CRAM was written against and needs a `.fai` index next to it (`samtools faidx`). Required when any input file is CRAM; ignored for BAM/SAM input.
+
 - `--vanilla`
 
   The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.

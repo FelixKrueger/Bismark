@@ -421,6 +421,7 @@ mod tests {
             quiet: false,
             verbose: false,
             allow_discordant: false,
+            cram_ref: None,
         }
     }
 
