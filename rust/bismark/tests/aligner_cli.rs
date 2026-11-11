@@ -971,6 +971,71 @@ exit 1
     }
 }
 
+/// A failed run removes the outputs and temp files of the input it failed on, and keeps
+/// those of an input that finished (#1167 finding 21).
+#[cfg(unix)]
+#[test]
+fn a_failed_run_removes_the_failing_inputs_outputs_and_keeps_finished_ones() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Aligns `good.fq` like `make_fake_bowtie2`; reads `bad.fq` to the end, then fails.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+case "$inp" in *bad.fq*) cat "$inp" > /dev/null; exit 1;; esac
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let good = genome.path().join("good.fq");
+    let bad = genome.path().join("bad.fq");
+    fs::write(&good, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    fs::write(&bad, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    // A directional run writes no G->A temp, so a pre-existing one is not its to remove.
+    fs::write(temp.path().join("bad.fq_G_to_A.fastq"), b"user").unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--ambig_bam")
+        .arg("--ambiguous")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&good)
+        .arg(&bad)
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .failure();
+
+    let names = |dir: &Path| -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        names(outdir.path()),
+        [
+            "good.fq_ambiguous_reads.fq.gz",
+            "good_bismark_bt2.ambig.bam",
+            "good_bismark_bt2.bam",
+            "good_bismark_bt2_SE_report.txt",
+        ]
+    );
+    assert_eq!(names(temp.path()), ["bad.fq_G_to_A.fastq"]);
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_index_errors() {

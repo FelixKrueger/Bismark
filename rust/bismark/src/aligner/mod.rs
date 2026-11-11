@@ -312,7 +312,15 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
+    let outputs = run_output_paths(&config);
+    let before: Vec<Vec<_>> = outputs
+        .iter()
+        .map(|paths| paths.iter().map(|p| file_fingerprint(p)).collect())
+        .collect();
     let result = reject_crlf_inputs(&config.layout).and_then(|()| pipeline(&config));
+    if result.is_err() {
+        remove_failed_input_outputs(&outputs, &before);
+    }
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
     for dir in &alt_input_temp_dirs {
@@ -339,6 +347,124 @@ fn reject_crlf_inputs(layout: &ReadLayout) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Per input (or mate pair), the BAM, report, optional `--ambig_bam` / `--unmapped` /
+/// `--ambiguous` outputs and converted temp files the drivers write for it, named as
+/// `open_sinks` / `open_pe_sinks`, the report and [`convert::converted_name`] name them.
+fn run_output_paths(config: &RunConfig) -> Vec<Vec<PathBuf>> {
+    let tok = config.aligner.token();
+    let fasta = matches!(config.format, ReadFormat::FastA);
+    let opts = convert::ConvertOptions::from_config(config);
+    let (prefix, base) = (
+        config.output.prefix.as_deref(),
+        config.output.basename.as_deref(),
+    );
+    let mut aux_kinds = Vec::new();
+    if config.unmapped {
+        aux_kinds.push(AuxKind::Unmapped);
+    }
+    if config.ambiguous {
+        aux_kinds.push(AuxKind::Ambiguous);
+    }
+    // Both conversion kinds: which ones a run writes depends on the library and the mate.
+    let temps = |read: &str, paths: &mut Vec<PathBuf>| {
+        for kind in [convert::ConvKind::Ct, convert::ConvKind::Ga] {
+            let file_base = convert::file_base_for(kind);
+            if let Ok(name) = convert::converted_name(Path::new(read), &opts, file_base, fasta) {
+                paths.push(config.output.temp_dir.join(name));
+            }
+        }
+    };
+    let (mates1, mates2, paired): (&[String], &[String], bool) = match &config.layout {
+        ReadLayout::SingleEnd { reads } => (reads, &[], false),
+        ReadLayout::PairedEnd { mates1, mates2 } => (mates1, mates2, true),
+    };
+    let (pe, end) = if paired { ("_pe", "PE") } else { ("", "SE") };
+    mates1
+        .iter()
+        .enumerate()
+        .map(|(i, read_1)| {
+            let mut paths = vec![
+                derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}{pe}.bam"),
+                    &format!("{pe}.bam"),
+                ),
+                derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}_{end}_report.txt"),
+                    &format!("_{end}_report.txt"),
+                ),
+            ];
+            if config.ambig_bam {
+                paths.push(derive_output_path(
+                    read_1,
+                    config,
+                    &format!("_bismark_{tok}{pe}.ambig.bam"),
+                    &format!("{pe}.ambig.bam"),
+                ));
+            }
+            let mates: Vec<(&str, Option<u8>)> = match mates2.get(i) {
+                Some(read_2) => vec![(read_1, Some(1)), (read_2, Some(2))],
+                None => vec![(read_1, None)],
+            };
+            for (read, mate) in mates {
+                for &kind in &aux_kinds {
+                    let name =
+                        aux_out::aux_filename(&basename(read), prefix, base, kind, fasta, mate);
+                    paths.push(config.output.output_dir.join(name));
+                }
+                temps(read, &mut paths);
+            }
+            paths
+        })
+        .collect()
+}
+
+/// A file's modification time and size, or `None` when it does not exist.
+fn file_fingerprint(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// After a failed run, remove what the input being processed when it failed wrote: the
+/// last input (drivers take them in order) with a file that is new or rewritten since
+/// `before`. Earlier inputs finished and keep their outputs; files the run never touched
+/// stay. A partial BAM still gets its EOF marker, so it would pass `samtools quickcheck`.
+fn remove_failed_input_outputs(
+    outputs: &[Vec<PathBuf>],
+    before: &[Vec<Option<(std::time::SystemTime, u64)>>],
+) {
+    let Some(stale) = outputs
+        .iter()
+        .zip(before)
+        .rev()
+        .map(|(paths, before)| {
+            paths
+                .iter()
+                .zip(before)
+                .filter(|(p, was)| file_fingerprint(p).is_some_and(|now| Some(now) != **was))
+                .map(|(p, _)| p)
+                .collect::<Vec<_>>()
+        })
+        .find(|written| !written.is_empty())
+    else {
+        return;
+    };
+    for path in stale {
+        if let Err(e) = std::fs::remove_file(path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "Warning: could not remove the partial output {}: {e}. Delete it by hand — \
+                 the run that wrote it failed.",
+                path.display()
+            );
+        }
+    }
 }
 
 /// After the merge: the error of an instance that failed, else of one whose read names
