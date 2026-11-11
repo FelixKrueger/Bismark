@@ -114,7 +114,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--bedGraph`
 
-  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output_dir`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The calls are aggregated and sorted in memory; no temporary files are written. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
 
 - `--zero_based`
 
