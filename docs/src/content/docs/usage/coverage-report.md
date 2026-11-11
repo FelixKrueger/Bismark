@@ -11,7 +11,7 @@ taken into consideration. Mono- or dinucleotides containing Ns are ignored as we
 ## Usage
 
 ```
-bismark bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
+bismark bam2nuc [options] --genome_folder <path> [input.bam]
 ```
 
 ### Arguments
@@ -20,7 +20,7 @@ Aligned BAM files. `bismark bam2nuc` handles both Bismark single-end and paired-
 
 :::note
 
-Both BAM and CRAM files work as input; the Rust suite reads CRAM via pure-Rust `noodles`, so no Samtools is required.
+Only BAM input is supported. A CRAM file is rejected; convert it first with `samtools view -b -T genome.fa -o input.bam input.cram`. BAM is read with pure-Rust `noodles`, so no Samtools is required.
 :::
 ### Options
 
