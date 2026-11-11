@@ -239,7 +239,7 @@ Once CRAM output is supported, it requires you to specify a reference genome as 
 
 - `--ambig_bam`
 
-For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambiguous.bam`. The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
+For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambig.bam` (`_pe.ambig.bam` for paired-end). The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
 
 - `--nucleotide_coverage`
 
