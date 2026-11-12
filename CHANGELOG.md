@@ -1,12 +1,6 @@
 # Bismark Changelog
 
 
-## Unreleased
-
-### bismark extract
-
-- **`--cytosine_report` no longer re-reads the `.bismark.cov.gz` it has just written:** coverage2cytosine now takes the same coverage lines from memory. The `.cov.gz` is still written and the output is unchanged.
-
 ## Bismark 3.2.0 (released 2026-11-09)
 
 ### Repository layout
