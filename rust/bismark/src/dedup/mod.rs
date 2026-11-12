@@ -196,7 +196,17 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
     // warn-and-fall-back to single-threaded; everything else →
     // existing single-threaded run_single.
     let kind = crate::io::AlignmentKind::from_path(input)?;
-    let use_parallel = config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Bam);
+    // The threaded writers emit BGZF, so `--sam` output must take the serial path.
+    let use_parallel =
+        config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Bam) && !config.sam_output;
+
+    if config.parallel > 1 && config.sam_output {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-output only; \
+             --sam output runs single-threaded in this release",
+            config.parallel
+        );
+    }
 
     if config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Cram) {
         eprintln!(
@@ -275,7 +285,16 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
     let all_bam = kinds.iter().all(|k| *k == crate::io::AlignmentKind::Bam);
     let any_cram = kinds.contains(&crate::io::AlignmentKind::Cram);
 
-    let use_parallel = config.parallel > 1 && all_bam;
+    // The threaded writers emit BGZF, so `--sam` output must take the serial path.
+    let use_parallel = config.parallel > 1 && all_bam && !config.sam_output;
+
+    if config.parallel > 1 && config.sam_output {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-output only; \
+             --sam output runs single-threaded in this release",
+            config.parallel
+        );
+    }
 
     if config.parallel > 1 && any_cram {
         eprintln!(

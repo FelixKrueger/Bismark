@@ -233,3 +233,39 @@ fn smoke_pe_explicit_paired_end_flag_works() {
     // Phase C.2 (#864): PE sequences_count = pair count (10 pairs).
     assert!(report.contains("Processed 10 lines in total"));
 }
+
+#[test]
+fn smoke_pe_auto_detect_include_overlap_succeeds() {
+    // #1167 finding 24: --include_overlap must not demand an explicit -p when
+    // the BAM is auto-detected as PE (Perl checks after auto-detection).
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path: PathBuf = workdir.path().join("pe_overlap.bam");
+    write_pe_directional_bam(&bam_path);
+
+    let output_dir = workdir.path().join("out");
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+    cmd.arg(&bam_path)
+        .arg("--include_overlap")
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .assert()
+        .success();
+    assert!(output_dir.join("CpG_OT_pe_overlap.txt").exists());
+}
+
+#[test]
+fn smoke_pe_auto_detect_yacht_rejected() {
+    // Perl dies on --yacht unless single-end, checked after auto-detection.
+    let workdir = tempfile::tempdir().unwrap();
+    let bam_path: PathBuf = workdir.path().join("pe_yacht.bam");
+    write_pe_directional_bam(&bam_path);
+
+    let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+    cmd.arg(&bam_path)
+        .arg("--yacht")
+        .arg("--output_dir")
+        .arg(workdir.path().join("out"))
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--yacht is single-end only"));
+}
