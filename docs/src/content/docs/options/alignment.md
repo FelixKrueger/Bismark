@@ -44,7 +44,7 @@ A FastQ or FastA input with Windows (CRLF) line endings stops the run at start-u
 
 - `-q` / `--fastq`
 
-  The query input files (specified as `<mate1>`, `<mate2>` or `<singles>` are FastQ files (usually having extension `.fq` or `.fastq`). Input files may also be `gzip` compressed (ending in `.gz`). This is the default. See also `--solexa-quals` and `--integer-quals`.
+  The query input files (specified as `<mate1>`, `<mate2>` or `<singles>` are FastQ files (usually having extension `.fq` or `.fastq`). Input files may also be `gzip` compressed (ending in `.gz`). This is the default. See also `--phred33-quals` and `--phred64-quals`.
 
 - `-f` / `--fasta`
 
@@ -87,9 +87,9 @@ accepted, as they were in Perl Bismark.
 
   Sets the length of the seed substrings to align during multiseed alignment. Smaller values make alignment slower but more sensitive. Default: the `--sensitive` preset of Bowtie 2 is used by default, which sets `-L` to 20.
 
-- `--ignore-quals`
+- `--ignore-quals` (always passed to the aligner)
 
-  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). For bisulfite alignments in Bismark, this option is invariably turned on by default.
+  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
 - `-I <int>` / `--minins <int>`
 
@@ -171,11 +171,11 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `-o/--output_dir <dir>`
 
-  Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
+  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
 
 - `--temp_dir <dir>`
 
-  Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
+  Write temporary files to this directory instead of into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
 
 - `--non_bs_mm`
 
@@ -292,13 +292,13 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 ##### Paired-end options:
 
-- `--no-mixed`
+- `--no-mixed` (always passed to the aligner)
 
-  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. This option is invariably on by default.
+  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
-- `--no-discordant`
+- `--no-discordant` (always passed to the aligner)
 
-  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour and is on by default.
+  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
 ##### Bowtie 2 Effort options:
 
