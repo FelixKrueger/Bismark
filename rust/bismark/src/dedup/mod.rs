@@ -370,7 +370,8 @@ fn check_bclconvert_format_conflict(
     input: &Path,
     config: &ResolvedConfig,
 ) -> Result<(), BismarkDedupError> {
-    let mut reader = crate::io::open_reader(input, config.cram_ref.as_deref())?;
+    // Peek only; the pipeline's own open enforces the PE-only sort check.
+    let mut reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
     // We only need the first record's qname — peek and discard.
     let first_record = reader.records().next();
     let first_qname: Vec<u8> = match first_record {
@@ -448,7 +449,8 @@ fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, Bi
     // accepted as a known overhead; v1.1 will refactor auto-detect into
     // the pipeline itself to share the reader. Users who care can pass
     // `-s`/`-p` explicitly to skip auto-detect.
-    let reader = crate::io::open_reader(input, config.cram_ref.as_deref())?;
+    // No sort check here: it applies to PE only, and the mode is not known yet.
+    let reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
     match pipeline::detect_paired_from_header(reader.header()) {
         Some(is_paired) => {
             eprintln!(

@@ -43,6 +43,35 @@ use smallvec::SmallVec;
 /// Concrete writer type returned by `crate::io::open_writer`.
 type Writer = AnyWriter<BufWriter<File>, File>;
 
+/// Open a dedup input, rejecting coordinate-sorted input only for paired-end
+/// (adjacent-mate pairing needs name/unsorted order). SE dedup is
+/// order-independent; Perl runs `test_positional_sorting` only `if ($paired)`
+/// (`deduplicate_bismark:129-131`).
+fn open_dedup_reader(
+    path: &Path,
+    cram_ref: Option<&Path>,
+    is_paired: bool,
+) -> Result<crate::io::AnyReader<std::io::BufReader<File>, File>, crate::io::BismarkIoError> {
+    if is_paired {
+        crate::io::open_reader(path, cram_ref)
+    } else {
+        crate::io::open_reader_without_sort_check(path, cram_ref)
+    }
+}
+
+/// Threaded-BAM counterpart of [`open_dedup_reader`].
+fn open_threaded_dedup_reader(
+    path: &Path,
+    parallel: std::num::NonZero<usize>,
+    is_paired: bool,
+) -> Result<crate::io::ThreadedBamReader, crate::io::BismarkIoError> {
+    if is_paired {
+        crate::io::ThreadedBamReader::from_path(path, parallel)
+    } else {
+        crate::io::ThreadedBamReader::from_path_without_sort_check(path, parallel)
+    }
+}
+
 /// Build a chr-name → interned-u32 map from a SAM header's `@SQ` order.
 ///
 /// Interning is by chr-name **string** (not noodles refID), because in
@@ -320,7 +349,7 @@ pub fn run_single(
     is_paired: bool,
     file_label: String,
 ) -> Result<DedupReport, BismarkDedupError> {
-    let mut reader = crate::io::open_reader(input, cram_ref)?;
+    let mut reader = open_dedup_reader(input, cram_ref, is_paired)?;
     let header = reader.header().clone();
 
     // Zero alignment records (header-only BAM, e.g. nothing aligned) is handled
@@ -392,7 +421,7 @@ pub fn run_multiple(
     // header for chr-consistency validation before opening the writer.
     let readers: Vec<_> = inputs
         .iter()
-        .map(|p| crate::io::open_reader(p, cram_ref))
+        .map(|p| open_dedup_reader(p, cram_ref, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -507,7 +536,7 @@ pub fn run_single_parallel(
     file_label: String,
     parallel: std::num::NonZero<usize>,
 ) -> Result<DedupReport, BismarkDedupError> {
-    let mut reader = crate::io::ThreadedBamReader::from_path(input, parallel)?;
+    let mut reader = open_threaded_dedup_reader(input, parallel, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -567,7 +596,7 @@ pub fn run_multiple_parallel(
     // Open all readers (threaded) and capture their headers up front.
     let mut readers: Vec<crate::io::ThreadedBamReader> = inputs
         .iter()
-        .map(|p| crate::io::ThreadedBamReader::from_path(p, parallel))
+        .map(|p| open_threaded_dedup_reader(p, parallel, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -800,7 +829,7 @@ pub fn run_single_umi(
     umi_mode: UmiMode,
 ) -> Result<DedupReport, BismarkDedupError> {
     let extractor = umi_extractor_for(umi_mode);
-    let mut reader = crate::io::open_reader(input, cram_ref)?;
+    let mut reader = open_dedup_reader(input, cram_ref, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -856,7 +885,7 @@ pub fn run_multiple_umi(
 
     let readers: Vec<_> = inputs
         .iter()
-        .map(|p| crate::io::open_reader(p, cram_ref))
+        .map(|p| open_dedup_reader(p, cram_ref, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -934,7 +963,7 @@ pub fn run_single_parallel_umi(
     umi_mode: UmiMode,
 ) -> Result<DedupReport, BismarkDedupError> {
     let extractor = umi_extractor_for(umi_mode);
-    let mut reader = crate::io::ThreadedBamReader::from_path(input, parallel)?;
+    let mut reader = open_threaded_dedup_reader(input, parallel, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -990,7 +1019,7 @@ pub fn run_multiple_parallel_umi(
 
     let mut readers: Vec<crate::io::ThreadedBamReader> = inputs
         .iter()
-        .map(|p| crate::io::ThreadedBamReader::from_path(p, parallel))
+        .map(|p| open_threaded_dedup_reader(p, parallel, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
