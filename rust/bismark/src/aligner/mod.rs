@@ -4016,6 +4016,11 @@ fn process_se_chunk_combined(
         sinks,
         counters,
     )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &read_file,
+        false,
+    )?;
     stream.finish()?;
     Ok(converted)
 }
@@ -4108,15 +4113,13 @@ fn drive_merge_combined<S: SamStream>(
         // produces — yields an empty group → NoAlignment, leaving the stream head
         // for the next read (no mis-assignment, no infinite loop).
         //
-        // No desync sentinel is needed (cf. the faithful merge's flag-4-then-same-
-        // id `die`, merge.rs ~200): that guard catches a SINGLE instance reporting a
-        // read as both unmapped and mapped, whereas here we drain the WHOLE
-        // contiguous same-QNAME run in one pass, so a read's lines cannot reappear
-        // at the head after we move on. A stream-exhaustion assert at EOF is
-        // deliberately NOT added either — it would false-positive under `--upto`
-        // (the FastQ loop breaks early while the stream still holds later reads).
-        // Output order/lockstep rests on the same Bowtie 2 `--reorder`-under-`-p`
-        // invariant the faithful path relies on.
+        // No per-read desync sentinel is needed (cf. the faithful merge's flag-4-
+        // then-same-id `die`, merge.rs ~200): we drain the WHOLE contiguous same-
+        // QNAME run in one pass, so a read's lines cannot reappear at the head after
+        // we move on. A name desync instead leaves the stream unconsumed, which the
+        // caller's `check_merged` reports as on the faithful path (`--upto` is safe:
+        // the converted input already stops at the same read). Output order/lockstep
+        // rests on the same Bowtie 2 `--reorder`-under-`-p` invariant.
         let mut records: Vec<crate::aligner::align::SamRecord> = Vec::new();
         while stream.current().is_some_and(|r| r.qname == identifier) {
             records.push(stream.current().unwrap().clone());
@@ -4323,6 +4326,14 @@ fn process_se_chunk_combined_nondir(
         refid,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [
+            (ct_stream.exit_failure(), ct_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &read_file,
+        false,
     )?;
     ct_stream.finish()?;
     ga_stream.finish()?;
@@ -4773,6 +4784,14 @@ fn process_se_chunk_combined_nondir_sequential(
         sinks,
         counters,
     )?;
+    check_merged(
+        [
+            (None, ct_file_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &read_file,
+        false,
+    )?;
     ga_stream.finish()?;
 
     // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
@@ -4962,6 +4981,11 @@ fn process_se_chunk_combined_nondir_tagged(
         &converted.path,
     )?;
     drive_merge_combined_nondir_tagged(input, &mut stream, config, genome, refid, sinks, counters)?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &read_file,
+        false,
+    )?;
     stream.finish()?;
     Ok(vec![converted])
 }
@@ -6296,6 +6320,11 @@ fn process_pe_chunk_combined(
         sinks,
         counters,
     )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
+    )?;
     stream.finish()?;
     Ok(vec![cr1, cr2])
 }
@@ -6644,6 +6673,14 @@ fn process_pe_chunk_combined_nondir(
         dovetail,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [
+            (ct_stream.exit_failure(), ct_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
     )?;
     ct_stream.finish()?;
     ga_stream.finish()?;
@@ -7229,6 +7266,14 @@ fn process_pe_chunk_combined_nondir_sequential(
         sinks,
         counters,
     )?;
+    check_merged(
+        [
+            (None, ct_file_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
+    )?;
     ga_stream.finish()?;
 
     // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
@@ -7411,6 +7456,11 @@ fn process_pe_chunk_combined_nondir_tagged(
         dovetail,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
     )?;
     stream.finish()?;
     Ok(vec![tagged1, tagged2])

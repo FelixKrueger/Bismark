@@ -1361,7 +1361,7 @@ fn reject_unsupported_output_flags(cli: &Cli) -> Result<()> {
             "--non_bs_mm (extra XA non-bisulfite-mismatch tag) is not yet supported in v1.".into(),
         ));
     }
-    if cli.rg_tag {
+    if cli.rg_tag || cli.rg_id.is_some() || cli.rg_sample.is_some() {
         return Err(AlignerError::Unsupported(
             "--rg_tag/--rg_id/--rg_sample (read-group @RG/RG:Z) is not yet supported in v1.".into(),
         ));
