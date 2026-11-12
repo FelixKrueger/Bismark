@@ -722,12 +722,11 @@ fn same_index_basename(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// The files `bwa-mem3 mem --meth` opens; `.meth.fa` is not among them.
-const BWAMEM3_INDEX_SUFFIXES: [&str; 8] = [
+/// The files `bwa-mem3 mem --meth` opens; neither `.meth.fa` nor the plain `.bwt.2bit.64` is among them.
+const BWAMEM3_INDEX_SUFFIXES: [&str; 7] = [
     "amb",
     "ann",
     "pac",
-    "bwt.2bit.64",
     "meth.amb",
     "meth.ann",
     "meth.pac",
@@ -2304,11 +2303,11 @@ mod tests {
     fn bwamem3_index_files_checked_with_build_hint() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("g.fa");
+        // No plain .bwt.2bit.64: nf-core's `bwamem3/index --meth` omits it.
         let all = [
             "amb",
             "ann",
             "pac",
-            "bwt.2bit.64",
             "meth.amb",
             "meth.ann",
             "meth.pac",

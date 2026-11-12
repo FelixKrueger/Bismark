@@ -172,7 +172,7 @@ It is opt-in because it is expensive:
 | | bwa-mem3 |
 |---|---|
 | Index | `bwa-mem3 index --meth genome.fa`: about 1 h and about 104 GB RAM for GRCh38 |
-| Index on disk | about 39 GB; the 6.3 GB `genome.fa.meth.fa` can be deleted afterwards |
+| Index on disk | about 23 GB needed for GRCh38; `bwa-mem3 index --meth` writes about 39 GB, and `genome.fa.meth.fa` (6.3 GB) and the plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
 | Alignment memory | bwa-mem3's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 alone) |
 
@@ -181,6 +181,8 @@ the same FASTA as the `--genome` folder: Bismark compares the index's contig nam
 lengths with the genome folder before it starts, and the engine's `@SQ` lines again at run
 time, and stops on any difference. Keep the index outside the `--genome` folder, so its
 files are not mistaken for genome FASTA. The index is loaded once per mate-pair file pair.
+An index built by nf-core's `bwamem3/index` module or given to nf-core/methylseq as
+`--bwamem3_index` works as it is.
 
 Bismark fixes every bwa-mem3 option that affects placement (`--meth-scoring neutral
 --meth-context all --meth-seed-prune=spec30`), because bwa-mem3's defaults have changed

@@ -607,6 +607,32 @@ fn bwamem3_missing_meth_files_fail_before_spawn() {
     assert!(!dump.exists(), "bwa-mem3 was spawned");
 }
 
+/// An index from nf-core's `bwamem3/index --meth` (or methylseq's `--bwamem3_index`) has no plain
+/// `.bwt.2bit.64`, which `mem --meth` never reads.
+#[cfg(unix)]
+#[test]
+fn bwamem3_index_without_the_plain_bwt_runs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    fs::remove_file(format!("{}.bwt.2bit.64", run.index.display())).unwrap();
+    bwamem3_cmd(&run).assert().success();
+    assert_eq!(bam_records(&run).len(), 2);
+}
+
+/// The plain `.ann` is still required: `mem` opens it, and Bismark checks contigs against it.
+#[cfg(unix)]
+#[test]
+fn bwamem3_index_without_the_plain_ann_fails_before_spawn() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    fs::remove_file(format!("{}.ann", run.index.display())).unwrap();
+    let dump = run.out.path().join("argv.txt");
+    bwamem3_cmd(&run)
+        .env("FAKE_ARGV_DUMP", &dump)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("idx.fa.ann is missing"));
+    assert!(!dump.exists(), "bwa-mem3 was spawned");
+}
+
 /// 5-Base is concordance-validated, so another bwa-mem3 version warns without promising byte-identity.
 #[cfg(unix)]
 #[test]
