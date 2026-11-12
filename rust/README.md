@@ -178,7 +178,7 @@ The per-tool crate/version columns are the historical/frozen record: since the P
 
 Reverse-chronological log of the main Rust-rewrite shipping events. One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
-- **2026-11-11** — `bismark` aligner **5-Base `--bwamem3` engine** (`plans/11112026_bwamem3-5base-engine/`) — bwa-mem3 0.16.0 `--meth=5base` places the reads and Bismark makes the calls, fixing the CpG-dense methylated under-coverage; also adds shared 5-Base fixes (orientation guard, `--upto`, engine exit status, UMI mask).
+- **2026-11-11** — `bismark` aligner **5-Base `--bwamem3` engine** (`plans/11112026_bwamem3-5base-engine/`) — bwa-mem3 0.16.0 `--meth=5base` places the reads and Bismark makes the calls, fixing the CpG-dense methylated under-coverage; also adds shared 5-Base fixes (orientation guard, `--upto`, engine exit status, and UMI and dovetail-overhang masks, which change minimap2 XM on dovetailed pairs).
 
 - **2026-11-05** — **outputs name the suite version, not `v0.25.1`** ([#1148](https://github.com/FelixKrueger/Bismark/issues/1148); `plans/11052026_1148-suite-version-strings/`) — aligner report, BAM `@PG`, extractor split files and splitting report, summary HTML and the genome-prep banner; the Perl oracles map only that token back.
 - **2026-11-04** — `bismark` aligner **5-Base `--bowtie2` defaults to `--maxins 800`** ([#1147](https://github.com/FelixKrueger/Bismark/pull/1147); `plans/11012026_5base-bowtie2-defaults/`) — reproduces #1146's `-X 800` arm exactly on NA12878 and lifts HG002 mapping from 90.5% to 94.5%; `--dovetail` stays off because its overhangs are not genomic, and an `-I` above the cap is rejected.

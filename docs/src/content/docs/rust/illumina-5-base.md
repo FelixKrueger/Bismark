@@ -193,7 +193,17 @@ threads. Versions before 0.16.0 are rejected, and other versions run with a warn
 As with the other engines, Bismark keeps proper pairs at any MAPQ; about 5% of bwa-mem3's
 records have MAPQ 0. Dovetailed pairs are kept too, but bases that run past the mate's 5' end
 are adapter read-through rather than genome, so they are not called; the report counts them as
-"Dovetail overhang bases not called". This applies to minimap2 as well.
+"Dovetail overhang bases not called". This applies to minimap2 as well. Pairs whose mates point
+apart are rejected, and the report counts them under "Proper pairs rejected" and as pairs with
+no alignment.
+
+With `--five_base_umi_len N`, the first N bases of each mate are never called, for every engine,
+including bases the engine aligned rather than soft-clipped. The UMI and overhang masks apply to
+the core calls (`XM`, and everything the extractor reads); `--five_base_duplex`,
+`--five_base_consensus` and `--five_base_deconvolution` do not apply them yet.
+
+Before Bismark validates a newer bwa-mem3, the per-CpG comparison with the validated version is
+re-run on 1M read pairs; until then, other versions run with the warning above.
 
 `bismark2summary` does not discover 5-Base BAMs on its own, for any engine. Pass them to it
 explicitly: `bismark2summary *_bismark_*_pe.bam`.
