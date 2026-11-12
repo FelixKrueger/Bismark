@@ -20,7 +20,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use crate::bam2nuc::error::BismarkBam2nucError;
-use crate::bam2nuc::genome::Genome;
+use crate::io::genome::Genome;
 
 /// The genome-composition cache filename (reused byte-for-byte if present).
 pub const CACHE_FILE: &str = "genomic_nucleotide_frequencies.txt";
@@ -127,8 +127,8 @@ pub fn process_sequence(seq: &[u8], counts: &mut NucCounts) {
 #[must_use]
 pub fn compute_genomic(genome: &Genome) -> NucCounts {
     let mut counts = NucCounts::default();
-    for (_name, seq) in genome.seqs() {
-        process_sequence(seq, &mut counts);
+    for name in genome.names_sorted() {
+        process_sequence(genome.get(name).unwrap_or_default(), &mut counts);
     }
     counts
 }
@@ -321,7 +321,7 @@ mod tests {
     fn compute_genomic_sums_all_chromosomes() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("g.fa"), ">c1\nAC\n>c2\nGT\n").unwrap();
-        let g = Genome::load(t.path()).unwrap();
+        let g = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = compute_genomic(&g);
         // c1: mono A,C; di AC.  c2: mono G,T; di GT.  No cross-chr di.
         assert_eq!(c.mono(b'A'), 1);
@@ -337,7 +337,7 @@ mod tests {
     fn get_genomic_frequencies_computes_then_writes_cache() {
         let gdir = tempfile::tempdir().unwrap();
         std::fs::write(gdir.path().join("g.fa"), ">c1\nACGT\n").unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = get_genomic_frequencies(&g, gdir.path(), "").unwrap();
         assert_eq!(c.mono(b'A'), 1);
         // The cache file was written to the genome folder.
@@ -358,7 +358,7 @@ mod tests {
             "A\t1000\nC\t2000\nG\t3000\nT\t4000\n",
         )
         .unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = get_genomic_frequencies(&g, gdir.path(), "").unwrap();
         assert_eq!(c.mono(b'A'), 1000); // planted value wins (no recompute)
         assert_eq!(c.mono(b'T'), 4000);
@@ -371,7 +371,7 @@ mod tests {
         let odir = tempfile::tempdir().unwrap();
         std::fs::write(gdir.path().join("g.fa"), ">c1\nACGT\n").unwrap();
         std::fs::write(odir.path().join(CACHE_FILE), "A\t9999\n").unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let out_prefix = format!("{}/", odir.path().display());
         let c = get_genomic_frequencies(&g, gdir.path(), &out_prefix).unwrap();
         // genome_folder has no cache → recompute (NOT the planted 9999).
