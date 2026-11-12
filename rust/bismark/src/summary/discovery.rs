@@ -22,9 +22,9 @@ use crate::summary::error::BismarkSummaryError;
 
 /// The auto-detect glob suffixes. The first four are Perl's fixed order
 /// (`bismark2summary:159-197`): SE-bt2, PE-bt2, SE-hisat2, PE-hisat2. The
-/// minimap2 (`mm2`) and rammap outputs follow (`Aligner::token`); Perl's
-/// bismark2summary predates them.
-const GLOB_SUFFIXES: [&str; 8] = [
+/// minimap2 (`mm2`) and rammap outputs follow (`Aligner::token`), then the
+/// paired-end-only bwa-mem3 5-Base output; Perl's bismark2summary predates them.
+const GLOB_SUFFIXES: [&str; 9] = [
     "bismark_bt2.bam",
     "bismark_bt2_pe.bam",
     "bismark_hisat2.bam",
@@ -33,6 +33,7 @@ const GLOB_SUFFIXES: [&str; 8] = [
     "bismark_mm2_pe.bam",
     "bismark_rammap.bam",
     "bismark_rammap_pe.bam",
+    "bismark_bwamem3_pe.bam",
 ];
 
 /// Per-BAM derived report filenames (relative strings; resolved against the
@@ -294,6 +295,25 @@ mod tests {
                 "m_bismark_mm2.bam",
                 "m_bismark_mm2_pe.bam",
                 "r_bismark_rammap_pe.bam",
+            ]
+        );
+    }
+
+    #[test]
+    fn glob_discovery_finds_bwamem3_5_base_bams_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |n: &str| File::create(dir.path().join(n)).unwrap();
+        make("b_bismark_bwamem3_pe.bam");
+        make("m_bismark_mm2_pe.bam");
+        make("p_bismark_bt2_pe.bam");
+
+        let got = discover_bams(&[], dir.path()).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                "p_bismark_bt2_pe.bam",
+                "m_bismark_mm2_pe.bam",
+                "b_bismark_bwamem3_pe.bam",
             ]
         );
     }

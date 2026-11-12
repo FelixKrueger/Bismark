@@ -207,9 +207,6 @@ the core calls (`XM`, and everything the extractor reads); `--five_base_duplex`,
 Before Bismark validates a newer bwa-mem3, the per-CpG comparison with the validated version is
 re-run on 1M read pairs; until then, other versions run with the warning above.
 
-`bismark2summary` does not discover 5-Base BAMs on its own, for any engine. Pass them to it
-explicitly: `bismark2summary *_bismark_*_pe.bam`.
-
 ### Advanced modes
 
 Real 5-Base libraries carry a dual UMI in the read name and sequence each molecule as two
