@@ -51,6 +51,15 @@ pub use error::BismarkC2cError;
 /// Perl `coverage2cytosine`'s top-level flow (`:38` DRACH early-exit; otherwise
 /// `:44` report → `:49` summary → `:58` merge → `:82` GpC).
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
+    run_with_cov(config, &|| cov::open_cov(&config.cov_infile))
+}
+
+/// [`run`] reading the coverage lines from `open_cov` instead of
+/// `config.cov_infile` (the extractor passes the lines it holds in memory).
+pub fn run_with_cov(
+    config: &ResolvedConfig,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
     let genome = Genome::load(
         &config.genome_folder,
         &crate::io::genome::FASTA_TIERS_WITH_GZ,
@@ -63,9 +72,9 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
     // main flow :38-42) — it writes only the DRACH report + cov and returns,
     // bypassing the normal cytosine report, summary, merge, and GpC report.
     if config.drach {
-        return drach::run_drach(config, &genome);
+        return drach::run_drach(config, &genome, open_cov);
     }
-    report::run_report(config, &genome)?;
+    report::run_report(config, &genome, open_cov)?;
     // Phase D: --merge_CpGs post-pass (re-reads the just-written CpG report).
     if config.merge_cpgs {
         merge::run_merge(config)?;
@@ -75,7 +84,7 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
     // both --gc/--gc_context and --nome-seq. --nome-seq ✗ --merge_CpGs, so the
     // merge and GpC arms never co-occur.
     if config.gc_context {
-        gpc::run_gpc(config, &genome)?;
+        gpc::run_gpc(config, &genome, open_cov)?;
     }
     Ok(())
 }
