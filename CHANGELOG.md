@@ -5,10 +5,10 @@
 
 ### bismark (aligner)
 
-- **New `--bwamem3` adds bwa-mem3 0.16.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered; see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
-- **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine.**
-- **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end; this applies to the core calls (`XM`), not yet to `--five_base_duplex`, `--five_base_consensus` or `--five_base_deconvolution`.**
-- **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length.**
+- **New `--bwamem3` adds bwa-mem3 0.16.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
+- **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
+- **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end; this applies to the core calls (`XM`), not yet to `--five_base_duplex`, `--five_base_consensus` or `--five_base_deconvolution` ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
+- **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)
