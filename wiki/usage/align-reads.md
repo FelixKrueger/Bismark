@@ -56,7 +56,7 @@ sources:
    bismark --genome /data/genomes/GRCh38/ -1 sample_R1.fq.gz -2 sample_R2.fq.gz
    ```
 
-   The genome can also be the first positional argument. `-1` and `-2` take comma-separated lists of equal length (`resolve_layout` in `aligner/config.rs`). A positional uBAM or BINSEQ file that holds pairs runs as paired-end, so `-I`/`-X` apply to it (`positional_input_is_paired` in `aligner/mod.rs`).
+   The genome can also be the first positional argument. `-1` and `-2` take comma-separated lists of equal length (`resolve_layout` in `aligner/config.rs`). A positional uBAM, unaligned CRAM or BINSEQ file that holds pairs runs as paired-end, so `-I`/`-X` apply to it (`positional_input_is_paired` in `aligner/mod.rs`).
 3. Read the alignment report and check the mapping efficiency: [reference/run-reports.md](../reference/run-reports.md).
 4. Go on to [usage/deduplicate-alignments.md](deduplicate-alignments.md), or for RRBS, amplicon and implicon data straight to [usage/extract-methylation-calls.md](extract-methylation-calls.md).
 
@@ -102,7 +102,7 @@ Each read file is converted (C→T, G→A) before it is aligned. By default the 
 | HISAT2, `--combined_index*`, rammap through the external binary (`--rammap_subprocess`, FastA input, or a build without the in-process backend), or a `--temp_dir` where a FIFO cannot be made | Written as files; a `Note:` line says why (`run` in `aligner/mod.rs`) |
 | `--illumina_5base` | None; the raw reads are aligned |
 
-Converted-read files are temporary: each is deleted once its input file has been aligned (`run_se` and `run_pe` in `aligner/mod.rs`). `--gzip` has no effect on streamed reads. Streaming does not remove every temp file: with Bowtie 2, minimap2 or external rammap, `--multicore` above 1 writes plain input chunks `<file>.temp.<i>` to `--temp_dir` (`split_contiguous` in `aligner/parallel.rs`), and uBAM or BINSEQ input is decoded to FastQ under `<temp_dir>/.bismark_ubam/` or `.bismark_binseq/` (`resolve_alt_inputs` in `aligner/mod.rs`).
+Converted-read files are temporary: each is deleted once its input file has been aligned (`run_se` and `run_pe` in `aligner/mod.rs`). `--gzip` has no effect on streamed reads. Streaming does not remove every temp file: with Bowtie 2, minimap2 or external rammap, `--multicore` above 1 writes plain input chunks `<file>.temp.<i>` to `--temp_dir` (`split_contiguous` in `aligner/parallel.rs`), and uBAM, unaligned CRAM or BINSEQ input is decoded to FastQ under `<temp_dir>/.bismark_ubam/` or `.bismark_binseq/` (`resolve_alt_inputs` in `aligner/mod.rs`).
 
 If something reads the converted input before the aligner does (for example an aligner wrapper script), use `--no_stream_converted`.
 

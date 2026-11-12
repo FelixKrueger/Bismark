@@ -435,7 +435,7 @@ impl InputDecoder for UbamDecoder {
         ubam::transcode_ubam_to_fastq_pe(path, temp_dir)
     }
     fn label(&self) -> &'static str {
-        "unaligned BAM"
+        "unaligned BAM/CRAM"
     }
     fn decode_tool(&self) -> &'static str {
         "samtools fastq"
