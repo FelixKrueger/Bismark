@@ -13,7 +13,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `<filenames>`
 
-A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads. For alignment files in the older custom Bismark output see option `--vanilla`.
+A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads.
 
 #### OPTIONS:
 
@@ -24,10 +24,6 @@ A space-separated list of Bismark result files in SAM format from which methylat
 - `-p/--paired-end`
 
   Input file(s) are Bismark result file(s) generated from paired-end read data. If neither `-s` nor `-p` is set the type of experiment will be determined automatically.
-
-- `--vanilla`
-
-  The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.
 
 - `--allow_discordant`
 
@@ -82,7 +78,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   Suppresses the Bismark version header line in all output files for more convenient batch processing.
 
-- `-o/--output DIR`
+- `-o/--output_dir DIR`
 
   Allows specification of a different output directory (absolute or relative path). If not specified explicitly, the output will be written to the current directory.
 
@@ -118,7 +114,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--bedGraph`
 
-  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The calls are aggregated and sorted in memory; no temporary files are written. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
 
 - `--zero_based`
 
@@ -138,15 +134,15 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
 - `--buffer_size <string>`
 
-  This allows you to specify the main memory sort buffer when sorting the methylation information. Either specify a percentage of physical memory by appending % (e.g. `--buffer_size 50%`) or a multiple of 1024 bytes, e.g. `K` multiplies by 1024, `M` by 1048576 and so on for `T` etc. (e.g. `--buffer_size 20G`). For more information on sort type `info sort` on a command line. Defaults to 2G.
+  Accepted for compatibility with Perl Bismark; ignored. `bismark bedgraph` always sorts in memory, so this option does not cap memory use. The value is still checked by `bismark bedgraph`: it must be a percentage (e.g. `--buffer_size 50%`) or a number ending in `K`, `M`, `G` or `T` (e.g. `--buffer_size 20G`), and an explicit `--buffer_size` cannot be combined with `--ample_memory`.
 
 - `--scaffolds/--gazillion`
 
-  Users working with unfinished genomes sporting tens or even hundreds of thousands of scaffolds/contigs/chromosomes frequently encountered errors with pre-sorting reads to individual chromosome files. These errors were caused by the operating system's limit of the number of filehandles that can be written to at any one time (typically 1024; to find out this limit on Linux, type: `ulimit -a`). To bypass the limitation of open filehandles, the option `--scaffolds` does not pre-sort methylation calls into individual chromosome files. Instead, all input files are temporarily merged into a single file (unless there is only a single file), and this file will then be sorted by both chromosome AND position using the Unix sort command. Please be aware that this option might take a l*ooooo*ng time to complete, depending on the size of the input files, and the memory you allocate to this process (see `--buffer_size`). Nevertheless, it seems to be working.
+  Accepted for compatibility with Perl Bismark; ignored. Perl Bismark used this to avoid the open-filehandle limit on genomes with very many scaffolds; `bismark bedgraph` sorts in memory without per-chromosome files, so there is no such limit. Cannot be combined with `--ample_memory`.
 
 - `--ample_memory`
 
-  Using this option will not sort chromosomal positions using the UNIX `sort` command, but will instead use two arrays to sort methylated and unmethylated calls. This may result in a faster sorting process of very large files, but this comes at the cost of a larger memory footprint (two arrays of the length of the largest human chromosome 1 (~250M bp) consume around 16GB of RAM). Due to overheads in creating and looping through these arrays it seems that it will actually be _slower_ for small files (few million alignments), and we are currently testing at which point it is advisable to use this option. Note that `--ample_memory` is not compatible with options `--scaffolds/--gazillion` (as it requires pre-sorted files to begin with).
+  Accepted for compatibility with Perl Bismark; ignored, since `bismark bedgraph` always sorts in memory. Cannot be combined with `--scaffolds/--gazillion` or an explicit `--buffer_size`.
 
 ##### Genome-wide cytosine methylation report specific options:
 
@@ -170,9 +166,9 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
   Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
-- `--ffs`
+- `--ffs` (`bismark cov2cyt` only)
 
-  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `bismark cov2cyt`.
+  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. `bismark extract` does not accept this option; run `bismark cov2cyt --ffs` on the coverage file instead.
 
   ```
   Example:
