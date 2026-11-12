@@ -83,9 +83,11 @@ fn build_refid_table(header: &Header, intern: &FxHashMap<BString, u32>) -> Vec<u
         .collect()
 }
 
-/// Validate that `header`'s `@SQ` name set equals the reference intern's
-/// name set. Returns an error tagged with `offending_file` if they
-/// disagree (either side has names the other doesn't).
+/// Validate that `header`'s `@SQ` names equal the reference intern's names
+/// **in the same order**. Returns an error tagged with `offending_file` if
+/// either side has names the other doesn't, or if the order differs.
+/// Order matters because every input's records are written unchanged
+/// (raw refID) under file1's header.
 fn validate_chr_consistency(
     offending_file: &Path,
     header: &Header,
@@ -102,13 +104,23 @@ fn validate_chr_consistency(
         .difference(&intern_names)
         .map(|n| format!("{n}"))
         .collect();
-    if missing_chrs.is_empty() && extra_chrs.is_empty() {
-        Ok(())
-    } else {
-        Err(BismarkDedupError::MultipleSqMismatch {
+    if !(missing_chrs.is_empty() && extra_chrs.is_empty()) {
+        return Err(BismarkDedupError::MultipleSqMismatch {
             offending_file: offending_file.to_path_buf(),
             missing_chrs,
             extra_chrs,
+        });
+    }
+    let same_order = header
+        .reference_sequences()
+        .keys()
+        .enumerate()
+        .all(|(i, name)| reference_intern[name] as usize == i);
+    if same_order {
+        Ok(())
+    } else {
+        Err(BismarkDedupError::MultipleSqOrderMismatch {
+            offending_file: offending_file.to_path_buf(),
         })
     }
 }
@@ -325,14 +337,18 @@ pub fn run_single(
     let mut writer = crate::io::open_writer(output, header, cram_ref)?;
     let mut state = DedupState::new();
 
-    if is_paired {
-        stream_pe(records, &refid_table, &mut state, &mut writer)?;
+    let stream_result = if is_paired {
+        stream_pe(records, &refid_table, &mut state, &mut writer)
     } else {
-        stream_se(records, &refid_table, &mut state, &mut writer)?;
-    }
-
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        stream_se(records, &refid_table, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 /// Run dedup on **multiple** input files treated as one combined sample.
@@ -340,8 +356,10 @@ pub fn run_single(
 ///
 /// All inputs must share:
 /// - File format (all BAM, all SAM, or all CRAM — no mixing).
-/// - `@SQ` chromosome **name** sets (order may differ; only the set is
-///   validated). Mismatches produce [`BismarkDedupError::MultipleSqMismatch`].
+/// - `@SQ` chromosome names **in the same order** (records are written with
+///   their raw refID under file1's header). Mismatches produce
+///   [`BismarkDedupError::MultipleSqMismatch`] /
+///   [`BismarkDedupError::MultipleSqOrderMismatch`].
 ///
 /// The first file's header is written to the output. All inputs' records
 /// flow into a single shared [`DedupState`].
@@ -411,35 +429,45 @@ pub fn run_multiple(
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    if is_paired {
-        stream_pe(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    } else {
-        stream_se(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    }
-
-    // Stream subsequent files (empty is OK — they just contribute no records).
-    for (i_zero_based, mut reader) in readers_iter.enumerate() {
-        let i = i_zero_based + 1;
-        let records = reader.records();
+    // Single closure so one `?` controls early exit and the
+    // `cleanup_partial_output_on_err` wrapper below unlinks the output on a
+    // mid-stream error (same pattern as `run_multiple_umi`).
+    let stream_result: Result<(), BismarkDedupError> = (|| {
         if is_paired {
-            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_pe(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         } else {
-            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_se(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         }
-    }
 
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        // Stream subsequent files (empty is OK — they just contribute no records).
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records();
+            if is_paired {
+                stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -492,14 +520,18 @@ pub fn run_single_parallel(
     let mut writer = crate::io::ThreadedBamWriter::from_path(output, header, parallel)?;
     let mut state = DedupState::new();
 
-    if is_paired {
-        stream_pe(records, &refid_table, &mut state, &mut writer)?;
+    let stream_result = if is_paired {
+        stream_pe(records, &refid_table, &mut state, &mut writer)
     } else {
-        stream_se(records, &refid_table, &mut state, &mut writer)?;
-    }
-
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        stream_se(records, &refid_table, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 /// Run dedup on multiple BAM inputs combined into one sample, with
@@ -563,34 +595,44 @@ pub fn run_multiple_parallel(
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    if is_paired {
-        stream_pe(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    } else {
-        stream_se(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    }
-
-    for (i_zero_based, mut reader) in readers_iter.enumerate() {
-        let i = i_zero_based + 1;
-        let records = reader.records();
+    // Single closure so one `?` controls early exit and the
+    // `cleanup_partial_output_on_err` wrapper below unlinks the output on a
+    // mid-stream error (same pattern as `run_multiple_umi`).
+    let stream_result: Result<(), BismarkDedupError> = (|| {
         if is_paired {
-            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_pe(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         } else {
-            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_se(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         }
-    }
 
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records();
+            if is_paired {
+                stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1177,10 +1219,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_chr_consistency_passes_on_identical_name_sets() {
+    fn validate_chr_consistency_passes_on_identical_name_lists() {
         let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2", "chr3"]));
-        let other = header_with_chrs(&["chr3", "chr1", "chr2"]); // reordered OK
+        let other = header_with_chrs(&["chr1", "chr2", "chr3"]);
         validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap();
+    }
+
+    #[test]
+    fn validate_chr_consistency_fails_on_reordered_names() {
+        // Regression: a reordered @SQ used to pass (set comparison), so
+        // file2's raw refIDs landed on the wrong chromosome of file1's header.
+        let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2", "chr3"]));
+        let other = header_with_chrs(&["chr3", "chr1", "chr2"]);
+        let err = validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap_err();
+        match err {
+            BismarkDedupError::MultipleSqOrderMismatch { offending_file } => {
+                assert_eq!(offending_file, PathBuf::from("other.bam"));
+            }
+            other => panic!("expected MultipleSqOrderMismatch, got {other:?}"),
+        }
     }
 
     #[test]
