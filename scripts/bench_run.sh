@@ -41,7 +41,7 @@ done
   echo "usage: bench_run.sh <BAM> --tool {rust|perl} --mode {gzip|plain|mbias_only} --parallel N --reps R --dataset NAME --out DIR" >&2; exit 2; }
 CSV="${CSV:-$OUT_DIR/results.csv}"
 
-RUST_BIN="${RUST_BIN:-$HOME/Github/Bismark/rust/target/release/bismark-methylation-extractor-rs}"
+RUST_BIN="${RUST_BIN:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/rust/target/release/bismark_methylation_extractor}"
 PERL_BIN="${PERL_BIN:-$HOME/micromamba/envs/bismark-test/bin/bismark_methylation_extractor}"
 command -v /usr/bin/time >/dev/null || { echo "GNU /usr/bin/time required" >&2; exit 2; }
 
