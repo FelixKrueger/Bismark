@@ -300,8 +300,178 @@ fn bwamem3_killed_engine_reports_exit_status() {
     bwamem3_cmd(&run)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("bwa-mem3"))
-        .stderr(predicate::str::contains("signal: 9").or(predicate::str::contains("137")));
+        .stderr(predicate::str::contains("bwa-mem3 exited with signal 9"))
+        .stderr(predicate::str::contains("ran out of memory"));
+}
+
+/// The likeliest crash, running out of memory while loading the index, happens before the header.
+#[cfg(unix)]
+#[test]
+fn bwamem3_killed_before_the_header_is_an_engine_failure_not_an_index_mismatch() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    write_exec(
+        &run.bins.path().join("bwa-mem3"),
+        "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.16.0; exit 0; }\nkill -9 $$\n",
+    );
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bwa-mem3 ended before writing its SAM header",
+        ))
+        .stderr(predicate::str::contains("bwa-mem3 exited with signal 9"))
+        .stderr(predicate::str::contains("does not match").not());
+}
+
+/// A plain non-zero exit names the status and gives no out-of-memory hint.
+#[cfg(unix)]
+#[test]
+fn bwamem3_nonzero_exit_names_the_status_without_an_oom_hint() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    custom_fake(&run, &format!("{PAIRS_AWK}\nexit 3"));
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("bwa-mem3 exited with status 3"))
+        .stderr(predicate::str::contains("exit status:").not())
+        .stderr(predicate::str::contains("out of memory").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_r2_with_more_reads_than_r1_is_an_error() {
+    let run = fake_run(&many_pairs(2), &[("chr1", 8)], SQ_OK);
+    fs::write(&run.r2, many_pairs(3)).unwrap();
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("has more reads than"));
+}
+
+#[cfg(unix)]
+#[test]
+fn bwamem3_empty_version_output_is_named() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 0\n");
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "`bwa-mem3 version` printed no version",
+        ));
+}
+
+/// The override notice is printed once per run, not once per mate-file pair.
+#[cfg(unix)]
+#[test]
+fn bwamem3_seed_prune_notice_is_printed_once_per_run() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let (r1b, r2b) = (
+        run.genome.path().join("s_1.fq"),
+        run.genome.path().join("s_2.fq"),
+    );
+    fs::write(&r1b, ONE_PAIR).unwrap();
+    fs::write(&r2b, ONE_PAIR).unwrap();
+    let out = bin()
+        .env("BWAMEM3_METH_SEED_PRUNE", "off")
+        .args(["--illumina_5base", "--bwamem3", "--five_base_index"])
+        .arg(&run.index)
+        .arg("--path_to_bwamem3")
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(run.out.path())
+        .arg("-1")
+        .arg(format!("{},{}", run.r1.display(), r1b.display()))
+        .arg("-2")
+        .arg(format!("{},{}", run.r2.display(), r2b.display()))
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert_eq!(
+        stderr.matches("BWAMEM3_METH_SEED_PRUNE is set").count(),
+        1,
+        "{stderr}"
+    );
+}
+
+/// A bwa-mem3 index left in the genome folder would be read as genome; it is named instead.
+#[cfg(unix)]
+#[test]
+fn bwamem3_index_fasta_in_the_genome_folder_is_named() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    fs::write(
+        run.genome.path().join("genome.fa.meth.fa"),
+        ">chr1\nATATATAT\n",
+    )
+    .unwrap();
+    bwamem3_cmd(&run)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("genome.fa.meth.fa"))
+        .stderr(predicate::str::contains("outside the --genome folder"));
+}
+
+/// Every pair lands in one standard report bucket, so they add up to the pairs analysed.
+#[cfg(unix)]
+#[test]
+fn bwamem3_report_buckets_add_up_with_rejected_pairs() {
+    let reads = "@good\nATGTAC\n+\nIIIIII\n@unmapped\nATGTAC\n+\nIIIIII\n\
+                 @samestrand\nATGTAC\n+\nIIIIII\n@outward\nATGTAC\n+\nIIIIII\n";
+    let run = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    custom_fake(
+        &run,
+        "printf 'good\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         good\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         unmapped\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tATGTAC\\tIIIIII\\n\
+         unmapped\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tATGTAC\\tIIIIII\\n\
+         samestrand\\t67\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         samestrand\\t131\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         outward\\t99\\tchr1\\t5\\t60\\t4M2S\\t=\\t1\\t0\\tATGTAC\\tIIIIII\\tAS:i:4\\n\
+         outward\\t147\\tchr1\\t1\\t60\\t4S2M\\t=\\t5\\t0\\tATGTAC\\tIIIIII\\tAS:i:2\\n'",
+    );
+    bwamem3_cmd(&run).assert().success();
+    let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
+    let n = |label: &str| -> u64 {
+        rep.lines()
+            .find(|l| l.starts_with(label))
+            .and_then(|l| l.rsplit('\t').next())
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no '{label}' line:\n{rep}"))
+    };
+    let analysed = n("Sequence pairs analysed in total:");
+    let unique = n("Number of paired-end alignments with a unique best hit:");
+    let none = n("Sequence pairs with no alignments under any condition:");
+    let ambiguous = n("Sequence pairs did not map uniquely:");
+    let discarded =
+        n("Sequence pairs which were discarded because genomic sequence could not be extracted:");
+    assert_eq!((analysed, unique, none), (4, 1, 3), "{rep}");
+    assert_eq!(unique + none + ambiguous + discarded, analysed, "{rep}");
+    assert_eq!(n("Proper pairs rejected"), 2, "{rep}");
+    assert_eq!(n("Dovetail overhang bases not called:"), 0, "{rep}");
+}
+
+/// A rejected pair does not claim a UMI key, so a later good pair with the same key is kept.
+#[cfg(unix)]
+#[test]
+fn bwamem3_rejected_pair_does_not_make_a_good_pair_a_umi_duplicate() {
+    let reads = "@bad\nATGTAC\n+\nIIIIII\n@good\nATGTAC\n+\nIIIIII\n";
+    let run = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    custom_fake(
+        &run,
+        "printf 'bad\\t67\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         bad\\t131\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         good\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         good\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tATGTAC\\tIIIIII\\tAS:i:6\\n'",
+    );
+    bwamem3_cmd(&run)
+        .args(["--five_base_umi_len", "2"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("removed 0 duplicate pair(s)"));
+    assert_eq!(bam_records(&run).len(), 2);
 }
 
 #[cfg(unix)]

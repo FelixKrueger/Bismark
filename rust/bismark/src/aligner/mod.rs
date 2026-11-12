@@ -1902,8 +1902,9 @@ impl EngineChild {
         self.reaped = true;
         if !status.success() {
             return Err(AlignerError::Validation(format!(
-                "{} exited with status {status}",
-                self.name
+                "{} exited with {}",
+                self.name,
+                describe_exit(status)
             )));
         }
         Ok(())
@@ -1922,17 +1923,32 @@ impl EngineChild {
         let ended = match status {
             Some(s) => {
                 self.reaped = true;
-                let oom = if s.success() {
-                    ""
-                } else {
-                    " (a kill by signal 9 usually means it ran out of memory)"
-                };
-                format!("; {} exited with {s}{oom}", self.name)
+                format!("; {} exited with {}", self.name, describe_exit(s))
             }
             None => String::new(),
         };
         AlignerError::Validation(format!("{} {what}{ended}", self.name))
     }
+}
+
+/// `status N` or `signal N`, with an out-of-memory hint for signal 9.
+fn describe_exit(status: std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("status {code}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            let oom = if sig == 9 {
+                " (a kill by signal 9 usually means it ran out of memory)"
+            } else {
+                ""
+            };
+            return format!("signal {sig}{oom}");
+        }
+    }
+    status.to_string()
 }
 
 impl Drop for EngineChild {
@@ -1999,8 +2015,8 @@ fn replace_minimap2_threads(opts: &str, n: usize) -> String {
 }
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
-/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`
-/// against the user's unconverted index. `reads` is always 2 (5-Base is paired-end).
+/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`;
+/// bwa-mem3: `mem <opts> <prefix> r1 r2`. `reads` is always 2 (5-Base is paired-end).
 fn five_base_build_argv(
     config: &RunConfig,
     opts: &str,
@@ -2197,7 +2213,7 @@ fn genome_contigs(genome: &Genome) -> Vec<(String, u64)> {
         .collect()
 }
 
-/// Read the next PRIMARY SAM record from minimap2's stdout, skipping `@` headers
+/// Read the next PRIMARY SAM record from the engine's stdout, skipping `@` headers
 /// and secondary (0x100) / supplementary (0x800) lines. `None` at EOF.
 fn five_base_next_primary<R: BufRead>(
     reader: &mut R,
@@ -2311,17 +2327,33 @@ fn five_base_emit_record(
 // ===========================================================================
 // #787 Illumina 5-Base PAIRED-END driver. Opt-in, never-silent, concordance-gated
 // (NOT byte-identical: Perl Bismark has no 5-Base oracle). It does NOT convert the
-// reads: minimap2 is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the
-// unconverted genome (bowtie2/hisat2 via `--five_base_index`);
+// reads: one engine runs in PE mode against the unconverted genome (minimap2 on the
+// FASTA; bowtie2/hisat2/bwa-mem3 on `--five_base_index`);
 // the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
 // byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
 // ===========================================================================
 
-/// Drive the 5-Base PE run: one minimap2 PE instance per mate-pair file against the
+/// Drive the 5-Base PE run: one engine instance per mate-pair file against the
 /// unconverted reference, lockstep with the original FastQ pair, emitting a Bismark
 /// `_pe.bam` + PE report. Mirrors `run_pe`'s setup.
 fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
     let started = Instant::now();
+    if let Some(f) = config.genome.fastas.iter().find(|f| {
+        f.file_name()
+            .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
+    }) {
+        return Err(AlignerError::Validation(format!(
+            "{} in the genome folder is a bwa-mem3 index file, not genome; keep the bwa-mem3 index \
+             outside the --genome folder",
+            f.display()
+        )));
+    }
+    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
+        eprintln!(
+            "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
+             --meth-seed-prune=spec30)."
+        );
+    }
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
     if config.aligner == Aligner::BwaMem3 {
@@ -2399,7 +2431,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         report::print_final_analysis_report_paired_ends(&mut report, &counters, true)?;
         writeln!(
             report,
-            "Proper pairs rejected (same strand, other contig, or R2 not proper):\t{}",
+            "Proper pairs rejected (same strand, other contig, pointing apart, or R2 not proper):\t{}",
             counters.five_base_pair_orientation_rejected
         )?;
         writeln!(
@@ -2481,8 +2513,8 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
     Ok(())
 }
 
-/// Spawn ONE minimap2 PE instance (`<opts> ref.fa r1.fq r2.fq`) and walk both FastQ
-/// files in lockstep with minimap2's primary records (two per pair, in input order).
+/// Spawn ONE 5-Base engine PE instance and walk both FastQ files in lockstep with its
+/// primary records (two per pair, in input order).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn five_base_align_and_call_pe(
     config: &RunConfig,
@@ -2497,12 +2529,6 @@ fn five_base_align_and_call_pe(
     let bin = &config.detected_aligner.path;
     let opts = five_base_aligner_options(config);
     let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
-    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
-        eprintln!(
-            "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
-             --meth-seed-prune=spec30)."
-        );
-    }
     let child = std::process::Command::new(bin)
         .args(&args)
         // The variable overrides bwa-mem3's --meth-seed-prune flag.
@@ -2528,7 +2554,11 @@ fn five_base_align_and_call_pe(
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
     if config.aligner == Aligner::BwaMem3 {
-        let sq = five_base_read_sq_header(&mut sam)?;
+        let sq = five_base_read_sq_header(&mut sam)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        if sq.is_empty() {
+            return Err(engine.failure("ended before writing its SAM header"));
+        }
         check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
     }
 
@@ -2597,9 +2627,9 @@ fn five_base_align_and_call_pe(
         let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
         let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
 
-        // UMI dedup (proper pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
+        // UMI dedup (accepted pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
         // R1 pos, R1 strand) was already seen.
-        if umi_len > 0 && rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 {
+        if umi_len > 0 && five_base_pair_geometry(rec1, rec2).is_some() {
             let u1: Vec<u8> = seq1_uc.iter().take(umi_len).copied().collect();
             let u2: Vec<u8> = seq2_uc.iter().take(umi_len).copied().collect();
             if !seen.insert((u1, u2, rec1.rname.clone(), rec1.pos, rec1.flag & 0x10)) {
@@ -2729,26 +2759,31 @@ fn cigar_ops(cigar: &str) -> Vec<(u64, u8)> {
 }
 
 /// Read bases of each mate past the other mate's 5' end (a dovetail overhang), as
-/// `(R1 trailing bases, R2 trailing bases, aligned bases among them)`, counted in read orientation.
-fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> (usize, usize, u64) {
-    let span = |r: &SamRecord| {
+/// `(R1 trailing bases, R2 trailing bases, aligned bases among them)`, counted in read orientation;
+/// `None` when the reverse mate ends at or before the forward mate starts (mates pointing apart).
+fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> Option<(usize, usize, u64)> {
+    let (fwd, rev, r1_forward) = if rec1.flag & 0x10 == 0 {
+        (rec1, rec2, true)
+    } else {
+        (rec2, rec1, false)
+    };
+    let (fwd_ops, rev_ops) = (cigar_ops(&fwd.cigar), cigar_ops(&rev.cigar));
+    let span = |r: &SamRecord, ops: &[(u64, u8)]| {
         let start = u64::from(r.pos.saturating_sub(1));
-        let len: u64 = cigar_ops(&r.cigar)
+        let len: u64 = ops
             .iter()
             .filter(|(_, op)| matches!(op, b'M' | b'D' | b'N' | b'=' | b'X'))
             .map(|(n, _)| n)
             .sum();
         (start, start + len)
     };
-    let (fwd, rev, r1_forward) = if rec1.flag & 0x10 == 0 {
-        (rec1, rec2, true)
-    } else {
-        (rec2, rec1, false)
-    };
-    let ((fs, _), (rs, re)) = (span(fwd), span(rev));
+    let ((fs, fe), (rs, re)) = (span(fwd, &fwd_ops), span(rev, &rev_ops));
+    if re <= fs {
+        return None;
+    }
     // The reverse mate's SEQ prefix left of the forward mate's start.
     let (mut q_rev, mut al_rev, mut rp) = (0u64, 0u64, rs);
-    for (n, op) in cigar_ops(&rev.cigar) {
+    for &(n, op) in &rev_ops {
         match op {
             b'S' => q_rev += n,
             b'M' | b'=' | b'X' => {
@@ -2770,8 +2805,8 @@ fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> (usize, usize,
         }
     }
     // The forward mate's SEQ suffix right of the reverse mate's end.
-    let (mut q_fwd, mut al_fwd, mut rp) = (0u64, 0u64, span(fwd).1);
-    for (n, op) in cigar_ops(&fwd.cigar).into_iter().rev() {
+    let (mut q_fwd, mut al_fwd, mut rp) = (0u64, 0u64, fe);
+    for &(n, op) in fwd_ops.iter().rev() {
         match op {
             b'S' => q_fwd += n,
             b'M' | b'=' | b'X' => {
@@ -2796,10 +2831,26 @@ fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> (usize, usize,
     let k_rev = if al_rev > 0 { q_rev as usize } else { 0 };
     let k_fwd = if al_fwd > 0 { q_fwd as usize } else { 0 };
     let aligned = al_rev + al_fwd;
-    if r1_forward {
+    Some(if r1_forward {
         (k_fwd, k_rev, aligned)
     } else {
         (k_rev, k_fwd, aligned)
+    })
+}
+
+/// The overhang lengths of a pair Bismark accepts: both mates mapped and flagged proper, on one
+/// contig, on opposite strands and pointing at each other; `None` for any other pair.
+fn five_base_pair_geometry(rec1: &SamRecord, rec2: &SamRecord) -> Option<(usize, usize, u64)> {
+    let accepted = rec1.flag & 0x2 != 0
+        && rec2.flag & 0x2 != 0
+        && rec1.flag & 0x4 == 0
+        && rec2.flag & 0x4 == 0
+        && rec1.rname == rec2.rname
+        && (rec1.flag ^ rec2.flag) & 0x10 != 0;
+    if accepted {
+        five_base_overhang_lens(rec1, rec2)
+    } else {
+        None
     }
 }
 
@@ -2832,12 +2883,11 @@ fn five_base_emit_pe_record(
         return Ok(None);
     }
     // R2's strand is derived from R1's below, so the pair must be FR/RF on one contig.
-    let concordant =
-        rec2.flag & 0x2 != 0 && rec1.rname == rec2.rname && (rec1.flag ^ rec2.flag) & 0x10 != 0;
-    if !concordant {
+    let Some((k1, k2, overhang)) = five_base_pair_geometry(rec1, rec2) else {
         counters.five_base_pair_orientation_rejected += 1;
+        counters.no_single_alignment_found += 1;
         return Ok(None);
-    }
+    };
     five_base_check_cigar_covers_read(identifier, "R1", &rec1.cigar, seq1_uc.len())?;
     five_base_check_cigar_covers_read(identifier, "R2", &rec2.cigar, seq2_uc.len())?;
     counters.unique_best_alignment_count += 1;
@@ -2878,7 +2928,6 @@ fn five_base_emit_pe_record(
         *b = b'N';
     }
     // Bases past the mate's 5' end are adapter read-through, not genome.
-    let (k1, k2, overhang) = five_base_overhang_lens(rec1, rec2);
     let n1 = call1.len();
     call1[n1.saturating_sub(k1)..].fill(b'N');
     let n2 = call2.len();
@@ -8445,56 +8494,106 @@ mod tests {
         let f = |pos: u32, cig: &str| sam(&format!("p\t99\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
         let r =
             |pos: u32, cig: &str| sam(&format!("p\t147\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
+        let lens = |a: &SamRecord, b: &SamRecord| five_base_overhang_lens(a, b).expect("inward");
         // Dovetail both ways: F [10,20), R [7,17).
-        assert_eq!(
-            five_base_overhang_lens(&f(11, "10M"), &r(8, "10M")),
-            (3, 3, 6)
-        );
+        assert_eq!(lens(&f(11, "10M"), &r(8, "10M")), (3, 3, 6));
         // R contained in F: F [0,10), R [2,6); F reads 4 bases past R's 5' end.
-        assert_eq!(
-            five_base_overhang_lens(&f(1, "10M"), &r(3, "4M")),
-            (4, 0, 4)
-        );
+        assert_eq!(lens(&f(1, "10M"), &r(3, "4M")), (4, 0, 4));
         // Ordinary FR pair.
-        assert_eq!(
-            five_base_overhang_lens(&f(1, "10M"), &r(6, "10M")),
-            (0, 0, 0)
-        );
+        assert_eq!(lens(&f(1, "10M"), &r(6, "10M")), (0, 0, 0));
         // R [7,15) with a leading soft clip and an insertion in the overhang: the clip is masked
         // with it but is not counted as aligned.
-        assert_eq!(
-            five_base_overhang_lens(&f(11, "10M"), &r(8, "2S2M1I6M")),
-            (5, 6, 9)
-        );
-        // R1 reverse (OB): the forward mate is R2.
+        assert_eq!(lens(&f(11, "10M"), &r(8, "2S2M1I6M")), (5, 6, 9));
+        // A deletion in R's overhang: R [7,20) as 2M3D8M; only the 2 bases left of 10 overhang.
+        assert_eq!(lens(&f(11, "10M"), &r(8, "2M3D8M")), (0, 2, 2));
+        // An insertion exactly at R's end belongs to the inward side: F [10,20) as 5M2I5M, R [7,15).
+        assert_eq!(lens(&f(11, "5M2I5M"), &r(8, "8M")), (5, 3, 8));
+        // R1 reverse (OB), asymmetric: R1 [7,17) reverse, R2 [10,22) forward.
         let r1 = sam("p\t83\tchr1\t8\t60\t10M\t=\t11\t0\t*\t*");
-        let r2 = sam("p\t163\tchr1\t11\t60\t10M\t=\t8\t0\t*\t*");
-        assert_eq!(five_base_overhang_lens(&r1, &r2), (3, 3, 6));
+        let r2 = sam("p\t163\tchr1\t11\t60\t12M\t=\t8\t0\t*\t*");
+        assert_eq!(lens(&r1, &r2), (3, 5, 8));
+    }
+
+    /// Mates pointing apart (the reverse mate ends at or before the forward mate starts) are
+    /// not a fragment.
+    #[test]
+    fn five_base_outward_pairs_have_no_overhang_geometry() {
+        let f = sam("p\t99\tchr1\t11\t60\t10M\t=\t1\t0\t*\t*");
+        for r in [
+            "p\t147\tchr1\t1\t60\t5M\t=\t11\t0\t*\t*",
+            "p\t147\tchr1\t6\t60\t5M\t=\t11\t0\t*\t*",
+        ] {
+            assert_eq!(five_base_overhang_lens(&f, &sam(r)), None, "{r}");
+        }
     }
 
     /// A dovetail overhang is adapter read-through: its bases are never called.
     #[test]
     fn five_base_dovetail_overhang_is_never_called() {
-        // A CHH C at 9; R1 "TTTTTT" over [4,10) reads it as T, which calls H.
-        let genome = five_base_genome("chr1", b"TTTTTTTTTCTTTTTTTT");
+        // CHH Cs at 3 and 9; every read base over them is T, which calls H.
+        let genome = five_base_genome("chr1", b"TTTCTTTTTCTTTTTTTT");
         let refid = build_refid(&genome);
         let r1 = sam("p\t99\tchr1\t5\t60\t6M\t=\t3\t6\tTTTTTT\tIIIIII\tAS:i:0");
         let xm = |r2: &SamRecord| {
             let mut c = Counters::default();
-            let (o1, _) = five_base_emit_pe_record(
+            let (o1, o2) = five_base_emit_pe_record(
                 &r1, r2, "p", b"TTTTTT", b"IIIIII", b"AAAAAA", b"IIIIII", &genome, &refid, false,
                 true, false, 0, 0, &mut c,
             )
             .unwrap()
             .expect("proper pair");
-            let xm = crate::io::tags::xm(o1.inner().data()).unwrap().to_vec();
-            (xm, c.five_base_overhang_bases_masked)
+            let x1 = crate::io::tags::xm(o1.inner().data()).unwrap().to_vec();
+            let x2 = crate::io::tags::xm(o2.inner().data()).unwrap().to_vec();
+            (x1, x2, c.five_base_overhang_bases_masked)
         };
+        // R1 [4,10), R2 [6,12): R2 calls the C at 9 too.
         let ordinary = sam("p\t147\tchr1\t7\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
-        assert_eq!(xm(&ordinary), (b".....H".to_vec(), 0));
-        // R2 over [2,8) ends before R1 does: R1's bases at 8 and 9 are past R2's 5' end.
+        assert_eq!(xm(&ordinary), (b".....H".to_vec(), b"...H..".to_vec(), 0));
+        // R2 [2,8): R1's bases at 8, 9 and R2's at 2, 3 are each past the mate's 5' end.
         let dovetail = sam("p\t147\tchr1\t3\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
-        assert_eq!(xm(&dovetail), (b"......".to_vec(), 4));
+        assert_eq!(xm(&dovetail), (b"......".to_vec(), b"......".to_vec(), 4));
+    }
+
+    /// The UMI is the 5' end of each mate in read orientation, so a reverse mate loses its
+    /// rightmost reference positions.
+    #[test]
+    fn five_base_umi_mask_covers_the_reverse_mate_5_prime_end() {
+        // A CHH C at 10, read as T by R2 over [6,12) at its 2nd read base.
+        let genome = five_base_genome("chr1", b"TTTTTTTTTTCTTTTTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t5\t60\t6M\t=\t7\t8\tTTTTTT\tIIIIII\tAS:i:0");
+        let r2 = sam("p\t147\tchr1\t7\t60\t6M\t=\t5\t-8\tTTTTTT\tIIIIII\tAS:i:0");
+        let xm2 = |umi_len: usize| {
+            let mut c = Counters::default();
+            let (_, o2) = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TTTTTT", b"IIIIII", b"AAAAAA", b"IIIIII", &genome, &refid, false,
+                true, false, 0, umi_len, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            crate::io::tags::xm(o2.inner().data()).unwrap().to_vec()
+        };
+        assert_eq!(xm2(0), b"....H.".to_vec());
+        assert_eq!(xm2(2), b"......".to_vec());
+    }
+
+    /// Pointing-apart pairs are rejected and count as no alignment, like same-strand pairs.
+    #[test]
+    fn five_base_emit_pe_rejects_outward_pairs_and_counts_them_as_no_alignment() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAATTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t11\t60\t4M\t=\t1\t0\tAACG\tIIII\tAS:i:0");
+        let r2 = sam("p\t147\tchr1\t1\t60\t4M\t=\t11\t0\tAACG\tIIII\tAS:i:0");
+        let mut c = Counters::default();
+        let out = five_base_emit_pe_record(
+            &r1, &r2, "p", b"AACG", b"IIII", b"CGTT", b"IIII", &genome, &refid, false, true, false,
+            0, 0, &mut c,
+        )
+        .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.five_base_pair_orientation_rejected, 1);
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
     }
 
     /// `five_base_next_primary` skips `@` headers + secondary (0x100) / supplementary

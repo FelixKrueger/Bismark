@@ -140,6 +140,16 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     if kind == Aligner::BwaMem3 && !parsed.as_deref().is_some_and(bwamem3_version_ok) {
         let found =
             parsed.unwrap_or_else(|| stdout.lines().next().unwrap_or("").trim().to_string());
+        if found.is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "`bwa-mem3 version` printed no version ({}); --illumina_5base --bwamem3 needs \
+                 bwa-mem3 >= {}.{}.{}.",
+                path.display(),
+                MIN_BWAMEM3_VERSION.0,
+                MIN_BWAMEM3_VERSION.1,
+                MIN_BWAMEM3_VERSION.2
+            )));
+        }
         return Err(AlignerError::Validation(format!(
             "bwa-mem3 {found} is too old or unrecognised: --illumina_5base --bwamem3 needs bwa-mem3 \
              >= {}.{}.{} (the first release with --meth=5base).",

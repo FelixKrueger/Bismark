@@ -6746,6 +6746,54 @@ fn five_base_pe_upto_terminates_with_a_large_engine_output() {
     );
 }
 
+/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
+/// of the calls.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_umi_bases_are_not_called() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idx = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idx.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let r1_xm = |umi: &str| {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .args(["--illumina_5base", "--bowtie2", "--five_base_umi_len", umi])
+            .arg("--five_base_index")
+            .arg(idx.path().join("puc"))
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .assert()
+            .success();
+        let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+        let r1_rec = recs
+            .iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1");
+        bismark::io::tags::xm(r1_rec.inner().data())
+            .unwrap()
+            .to_vec()
+    };
+    assert_eq!(r1_xm("0"), b".Z...z".to_vec());
+    assert_eq!(r1_xm("2"), b".....z".to_vec());
+}
+
 /// `--illumina_5base` PE end-to-end via minimap2: a read pair `ATGTAC`/`ATGTAC`
 /// vs genome `ACGTACGT`. The genomic C at position 2 (CpG, read as T) is
 /// METHYLATED in 5-Base logic (Z, inverted polarity). The CpG C at position 6

@@ -81,8 +81,8 @@ pub struct Counters {
     /// combined-mode SE report for visibility.
     pub combined_spurious_count: u64,
 
-    /// 5-Base only: pairs the engine marked proper that are same-strand, cross-contig, or
-    /// whose R2 is not flagged proper. Not written.
+    /// 5-Base only: pairs the engine marked proper that are same-strand, cross-contig, pointing
+    /// apart, or whose R2 is not flagged proper. Also counted as no alignment.
     pub five_base_pair_orientation_rejected: u64,
 
     /// 5-Base only: aligned read bases past the mate's 5' end, never called.
