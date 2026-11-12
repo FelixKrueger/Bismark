@@ -1018,6 +1018,32 @@ fn sam_output_is_deferred() {
         .stderr(predicate::str::contains("SAM output is not yet supported"));
 }
 
+/// `--rg_id`/`--rg_sample` alone (without `--rg_tag`) must be rejected too, not
+/// silently ignored.
+#[cfg(unix)]
+#[test]
+fn rg_id_and_rg_sample_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+
+    for flag in ["--rg_id", "--rg_sample"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args([flag, "S1"])
+            .arg(&read)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("--rg_tag/--rg_id/--rg_sample"));
+    }
+}
+
 // ---- paired-end layout validation (resolves before discovery; hermetic) ----
 
 #[test]
