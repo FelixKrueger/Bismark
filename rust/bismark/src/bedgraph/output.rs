@@ -14,7 +14,7 @@
 //! is uncompressed (Perl `:132`).
 
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Read, Write};
 use std::path::PathBuf;
 
 use flate2::Compression;
@@ -131,8 +131,7 @@ pub fn write_outputs_from_sorted(
 
             // bedGraph: chr, 0-based start, 1-based end, pct.
             writeln!(bedgraph, "{chr}\t{start}\t{pos}\t{pct}")?;
-            // coverage: chr, 1-based start = end, pct, meth, unmeth.
-            writeln!(coverage, "{chr}\t{pos}\t{pos}\t{pct}\t{meth}\t{unmeth}")?;
+            write_cov_line(&mut coverage, chr, pos, &pct, meth, unmeth)?;
             // zero: chr, 0-based start, 1-based end, pct, meth, unmeth.
             if let Some(z) = zero.as_mut() {
                 writeln!(z, "{chr}\t{start}\t{pos}\t{pct}\t{meth}\t{unmeth}")?;
@@ -150,9 +149,110 @@ pub fn write_outputs_from_sorted(
     Ok(())
 }
 
+/// One `.bismark.cov` line: chr, 1-based start = end, pct, meth, unmeth.
+fn write_cov_line(
+    w: &mut impl Write,
+    chr: &str,
+    pos: u32,
+    pct: &str,
+    meth: u32,
+    unmeth: u32,
+) -> std::io::Result<()> {
+    writeln!(w, "{chr}\t{pos}\t{pos}\t{pct}\t{meth}\t{unmeth}")
+}
+
+/// The `.bismark.cov` lines that [`write_outputs_from_sorted`] writes, generated
+/// from `sorted` on demand: coverage2cytosine reads them without re-reading the
+/// `.cov.gz` from disk.
+pub fn coverage_lines<'a>(
+    cfg: &'a ResolvedConfig,
+    sorted: &'a [ChrPositions],
+) -> impl BufRead + 'a {
+    let cutoff = cfg.cutoff;
+    let positions = sorted
+        .iter()
+        .flat_map(|(chr, ps)| ps.iter().map(move |&(pos, m, u)| (&**chr, pos, m, u)))
+        .filter(move |&(_, _, m, u)| m + u >= cutoff);
+    CoverageLines {
+        positions: Box::new(positions),
+        buf: Vec::new(),
+        at: 0,
+    }
+}
+
+struct CoverageLines<'a> {
+    positions: Box<dyn Iterator<Item = (&'a str, u32, u32, u32)> + 'a>,
+    buf: Vec<u8>,
+    at: usize,
+}
+
+impl BufRead for CoverageLines<'_> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        if self.at == self.buf.len() {
+            self.buf.clear();
+            self.at = 0;
+            while self.buf.len() < 64 * 1024 {
+                let Some((chr, pos, m, u)) = self.positions.next() else {
+                    break;
+                };
+                let pct = format_g15(m as f64 / (m + u) as f64 * 100.0);
+                write_cov_line(&mut self.buf, chr, pos, &pct, m, u)?;
+            }
+        }
+        Ok(&self.buf[self.at..])
+    }
+
+    fn consume(&mut self, n: usize) {
+        self.at = (self.at + n).min(self.buf.len());
+    }
+}
+
+impl Read for CoverageLines<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.fill_buf()?.read(out)?;
+        self.consume(n);
+        Ok(n)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn coverage_lines_are_the_cov_file_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        use clap::Parser;
+        let mut cfg = crate::bedgraph::Cli::try_parse_from([
+            "bismark2bedGraph",
+            "-o",
+            "s.bedGraph",
+            "--dir",
+            dir.path().to_str().unwrap(),
+            "--cutoff",
+            "2",
+            "CpG_x.txt",
+        ])
+        .unwrap()
+        .validate()
+        .unwrap();
+        cfg.output_dir = dir.path().to_path_buf();
+        let sorted: Vec<ChrPositions> = vec![
+            ("chr1".into(), vec![(5, 1, 0), (9, 2, 1), (12, 0, 3)]),
+            ("chr2".into(), vec![(3, 7, 0)]),
+        ];
+        write_outputs_from_sorted(&cfg, &sorted).unwrap();
+        let mut file = String::new();
+        flate2::read::MultiGzDecoder::new(File::open(dir.path().join(&cfg.coverage_name)).unwrap())
+            .read_to_string(&mut file)
+            .unwrap();
+        let mut lines = String::new();
+        coverage_lines(&cfg, &sorted)
+            .read_to_string(&mut lines)
+            .unwrap();
+        assert_eq!(lines, file);
+        assert_eq!(lines.lines().count(), 3, "the cutoff drops chr1:5");
+    }
 
     /// A sink that fails every write/flush. `ParCompress` type-erases its sink
     /// (a worker thread owns it), so a `GzWriter` can wrap one — letting us

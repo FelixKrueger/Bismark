@@ -5,7 +5,8 @@
 //! 1. `$x =~ s/.*\///` — strip leading directory path.
 //! 2. `$x =~ s/\.gz$//; $x =~ s/\.sam$//; $x =~ s/\.bam$//; $x =~ s/\.txt$//`
 //!    — strip a single trailing extension. (Order matters: `.txt.gz` strips
-//!    `.gz` first, leaving `.txt`, then strips `.txt`.)
+//!    `.gz` first, leaving `.txt`, then strips `.txt`.) We also strip
+//!    `.cram`, which Perl does not read at all.
 //! 3. Append the appropriate suffix (`.deduplicated.bam`,
 //!    `.multiple.deduplicated.bam`, etc.) — done by the caller.
 //!
@@ -30,8 +31,9 @@ use std::path::Path;
 ///    can strip at most one trailing extension. The chain together can
 ///    strip up to TWO extensions in practice (e.g. `.txt.gz` → strip
 ///    `.gz` first → strip `.txt` → final stem). Implementation is a
-///    `for ext in [".gz", ".sam", ".bam", ".txt"]` loop with `strip_suffix`
-///    matching Perl's chain exactly.
+///    `for ext in [".gz", ".sam", ".bam", ".cram", ".txt"]` loop with
+///    `strip_suffix` matching Perl's chain, plus `.cram` (Perl has no CRAM
+///    input, so there is no parity constraint).
 ///
 /// # Examples
 ///
@@ -69,7 +71,7 @@ pub fn derive_output_stem(input: &Path, user_outfile: Option<&str>) -> String {
     // Perl's chain is sequential `s/\.gz$//; s/\.sam$//; s/\.bam$//; s/\.txt$//`;
     // each `s///` operates on the result of the previous.
     let mut stem = base.to_string();
-    for ext in [".gz", ".sam", ".bam", ".txt"] {
+    for ext in [".gz", ".sam", ".bam", ".cram", ".txt"] {
         if let Some(stripped) = stem.strip_suffix(ext) {
             stem = stripped.to_string();
         }
@@ -186,13 +188,16 @@ mod tests {
     }
 
     #[test]
+    fn strips_cram_extension() {
+        // Not in Perl's list (Perl reads no CRAM); stripped like .bam.
+        assert_eq!(derive_output_stem(Path::new("sample.cram"), None), "sample");
+    }
+
+    #[test]
     fn unknown_extension_left_intact() {
-        // .cram is not in Perl's strip list — left intact. The output-
-        // filename derivation downstream will append `.deduplicated.bam`
-        // (or `.cram` in the v1.0 CRAM-mirror path, handled elsewhere).
         assert_eq!(
-            derive_output_stem(Path::new("sample.cram"), None),
-            "sample.cram"
+            derive_output_stem(Path::new("sample.fastq"), None),
+            "sample.fastq"
         );
     }
 

@@ -102,7 +102,8 @@ fn write_bam(path: &Path, records: &[RecordBuf]) {
 /// the qname); for SE input, each record contributes one. Deduplication
 /// via HashSet ensures the caller sees the *set* of retained reads/pairs.
 fn read_qnames(path: &Path) -> Vec<String> {
-    let mut reader = bismark::io::open_reader(path, None).unwrap();
+    // Unchecked: outputs of coordinate-sorted SE input keep `SO:coordinate`.
+    let mut reader = bismark::io::open_reader_without_sort_check(path, None).unwrap();
     let qnames: HashSet<String> = reader
         .records()
         .map(|r| {
@@ -413,6 +414,54 @@ fn se_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
     ];
     expected.sort();
     assert_eq!(retained, expected);
+}
+
+/// Regression: coordinate-sorted SE input used to be rejected. Perl runs
+/// `test_positional_sorting` only for paired-end input, so SE must succeed
+/// (serial and `--parallel`) while PE still errors.
+#[test]
+fn coordinate_sorted_input_accepted_for_se_rejected_for_pe() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("sorted.bam");
+    let header: Header = "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:1000000\n"
+        .parse()
+        .unwrap();
+    let mut writer = BamWriter::from_path(&input, header).unwrap();
+    for record in [se_ot("r0", 1000), se_ot("r1", 2000), se_ot("r1_dup", 2000)] {
+        writer
+            .write_record(&BismarkRecord::from_noodles_record(record).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+
+    for parallel in ["1", "2"] {
+        let out_dir = dir.path().join(format!("se_p{parallel}"));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        Command::cargo_bin("deduplicate_bismark")
+            .unwrap()
+            .arg("--single")
+            .arg("--parallel")
+            .arg(parallel)
+            .arg("--output_dir")
+            .arg(&out_dir)
+            .arg(&input)
+            .assert()
+            .success();
+        assert_eq!(
+            read_qnames(&out_dir.join("sorted.deduplicated.bam")),
+            vec!["r0".to_string(), "r1".to_string()]
+        );
+    }
+
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("coordinate-sorted"));
 }
 
 /// Regression: `--sam --parallel N` on BAM input used to route to the threaded
@@ -1641,12 +1690,9 @@ fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
         .count();
     assert_eq!(warning_count, 1, "CRAM warning must appear exactly once");
 
-    // v1.0 output-naming: for CRAM input, the stem keeps the `.cram`
-    // extension (filename.rs:194-195), so the output is BAM-named
-    // `<input>.cram.deduplicated.bam`. CRAM-mirror output is README-
-    // aspirational, not implemented in v1.0; the important contract here
-    // is the dedup correctness on the single-threaded fallback path.
-    let out_path = dir.path().join("input.cram.deduplicated.bam");
+    // For CRAM input the stem drops `.cram` like `.bam`, and the output is
+    // BAM: `<input>.deduplicated.bam`.
+    let out_path = dir.path().join("input.deduplicated.bam");
     assert!(
         out_path.exists(),
         "expected dedup output at {}",

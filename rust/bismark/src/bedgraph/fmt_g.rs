@@ -3,6 +3,10 @@
 //! default NV stringification; the 2-dp rounding line `:602` is commented
 //! out). This is THE byte-identity linchpin (SPEC §2.3).
 //!
+//! `bismark2summary` reuses it for the **unmethylated** percentage arrays
+//! (`100 - "<%.2f meth%>"` stringified with `%.15g`, which drops trailing
+//! zeros: `100 - "50.00"` → `"50"`).
+//!
 //! Approach (validated by plan-review Reviewer B against C `printf("%.15g")`
 //! across 2,003,000 fractions + all scientific-notation boundary cases,
 //! 0 mismatches): format with Rust's `{:.14e}` (15 significant figures),
@@ -101,6 +105,24 @@ mod tests {
         }
     }
 
+    /// bismark2summary's `100 - %.2f` complement (the unmethylated-percentage
+    /// contract, summary SPEC §2.9a): round to `%.2f`, re-parse, subtract from
+    /// 100, `%.15g`.
+    #[test]
+    fn unmeth_complement_drops_trailing_zeros() {
+        let complement = |meth_pct_2dp: &str| {
+            let m: f64 = meth_pct_2dp.parse().unwrap();
+            format_g15(100.0 - m)
+        };
+        assert_eq!(complement("50.00"), "50");
+        assert_eq!(complement("100.00"), "0");
+        assert_eq!(complement("0.00"), "100");
+        assert_eq!(complement("12.34"), "87.66");
+        assert_eq!(complement("12.30"), "87.7");
+        // The FP-artifact case both reviewers verified bit-exact vs Perl.
+        assert_eq!(complement("99.99"), "0.0100000000000051");
+    }
+
     #[test]
     fn scientific_boundary_at_exp_minus_five() {
         // 1 in 2,000,000 → 0.00005 → 5e-05 (E = -5, scientific).
@@ -121,6 +143,7 @@ mod tests {
         assert_eq!(trim_trailing_zeros("5.00000000000000"), "5");
         assert_eq!(trim_trailing_zeros("33.3333333333333"), "33.3333333333333");
         assert_eq!(trim_trailing_zeros("100.000000000000"), "100");
+        assert_eq!(trim_trailing_zeros("87.7000000000000"), "87.7");
         assert_eq!(
             trim_trailing_zeros("0.000666666666666667"),
             "0.000666666666666667"

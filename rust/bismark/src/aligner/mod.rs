@@ -81,6 +81,7 @@ use crate::aligner::align::{
 };
 use crate::aligner::aux_out::AuxKind;
 use crate::aligner::config::{Aligner, LibraryType, Mm2Preset, ReadFormat, ReadLayout, ScoreModel};
+use crate::aligner::convert::open_reader;
 use crate::aligner::genome::{Genome, read_genome_into_memory};
 use crate::aligner::merge::{
     BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
@@ -387,10 +388,11 @@ fn check_merged(
 /// fails loud (pass the collated PE uBAM positionally instead); uBAM + `--fasta`
 /// is rejected (BAM carries qualities → FASTQ).
 ///
-/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<i>/` so the
-/// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
-/// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
-/// Returns the created subdirs for the caller to clean up after the pipeline.
+/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<pid>.<i>/` so
+/// the temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
+/// same-basename uBAMs, or two concurrent runs sharing a temp dir, can't collide.
+/// Returns the created subdirs for the caller to clean up after the pipeline; on a
+/// transcode failure the subdirs made so far are removed here.
 /// An alternative (non-FASTQ/FASTA) read-input backend: a binary format that is
 /// detected, then **transcoded to a temp FASTQ** and fed to the byte-frozen
 /// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
@@ -502,6 +504,12 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
+    let pid = std::process::id();
+    let remove_dirs = |dirs: &[PathBuf]| {
+        for d in dirs {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
 
     let decoder_idx = |path: &str| decoders.iter().position(|d| d.detect(Path::new(path)));
 
@@ -575,11 +583,13 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let (r1, r2) = dec.transcode_pe(Path::new(r), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let (r1, r2) = dec
+                .transcode_pe(Path::new(r), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             mates1.push(r1.to_string_lossy().into_owned());
             mates2.push(r2.to_string_lossy().into_owned());
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
@@ -595,10 +605,12 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let temp = dec.transcode_se(Path::new(read), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let temp = dec
+                .transcode_se(Path::new(read), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             *read = temp.to_string_lossy().into_owned();
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::SingleEnd { reads: new_reads };
         config.format = ReadFormat::FastQ;
@@ -1336,16 +1348,7 @@ fn process_se_chunk(
         let pbat = matches!(config.library, LibraryType::Pbat);
         let mut readers: Vec<Option<Box<dyn BufRead>>> = se_instance_plan(config.library)
             .into_iter()
-            .map(|(_o, _i, file_idx)| {
-                let path = &converted[file_idx].path;
-                let f = File::open(path)?;
-                let r: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-                    Box::new(BufReader::new(MultiGzDecoder::new(f)))
-                } else {
-                    Box::new(BufReader::new(f))
-                };
-                Ok(Some(r))
-            })
+            .map(|(_o, _i, file_idx)| Ok(Some(open_reader(&converted[file_idx].path)?)))
             .collect::<Result<Vec<_>>>()?;
         let mut streams = build_se_inprocess_streams(config, &mut readers)?;
         drive_merge(
@@ -1988,12 +1991,7 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
         .join(".bismark_5base_concat_ref.fa");
     let mut out = BufWriter::new(File::create(&tmp)?);
     for f in fastas {
-        let file = File::open(f)?;
-        let mut r: Box<dyn BufRead> = if f.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        };
+        let mut r = open_reader(f)?;
         std::io::copy(&mut r, &mut out)?;
         out.write_all(b"\n")?; // guard against a missing trailing newline between files
     }
@@ -2284,8 +2282,8 @@ fn five_base_align_and_call_pe(
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
 
-    let mut r1 = open_maybe_gz(read_1)?;
-    let mut r2 = open_maybe_gz(read_2)?;
+    let mut r1 = open_reader(read_1)?;
+    let mut r2 = open_reader(read_2)?;
     let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
     let mut count: u64 = 0;
     // #787 UMI dedup (PE): key on both mates' UMIs + the R1 chrom/pos/strand.
@@ -3288,16 +3286,6 @@ fn run_five_base_consensus(
     Ok(())
 }
 
-/// Open a (optionally gzipped) reader.
-fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
-    if path.to_string_lossy().ends_with(".gz") {
-        Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
-    } else {
-        Ok(Box::new(BufReader::new(file)))
-    }
-}
-
 /// Read one 4-line FastQ record (owned id/seq/plus/qual lines incl. trailing `\n`),
 /// or `None` at EOF / a truncated final record.
 #[allow(clippy::type_complexity)]
@@ -3517,12 +3505,7 @@ fn drive_merge<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader = open_reader(read_file)?;
     let directional = matches!(config.library, LibraryType::Directional);
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
@@ -5713,16 +5696,6 @@ fn open_pe_sinks(
         unmapped_2,
         ambiguous_1,
         ambiguous_2,
-    })
-}
-
-/// Open a FastQ reader (gz or plain) for the PE lockstep.
-fn open_reader(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
-    Ok(if path.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
     })
 }
 

@@ -24,8 +24,8 @@ use flate2::write::GzEncoder;
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::summary::ContextSummary;
+use crate::io::genome::Genome;
 
 /// Output sink for a report file — plain or gzip, with an explicit `finish()`
 /// (Phase C). The context summary is never routed through this (always plain).
@@ -420,12 +420,16 @@ fn write_chromosome_report(
 /// Generate the genome-wide cytosine report(s) + context summary. Dispatches
 /// to the single-file path (default; gz-wrapped under `--gzip`) or the
 /// per-chromosome path (`--split_by_chromosome`).
-pub fn run_report(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
+pub fn run_report(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
     // Create the output directory if a non-empty prefix was given (Perl mkdir).
     if !config.output_dir.is_empty() {
         std::fs::create_dir_all(&config.output_dir)?;
     }
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+    let mut reader = open_cov()?;
     let mut summary = ContextSummary::new();
     if config.split_by_chromosome {
         run_split(config, genome, reader.as_mut(), &mut summary)
@@ -1194,7 +1198,7 @@ mod tests {
             [b">chr1\n".as_slice(), &seq, b"\n"].concat(),
         )
         .unwrap();
-        let genome = Genome::load(t.path()).unwrap();
+        let genome = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let mut buf = HashMap::new();
         for p in (1..seq.len() as u32).step_by(3) {
             buf.insert(p, (p % 7, p % 5 + 1));

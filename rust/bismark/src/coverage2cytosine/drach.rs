@@ -34,12 +34,16 @@ use std::path::PathBuf;
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::report::{self, ReportWriter, perl_substr, revcomp};
+use crate::io::genome::Genome;
 
 /// Standalone DRACH/m6A early-exit mode (Perl `generate_DRACH_report`).
-pub fn run_drach(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+pub fn run_drach(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
+    let mut reader = open_cov()?;
     if config.split_by_chromosome {
         run_drach_split(config, genome, reader.as_mut())
     } else {
@@ -433,7 +437,7 @@ mod tests {
             [b">chr1\n".as_slice(), seq, b"\n"].concat(),
         )
         .unwrap();
-        Genome::load(dir).unwrap()
+        Genome::load(dir, &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap()
     }
 
     /// Read a plain or gzip output file back to a string.
