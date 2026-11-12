@@ -191,6 +191,11 @@ pub struct Cli {
     #[arg(short = 'g', long = "genome_folder")]
     pub genome_folder: Option<PathBuf>,
 
+    /// Reference FASTA (with a sibling `.fai`) used to decode CRAM input.
+    /// Required when any input file is CRAM; ignored for BAM/SAM.
+    #[arg(long = "cram_ref")]
+    pub cram_ref: Option<PathBuf>,
+
     /// Report all C-contexts (not just CpG) in the coverage/bedGraph and the
     /// cytosine_report. Valid with --bedGraph or --cytosine_report; significant
     /// runtime increase.
@@ -351,6 +356,8 @@ pub struct ResolvedConfig {
     pub ample_memory: bool,
     /// Genome folder for cytosine_report (mandatory when cytosine_report set).
     pub genome_folder: Option<PathBuf>,
+    /// CRAM reference FASTA, if `--cram_ref` was supplied.
+    pub cram_ref: Option<PathBuf>,
     /// Rayon worker thread count (Phase F).
     pub parallel: usize,
     /// Suppress informational stderr log (#882). Errors/warnings still print.
@@ -559,6 +566,7 @@ impl Cli {
             gazillion: self.gazillion,
             ample_memory: self.ample_memory,
             genome_folder: self.genome_folder,
+            cram_ref: self.cram_ref,
             parallel: self.parallel as usize,
             quiet: self.quiet,
             verbose: self.verbose,

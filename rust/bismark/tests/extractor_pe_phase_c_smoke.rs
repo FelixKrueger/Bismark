@@ -27,7 +27,7 @@ use noodles_sam::alignment::record::cigar::Op;
 use noodles_sam::alignment::record::cigar::op::Kind;
 use noodles_sam::alignment::record::data::field::Tag;
 use noodles_sam::alignment::record_buf::data::field::Value;
-use noodles_sam::alignment::record_buf::{Cigar, RecordBuf, Sequence};
+use noodles_sam::alignment::record_buf::{Cigar, QualityScores, RecordBuf, Sequence};
 use noodles_sam::header::record::value::Map;
 use noodles_sam::header::record::value::map::header::Version;
 use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
@@ -72,6 +72,8 @@ fn synth_record(
     let mut record = RecordBuf::default();
     *record.flags_mut() = Flags::from(flags);
     *record.sequence_mut() = Sequence::from(seq.to_vec());
+    // Real Bismark output always has QUAL; the CRAM round-trip needs it too.
+    *record.quality_scores_mut() = QualityScores::from(vec![30u8; seq.len()]);
     *record.alignment_start_mut() = Some(Position::try_from(alignment_start).unwrap());
     *record.reference_sequence_id_mut() = Some(refid);
     *record.cigar_mut() = Cigar::from(vec![Op::new(Kind::Match, xm.len())]);
@@ -98,8 +100,16 @@ fn synth_record(
 /// the corrected `>` both happened to drop — making the smoke pass by
 /// coincidence with a stale rationale. C.1 reworks to space R2 PAST R1.
 fn write_pe_directional_bam(path: &std::path::Path) {
-    let header = header_with_bismark_pe_pg();
-    let mut writer = BamWriter::from_path(path, header).unwrap();
+    let mut writer = BamWriter::from_path(path, header_with_bismark_pe_pg()).unwrap();
+    for r in pe_directional_records() {
+        writer.write_record(&r).unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// The records behind [`write_pe_directional_bam`].
+fn pe_directional_records() -> Vec<BismarkRecord> {
+    let mut records = Vec::new();
     for i in 0..10 {
         let qname = format!("pair_{i}");
         let r1_start = 100 + i * 200;
@@ -129,10 +139,44 @@ fn write_pe_directional_bam(path: &std::path::Path) {
             0x81, // paired + last
             0,
         );
-        writer.write_record(&r1).unwrap();
-        writer.write_record(&r2).unwrap();
+        records.push(r1);
+        records.push(r2);
     }
-    writer.finish().unwrap();
+    records
+}
+
+/// Write [`pe_directional_records`] as CRAM 3.1 with the read names in
+/// rANS Nx16 order-1, a CRAM 3.1 codec `samtools view -C` uses by default.
+/// Its decoder keeps large tables on the stack (#1167 finding 33).
+fn write_pe_directional_cram31(path: &std::path::Path, fasta: &std::path::Path) {
+    use noodles_cram::codecs::{Encoder, rans_nx16};
+    use noodles_cram::container::BlockContentEncoderMap;
+    use noodles_cram::container::compression_header::data_series_encodings::DataSeries;
+    use noodles_sam::alignment::io::Write as _;
+
+    let fasta_reader = noodles_fasta::io::indexed_reader::Builder::default()
+        .build_from_path(fasta)
+        .unwrap();
+    let repo = noodles_fasta::Repository::new(
+        noodles_fasta::repository::adapters::IndexedReader::new(fasta_reader),
+    );
+    let encoders = BlockContentEncoderMap::builder()
+        .set_data_series_encoder(
+            DataSeries::Names,
+            Some(Encoder::RansNx16(rans_nx16::Flags::ORDER)),
+        )
+        .build();
+    let header = header_with_bismark_pe_pg();
+    let mut writer = noodles_cram::io::writer::Builder::default()
+        .set_reference_sequence_repository(repo)
+        .set_block_content_encoder_map(encoders)
+        .build_from_path(path)
+        .unwrap();
+    writer.write_header(&header).unwrap();
+    for r in pe_directional_records() {
+        writer.write_alignment_record(&header, r.inner()).unwrap();
+    }
+    writer.finish(&header).unwrap();
 }
 
 #[test]
@@ -232,6 +276,74 @@ fn smoke_pe_explicit_paired_end_flag_works() {
     let report = fs::read_to_string(output_dir.join("pe_explicit_splitting_report.txt")).unwrap();
     // Phase C.2 (#864): PE sequences_count = pair count (10 pairs).
     assert!(report.contains("Processed 10 lines in total"));
+}
+
+/// #1167 finding 33: CRAM input must extract via `--cram_ref`, with output
+/// byte-identical to the same records as BAM. Covers mode auto-detection
+/// (which peeks the header), the `.cram` basename strip, and CRAM 3.1
+/// decoding on the producer thread's stack.
+#[test]
+fn smoke_pe_cram_input_matches_bam() {
+    let workdir = tempfile::tempdir().unwrap();
+    // All-`N` chr1 (header length 10_000) + `.fai`: CRAM only needs the span.
+    let fasta = workdir.path().join("ref.fa");
+    let mut fa = b">chr1\n".to_vec();
+    fa.extend(std::iter::repeat_n(b'N', 10_000));
+    fa.push(b'\n');
+    fs::write(&fasta, fa).unwrap();
+    fs::write(
+        workdir.path().join("ref.fa.fai"),
+        "chr1\t10000\t6\t10000\t10001\n",
+    )
+    .unwrap();
+
+    let snapshot = |input: &std::path::Path, out: &std::path::Path| {
+        Command::cargo_bin("bismark_methylation_extractor")
+            .unwrap()
+            .arg(input)
+            .arg("--cram_ref")
+            .arg(&fasta)
+            .arg("--output_dir")
+            .arg(out)
+            // CRAM decode needs a fixed ~1 MiB (debug) / ~2.5 MiB (release) of
+            // stack, independent of input size. A debug build fits the 2 MiB
+            // default, so shrink the default to catch a producer thread that
+            // does not set its own stack size. BAM-only work needs <128 KiB.
+            .env("RUST_MIN_STACK", "524288")
+            .assert()
+            .success();
+        let mut files = std::collections::BTreeMap::new();
+        for entry in fs::read_dir(out).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let mut text = fs::read_to_string(&path).unwrap();
+            // The splitting report's first line echoes the input file name.
+            if name.ends_with("_splitting_report.txt") {
+                text = text.split_once('\n').unwrap().1.to_string();
+            }
+            files.insert(name, text);
+        }
+        files
+    };
+
+    // Same basename `pe` in both, so file names match after the suffix strip.
+    let bam_dir = workdir.path().join("bam");
+    let cram_dir = workdir.path().join("cram");
+    fs::create_dir_all(&bam_dir).unwrap();
+    fs::create_dir_all(&cram_dir).unwrap();
+    let bam = bam_dir.join("pe.bam");
+    let cram = cram_dir.join("pe.cram");
+    write_pe_directional_bam(&bam);
+    write_pe_directional_cram31(&cram, &fasta);
+
+    let from_bam = snapshot(&bam, &bam_dir.join("out"));
+    let from_cram = snapshot(&cram, &cram_dir.join("out"));
+    assert!(
+        from_bam.contains_key("CpG_OT_pe.txt"),
+        "expected CpG_OT_pe.txt; got {:?}",
+        from_bam.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(from_bam, from_cram, "CRAM output must match BAM output");
 }
 
 #[test]

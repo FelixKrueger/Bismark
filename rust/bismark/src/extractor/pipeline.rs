@@ -80,7 +80,7 @@ pub fn derive_basename(path: &Path) -> String {
 /// Perl, which only sort-checks paired-end). Mirrors the SE arm of
 /// `parallel.rs::run_pipeline`.
 pub fn extract_se(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
-    let mut reader = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
+    let mut reader = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
     // `--allow_discordant` in SE mode enables only the io-layer 0x900 skip
     // (a general aligner's SE output has supplementaries too). Default no-op.
     if config.allow_discordant {
@@ -250,7 +250,7 @@ fn fold_skip_counts(state: &mut ExtractState, sc: crate::io::SkipCounts) {
 /// On any pre-finalize error, runs [`ExtractState::cleanup_partial_outputs`]
 /// to remove all 12 partial files before propagating.
 pub fn extract_pe(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkExtractorError> {
-    let mut reader = open_reader(input, /*cram_ref=*/ None)?;
+    let mut reader = open_reader(input, config.cram_ref.as_deref())?;
     if config.allow_discordant {
         reader.set_filter(crate::io::RecordFilter {
             drop_secondary: true,

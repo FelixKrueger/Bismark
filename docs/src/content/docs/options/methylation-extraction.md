@@ -25,6 +25,10 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   Input file(s) are Bismark result file(s) generated from paired-end read data. If neither `-s` nor `-p` is set the type of experiment will be determined automatically.
 
+- `--cram_ref <path>`
+
+  Reference FastA file used to decode CRAM input. It must be the reference the CRAM was written against and needs a `.fai` index next to it (`samtools faidx`). Required when any input file is CRAM; ignored for BAM/SAM input.
+
 - `--allow_discordant`
 
   Accept output from other bisulfite aligners carrying Bismark-format `XM`/`XR`/`XG` tags. In paired-end mode, process discordant and cross-chromosome pairs independently and extract mapped reads whose mate is absent or unmapped; skip and count secondary and supplementary alignments. In single-end mode, only the secondary/supplementary filtering applies. Default: OFF.
