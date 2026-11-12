@@ -71,7 +71,7 @@ As its default option, `bismark extract` will produce a strand-specific output w
     OB    –  original bottom strand
     CTOB  –  complementary to original bottom strand
 
-Methylation calls from OT and CTOT will be informative for cytosine methylation positions on the original top strand, calls from OB and CTOB will be informative for cytosine methylation positions on the original bottom strand. Please note that specifying the `--directional` (the default mode) option in the Bismark alignment step will not report any alignments to the CTOT or CTOB strands.
+Methylation calls from OT and CTOT will be informative for cytosine methylation positions on the original top strand, calls from OB and CTOB will be informative for cytosine methylation positions on the original bottom strand. Please note that the Bismark alignment step in its default directional mode (i.e. without `--non_directional` or `--pbat`) will not report any alignments to the CTOT or CTOB strands.
 
 As cytosines can exist in any of three different sequence contexts (CpG, CHG or CHH) the `bismark extract` default output will consist of 12 individual output files per input file (`CpG_OT_...`, `CpG_CTOT_...`, `CpG_OB_...` etc.).
 
@@ -190,11 +190,11 @@ bismark extract --gzip sample_bismark_bt2_pe.bam
 The methylation extractor can also auto-detect the alignment mode and will set the options above automatically. A typical command including the optional `bedGraph` output could look like this:
 
 ```
-bismark extract --gzip --bedGraph --buffer_size 10G sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph sample_bismark_bt2.bam
 ```
 
 A typical command including the optional genome-wide cytosine methylation report could look like this:
 
 ```
-bismark extract --gzip --bedGraph --buffer_size 10G --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
+bismark extract --gzip --bedGraph --cytosine_report --genome_folder /path_to_genome_folder/ sample_bismark_bt2.bam
 ```
