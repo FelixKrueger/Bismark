@@ -6852,6 +6852,96 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
     write_exec(&dir.join("bowtie2"), script);
 }
 
+/// `--upto` must stop the 5-Base engine even when its output outgrows the pipe buffer.
+#[cfg(unix)]
+#[test]
+fn five_base_pe_upto_terminates_with_a_large_engine_output() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base_pe(bins.path());
+    let reads: String = (0..5000)
+        .map(|i| format!("@p{i}\nATGTAC\n+\nIIIIII\n"))
+        .collect();
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &reads).unwrap();
+    fs::write(&r2, &reads).unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--upto")
+        .arg("10")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
+    assert!(
+        report.contains("Sequence pairs analysed in total:\t10\n"),
+        "{report}"
+    );
+}
+
+/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
+/// of the calls.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_umi_bases_are_not_called() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idx = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idx.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let r1_xm = |umi: &str| {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .args(["--illumina_5base", "--bowtie2", "--five_base_umi_len", umi])
+            .arg("--five_base_index")
+            .arg(idx.path().join("puc"))
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .assert()
+            .success();
+        let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+        let r1_rec = recs
+            .iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1");
+        bismark::io::tags::xm(r1_rec.inner().data())
+            .unwrap()
+            .to_vec()
+    };
+    assert_eq!(r1_xm("0"), b".Z...z".to_vec());
+    assert_eq!(r1_xm("2"), b".....z".to_vec());
+}
+
 /// `--illumina_5base` PE end-to-end via minimap2: a read pair `ATGTAC`/`ATGTAC`
 /// vs genome `ACGTACGT`. The genomic C at position 2 (CpG, read as T) is
 /// METHYLATED in 5-Base logic (Z, inverted polarity). The CpG C at position 6

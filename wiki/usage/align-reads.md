@@ -1,39 +1,36 @@
 ---
 type: usage
 title: Align reads
-description: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, see how the converted reads reach the aligner, and run 5-Base data.
+description: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, and see how the converted reads reach the aligner.
 tags: [alignment, bowtie2, hisat2, minimap2, library-type, 5-base]
 page_id: align-reads
 subject_status: current
-updated: 2026-11-07
+updated: 2026-11-12
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: f64426c
-  - repo: FelixKrueger/Bismark
-    path: rust/bismark/src/aligner/methylation.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: f64426c
+    commit: 0882360
 ---
 
 # Align reads
@@ -122,25 +119,13 @@ The name comes from the first read file with `.fastq.gz`, `.fq.gz`, `.fastq` or 
 
 ## 5-Base data
 
-`--illumina_5base` handles the Illumina 5-Base chemistry, which converts methylated C to T. The aligner aligns the raw reads to the unconverted genome, and the call has inverted polarity: a read T at a genomic C means methylated (`methylation_call` in `aligner/methylation.rs`). The XM vocabulary stays the same.
-
-```
-bismark --illumina_5base --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
-```
-
-- Paired-end, directional, FastQ only (`resolve` in `aligner/config.rs`).
-- minimap2 `-x sr` against the genome FASTA is the default. For Bowtie 2 or HISAT2, add `--bowtie2` or `--hisat2` with `--five_base_index <basename>` of a normal, unconverted index. A bisulfite `BS_CT`/`BS_GA` index is rejected.
-- Bowtie 2 and HISAT2 take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`, `--quiet`, `--phred33-quals`, `--phred64-quals`, and `--local` for Bowtie 2). The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local`. Bowtie 2 gets `--maxins 800` unless `-X` is given, rejects an `-I` above that maximum, and never gets `--dovetail`. HISAT2 always gets `--no-spliced-alignment` and never `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected (`build_five_base_aligner_options` and `default_linear_score` in `aligner/options.rs`).
-- Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
-- Optional outputs, each next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`).
-- `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning.
-
-5-Base output is not byte-identical to any Perl output, because Perl Bismark has no 5-Base mode.
+`--illumina_5base` aligns Illumina 5-Base reads (methylated C read as T) with minimap2, Bowtie 2, HISAT2 or bwa-mem3 against the unconverted genome: see [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## Links
 
 - [reference/aligner-cli.md](../reference/aligner-cli.md): every option, its default and the combinations that stop the run.
 - [reference/bam-output.md](../reference/bam-output.md): the records in the BAM.
+- [usage/align-5-base-reads.md](align-5-base-reads.md): Illumina 5-Base data.
 - [troubleshooting.md](../troubleshooting.md): low mapping efficiency.
 
 ## Open questions

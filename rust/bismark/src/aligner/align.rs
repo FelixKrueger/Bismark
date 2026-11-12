@@ -273,6 +273,9 @@ fn build_se_argv(
             args.push(mmi);
             args.push(input.as_os_str().to_owned());
         }
+        Aligner::BwaMem3 => {
+            unreachable!("bwa-mem3 is 5-Base only; resolve rejects it for bisulfite alignment")
+        }
     }
     args
 }
@@ -312,6 +315,9 @@ fn build_pe_argv(
             "minimap2 paired-end (and the minimap-like rammap) is rejected at resolve \
              (no trustworthy oracle); build_pe_argv must not be reached for minimap2/rammap"
         ),
+        Aligner::BwaMem3 => {
+            unreachable!("bwa-mem3 is 5-Base only; resolve rejects it for bisulfite alignment")
+        }
     }
 }
 

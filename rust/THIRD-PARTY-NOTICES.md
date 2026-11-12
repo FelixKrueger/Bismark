@@ -15,6 +15,7 @@ them (the user supplies them on `PATH`).
 | Bowtie 2 | 2.5.5 | GPL-3.0 | https://github.com/BenLangmead/bowtie2 |
 | HISAT2 | 2.2.2 | GPL-3.0 | https://github.com/DaehwanKimLab/hisat2 |
 | minimap2 | 2.31-r1302 | MIT | https://github.com/lh3/minimap2 |
+| bwa-mem3 | 0.16.0 | MIT | https://github.com/fg-labs/bwa-mem3 |
 | samtools / htslib | 1.23.1 | MIT/Expat | https://github.com/samtools/samtools |
 
 Each tool's full license text is available in its upstream repository and (in the
