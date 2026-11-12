@@ -1690,12 +1690,9 @@ fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
         .count();
     assert_eq!(warning_count, 1, "CRAM warning must appear exactly once");
 
-    // v1.0 output-naming: for CRAM input, the stem keeps the `.cram`
-    // extension (filename.rs:194-195), so the output is BAM-named
-    // `<input>.cram.deduplicated.bam`. CRAM-mirror output is README-
-    // aspirational, not implemented in v1.0; the important contract here
-    // is the dedup correctness on the single-threaded fallback path.
-    let out_path = dir.path().join("input.cram.deduplicated.bam");
+    // For CRAM input the stem drops `.cram` like `.bam`, and the output is
+    // BAM: `<input>.deduplicated.bam`.
+    let out_path = dir.path().join("input.deduplicated.bam");
     assert!(
         out_path.exists(),
         "expected dedup output at {}",
