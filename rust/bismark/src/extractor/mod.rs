@@ -197,6 +197,14 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
                 }
             })?;
             drop(probe);
+            // Mode-dependent checks Perl runs after auto-detection (1217, 1334).
+            // Under AutoDetect `no_overlap == !include_overlap`.
+            if !is_paired && !config.no_overlap {
+                return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
+            }
+            if is_paired && config.output_mode == OutputMode::Yacht {
+                return Err(BismarkExtractorError::YachtRequiresSingleEnd);
+            }
             if is_paired {
                 // PE re-opens with the checking constructor → coordinate-sorted
                 // PE input is rejected here with `UnsortedInput`.
