@@ -24,11 +24,11 @@ A space-separated list of Bismark result files in BAM/SAM format.
 
 #### OPTIONS:
 
-- `-s/--single-end`
+- `-s/--single`
 
   Deduplicate single-end BAM/SAM Bismark files. Default: [AUTO-DETECT]
 
-- `-p/--paired-end`
+- `-p/--paired`
 
   Deduplicate paired-end BAM/SAM Bismark files. Default: [AUTO-DETECT]
 

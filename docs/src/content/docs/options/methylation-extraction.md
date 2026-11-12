@@ -13,7 +13,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `<filenames>`
 
-A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads. For alignment files in the older custom Bismark output see option `--vanilla`.
+A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads.
 
 #### OPTIONS:
 
@@ -24,10 +24,6 @@ A space-separated list of Bismark result files in SAM format from which methylat
 - `-p/--paired-end`
 
   Input file(s) are Bismark result file(s) generated from paired-end read data. If neither `-s` nor `-p` is set the type of experiment will be determined automatically.
-
-- `--vanilla`
-
-  The Bismark result input file(s) are in the old custom Bismark format (up to version 0.5.x) and not in SAM format which is the default as of Bismark version 0.6.x or higher. Default: OFF.
 
 - `--allow_discordant`
 
@@ -82,7 +78,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
   Suppresses the Bismark version header line in all output files for more convenient batch processing.
 
-- `-o/--output DIR`
+- `-o/--output_dir DIR`
 
   Allows specification of a different output directory (absolute or relative path). If not specified explicitly, the output will be written to the current directory.
 
@@ -118,7 +114,7 @@ A space-separated list of Bismark result files in SAM format from which methylat
 
 - `--bedGraph`
 
-  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The methylation extractor output is temporarily split up into temporary files, one per chromosome (written into the current directory or folder specified with `-o/--output`); these temp files are then used for sorting and deleted afterwards. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
+  After finishing the methylation extraction, the methylation output is written into a sorted `bedGraph` file that reports the position of a given cytosine and its methylation state (in %, see details below) using 0-based genomic start and 1-based end coordinates. The calls are aggregated and sorted in memory; no temporary files are written. By default, only cytosines in CpG context are sorted. The option `--CX_context` may be used to report all cytosines irrespective of sequence context (this will take _MUCH_ longer!). The `bedGraph` conversion step is performed by the `bismark bedgraph` subcommand.
 
 - `--zero_based`
 
@@ -170,9 +166,9 @@ The minimum number of times any methylation state (methylated or unmethylated) h
 
   Writes the output into individual files for each chromosome instead of a single output file. Files are named to include the input filename as well as the chromosome number.
 
-- `--ffs`
+- `--ffs` (`bismark cov2cyt` only)
 
-  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. This option needs to be run via `bismark cov2cyt`.
+  In addition to the standard output this option also extracts a **f**our-, **f**ive- and **s**ix-nucleotide context for the cytosines in question. Hexamers follow the rule `xxCxxx`. Too short sequences (e.g. at the edges of the chromosome) are left blank; sequences containing Ns are ignored. `bismark extract` does not accept this option; run `bismark cov2cyt --ffs` on the coverage file instead.
 
   ```
   Example:
