@@ -1494,9 +1494,10 @@ pub(crate) struct CollectorOutcome {
     /// before the channel disconnected. Equals `n_workers` on a clean
     /// shutdown; less means at least one worker exited without notifying.
     pub finaldeltas_received: usize,
-    /// First (by lowest `(batch_seq, within_idx)`) Err the collector saw, if
-    /// any. That tuple order is isomorphic to the old `input_idx` order, so the
-    /// selected Err — hence stderr — is byte-identical to the per-record path.
+    /// First Err the collector saw, if any. The collector emits in strict
+    /// `(batch_seq, within_idx)` order (isomorphic to the old `input_idx`), so
+    /// the first Err is the lowest-position one — the same Err (hence stderr)
+    /// as the per-record path.
     /// Excludes the synthetic "missing FinalDelta" error — that decision is the
     /// caller's because they can see worker panic info too.
     pub best_err: Option<BismarkExtractorError>,
@@ -1505,6 +1506,10 @@ pub(crate) struct CollectorOutcome {
 /// Collector loop: receive WorkerOutput, reorder by input_idx, write to
 /// OutputFileMap in strict input order. Merges per-worker M-bias +
 /// SplittingReport deltas at end-of-stream.
+///
+/// Stops at the first Err (like the serial path and Perl): returning drops
+/// `rx_output`, so workers' sends fail and they exit, which drops `rx_input`
+/// and stops the producer — the rest of the input is not read.
 ///
 /// **Returns `CollectorOutcome` (not `Result`) so the caller can pick the
 /// most-specific error message** when both a worker panic and a missing-
@@ -1521,33 +1526,28 @@ fn collector_loop(
     let mut reorder_buf: BTreeMap<u64, Vec<WorkerOutputItem>> = BTreeMap::new();
     let mut next_emit_seq: u64 = 0;
     let mut finaldeltas_received: usize = 0;
-    let mut best_err: Option<((u64, usize), BismarkExtractorError)> = None;
+    let mut best_err: Option<BismarkExtractorError> = None;
 
-    loop {
+    'collect: loop {
         match rx_output.recv() {
             Ok(WorkerOutput::Batch { batch_seq, results }) => {
                 reorder_buf.insert(batch_seq, results);
                 // Drain in-order batches from the front of the buffer.
                 while let Some(items) = reorder_buf.remove(&next_emit_seq) {
-                    for (within_idx, item) in items.into_iter().enumerate() {
+                    for item in items {
                         match item {
                             WorkerOutputItem::Ok { routed_calls } => {
                                 for routed in &routed_calls {
                                     if let Err(e) = write_routed_call(state, routed, chr_table) {
-                                        // Stash the write error keyed by its
-                                        // global position; continue draining.
-                                        update_best_err(
-                                            &mut best_err,
-                                            (next_emit_seq, within_idx),
-                                            e,
-                                        );
+                                        best_err = Some(e);
+                                        break 'collect;
                                     }
                                 }
                             }
                             WorkerOutputItem::Err { error } => {
-                                // Err item keeps its slot; feed to selection,
-                                // do not write. (Producer- or worker-side.)
-                                update_best_err(&mut best_err, (next_emit_seq, within_idx), error);
+                                // Producer- or worker-side Err: do not write.
+                                best_err = Some(error);
+                                break 'collect;
                             }
                         }
                     }
@@ -1581,25 +1581,7 @@ fn collector_loop(
 
     CollectorOutcome {
         finaldeltas_received,
-        best_err: best_err.map(|(_, e)| e),
-    }
-}
-
-/// Update `best_err` to keep the lowest-`(batch_seq, within_idx)` Err seen so
-/// far. The tuple's derived lexicographic `Ord` is isomorphic to the old
-/// `input_idx` order, so "lowest wins" reproduces today's lowest-`input_idx`
-/// choice. Deterministic across worker arrival order → byte-identical stderr.
-fn update_best_err(
-    best: &mut Option<((u64, usize), BismarkExtractorError)>,
-    candidate_key: (u64, usize),
-    candidate_err: BismarkExtractorError,
-) {
-    match best {
-        None => *best = Some((candidate_key, candidate_err)),
-        Some((existing_key, _)) if candidate_key < *existing_key => {
-            *best = Some((candidate_key, candidate_err));
-        }
-        Some(_) => {} // keep existing (smaller-or-equal key)
+        best_err,
     }
 }
 
@@ -1651,77 +1633,6 @@ fn write_routed_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn update_best_err_picks_lowest_global_key() {
-        let mut best: Option<((u64, usize), BismarkExtractorError)> = None;
-
-        // First error: (batch 1, idx 0)
-        update_best_err(
-            &mut best,
-            (1, 0),
-            BismarkExtractorError::InternalError {
-                message: "b1i0".to_string(),
-            },
-        );
-        assert_eq!(best.as_ref().unwrap().0, (1, 0));
-
-        // Second error: (batch 0, idx 2) — earlier batch wins even though its
-        // within-idx is larger (lexicographic: batch_seq dominates).
-        update_best_err(
-            &mut best,
-            (0, 2),
-            BismarkExtractorError::InternalError {
-                message: "b0i2".to_string(),
-            },
-        );
-        assert_eq!(best.as_ref().unwrap().0, (0, 2));
-
-        // Third error: (batch 0, idx 5) — same batch, higher idx → NOT replace.
-        update_best_err(
-            &mut best,
-            (0, 5),
-            BismarkExtractorError::InternalError {
-                message: "b0i5".to_string(),
-            },
-        );
-        assert_eq!(best.as_ref().unwrap().0, (0, 2)); // unchanged
-
-        // Fourth error: (batch 0, idx 1) — same batch, lower idx → replace.
-        update_best_err(
-            &mut best,
-            (0, 1),
-            BismarkExtractorError::InternalError {
-                message: "b0i1".to_string(),
-            },
-        );
-        assert_eq!(best.as_ref().unwrap().0, (0, 1));
-    }
-
-    #[test]
-    fn update_best_err_equal_key_keeps_existing() {
-        let mut best: Option<((u64, usize), BismarkExtractorError)> = None;
-        update_best_err(
-            &mut best,
-            (5, 3),
-            BismarkExtractorError::InternalError {
-                message: "first".to_string(),
-            },
-        );
-        update_best_err(
-            &mut best,
-            (5, 3),
-            BismarkExtractorError::InternalError {
-                message: "second".to_string(),
-            },
-        );
-        // First wins on equality.
-        if let Some((_, BismarkExtractorError::InternalError { message })) = &best {
-            assert_eq!(message, "first");
-        } else {
-            panic!("expected InternalError");
-        }
-    }
 
     // ─────────────────────────────────────────────────────────────────────
     // #878 Tests 2–3: parallel worker M-bias accumulator slots are rebased.
@@ -2103,5 +2014,68 @@ mod tests {
         }
 
         worker.join().expect("worker should exit cleanly");
+    }
+
+    /// #1167 finding 10: the collector stops at the first Err (like the serial
+    /// path and Perl) instead of draining the whole input. Real workers + a
+    /// fake producer that sends an Err batch first, then many more batches:
+    /// the collector returns that Err, the dropped channels stop workers and
+    /// producer, and the producer manages only a channel-capacity's worth of
+    /// sends (it sent all of them when the collector kept draining).
+    #[test]
+    fn collector_stops_pipeline_at_first_error() {
+        let out = tempfile::tempdir().unwrap();
+        let config = config_with(&["--single-end", "-o", out.path().to_str().unwrap()]);
+        let mut state =
+            ExtractState::new(&config, Path::new("sample.bam"), "sample", false).unwrap();
+        let chr_table: Arc<[String]> = Arc::from(vec!["chr1".to_string()].into_boxed_slice());
+        let n_workers = 2;
+        let total_batches: u64 = 10_000;
+
+        let (tx_input, rx_input) = crossbeam_channel::bounded::<InputBatch>(n_workers * 4);
+        let (tx_output, rx_output) = crossbeam_channel::bounded::<WorkerOutput>(n_workers * 4);
+        let workers: Vec<_> = (0..n_workers)
+            .map(|_| {
+                let (rx, tx) = (rx_input.clone(), tx_output.clone());
+                let (cfg, ct) = (config.clone(), Arc::clone(&chr_table));
+                std::thread::spawn(move || worker_loop(rx, tx, cfg, ct))
+            })
+            .collect();
+        drop(rx_input);
+        drop(tx_output);
+
+        let producer = std::thread::spawn(move || {
+            let mut sent = 0u64;
+            for batch_seq in 0..total_batches {
+                let items = if batch_seq == 0 {
+                    vec![WorkerInputItem::Err {
+                        error: BismarkExtractorError::InternalError {
+                            message: "first".to_string(),
+                        },
+                    }]
+                } else {
+                    Vec::new()
+                };
+                if tx_input.send(InputBatch { batch_seq, items }).is_err() {
+                    break;
+                }
+                sent += 1;
+            }
+            sent
+        });
+
+        let outcome = collector_loop(&mut state, rx_output, &chr_table, n_workers);
+        match outcome.best_err {
+            Some(BismarkExtractorError::InternalError { message }) => assert_eq!(message, "first"),
+            _ => panic!("expected the first Err"),
+        }
+        for w in workers {
+            w.join().expect("worker exits once the collector is gone");
+        }
+        let sent = producer.join().unwrap();
+        assert!(
+            sent < 100,
+            "producer should stop early, but sent {sent} of {total_batches} batches"
+        );
     }
 }

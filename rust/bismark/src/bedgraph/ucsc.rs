@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
 use flate2::Compression;
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 
 use crate::bedgraph::cli::ResolvedConfig;
@@ -32,7 +32,7 @@ fn ucsc_chr(chr: &str) -> String {
 /// Write the UCSC bedGraph by re-reading the bedGraph already on disk.
 pub fn write_ucsc(cfg: &ResolvedConfig) -> Result<(), BismarkBedgraphError> {
     let in_file = File::open(cfg.output_dir.join(&cfg.bedgraph_name))?;
-    let mut reader = BufReader::new(GzDecoder::new(in_file));
+    let mut reader = BufReader::new(MultiGzDecoder::new(in_file));
 
     let mut out = GzEncoder::new(
         File::create(cfg.output_dir.join(&cfg.ucsc_name))?,
