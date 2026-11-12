@@ -5,23 +5,23 @@ description: Build the C-to-T and G-to-A converted genome and its indexes once, 
 tags: [genome, index, bowtie2, hisat2, minimap2]
 page_id: prepare-a-genome
 subject_status: current
-updated: 2026-10-12
+updated: 2026-11-12
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/cli.rs
-    commit: 65b183a
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/discovery.rs
-    commit: 65b183a
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/folders.rs
-    commit: 65b183a
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/indexer.rs
-    commit: 65b183a
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/discovery.rs
-    commit: 65b183a
+    commit: 0882360
 ---
 
 # Prepare a genome
@@ -72,7 +72,7 @@ If `Bisulfite_Genome/` already exists, the tool prints a warning and overwrites 
 | `--large-index` | Forces a large Bowtie 2 / HISAT2 index. Not with `--minimap2`. |
 | `--combined_genome` | Also builds the combined index. |
 
-5-Base runs do not need this step: `--illumina_5base` reads the genome FASTA directly, or a normal (unconverted) index. See [usage/align-reads.md](align-reads.md).
+5-Base runs do not need this step: `--illumina_5base` reads the genome FASTA directly, a normal (unconverted) Bowtie 2 or HISAT2 index, or, with `--bwamem3`, a `bwa-mem3 index --meth` index. See [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## Links
 
