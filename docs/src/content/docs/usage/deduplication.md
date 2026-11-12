@@ -40,6 +40,6 @@ This option is equivalent to using [UmiBam](https://github.com/FelixKrueger/Umi-
 
 ### Deduplication of multiple files of the same library
 
-When using the option `--multiple`, all specified input files are treated as a **single** sample and concatenated together for deduplication. This uses Unix `cat` for SAM files and `samtools cat` for BAM files.
+When using the option `--multiple`, all specified input files are treated as a **single** sample and concatenated together for deduplication. The files are read one after the other as one stream; no `cat` or `samtools cat` is run.
 
-Additional notes for BAM files: Although this works on either BAM or CRAM, all input files must be the same format as each other. The sequence dictionary of each input file must be identical, although this command does not check this. By default the header is taken from the first file to be concatenated.
+Additional notes for BAM files: Although this works on either BAM or CRAM, all input files must be the same format as each other. Every input must have the same `@SQ` names in the same order as the first file; otherwise the run stops with an error. By default the header is taken from the first file to be concatenated.

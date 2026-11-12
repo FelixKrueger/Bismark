@@ -1057,6 +1057,32 @@ fn sam_output_is_deferred() {
         .stderr(predicate::str::contains("SAM output is not yet supported"));
 }
 
+/// `--rg_id`/`--rg_sample` alone (without `--rg_tag`) must be rejected too, not
+/// silently ignored.
+#[cfg(unix)]
+#[test]
+fn rg_id_and_rg_sample_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+
+    for flag in ["--rg_id", "--rg_sample"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args([flag, "S1"])
+            .arg(&read)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("--rg_tag/--rg_id/--rg_sample"));
+    }
+}
+
 // ---- paired-end layout validation (resolves before discovery; hermetic) ----
 
 #[test]
@@ -3972,6 +3998,45 @@ fn combined_index_ot_read_end_to_end() {
     let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
     assert_eq!(v(*b"XR"), Some(Value::String("CT".into())));
     assert_eq!(v(*b"XG"), Some(Value::String("CT".into())));
+}
+
+/// A combined-index aligner whose read names stop matching the input must fail
+/// loud (as the faithful path does), not turn every later read into a no-alignment.
+#[cfg(unix)]
+#[test]
+fn combined_index_read_name_desync_is_an_error() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Emits every read under a mangled name (`<id>_X`), so no group ever matches.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "_X\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF"; }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot", "r_ob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "returned read names that stop matching the input at read 1",
+        ));
 }
 
 /// THE OB→1 REGRESSION: a combined-index OB read (rev + `_GA_converted`) must map
