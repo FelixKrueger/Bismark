@@ -420,12 +420,16 @@ fn write_chromosome_report(
 /// Generate the genome-wide cytosine report(s) + context summary. Dispatches
 /// to the single-file path (default; gz-wrapped under `--gzip`) or the
 /// per-chromosome path (`--split_by_chromosome`).
-pub fn run_report(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
+pub fn run_report(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
     // Create the output directory if a non-empty prefix was given (Perl mkdir).
     if !config.output_dir.is_empty() {
         std::fs::create_dir_all(&config.output_dir)?;
     }
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+    let mut reader = open_cov()?;
     let mut summary = ContextSummary::new();
     if config.split_by_chromosome {
         run_split(config, genome, reader.as_mut(), &mut summary)
