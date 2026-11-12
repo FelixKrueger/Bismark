@@ -54,7 +54,7 @@ The output will be written out in SAM format. Default: OFF.
 
 - `--multiple`
 
-All specified input files are treated as one sample and concatenated together for deduplication. This uses Unix `cat` for SAM files and `samtools cat` for BAM files. Additional notes for BAM files:	Although this works on either BAM or CRAM, all input files must be the same format as each other. The sequence dictionary of each input file must be identical, although this command does not check this. By default the header is taken from the first file to be concatenated.
+All specified input files are treated as one sample and concatenated together for deduplication. The files are read one after the other as one stream; no `cat` or `samtools cat` is run. Additional notes for BAM files:	Although this works on either BAM or CRAM, all input files must be the same format as each other. Every input must have the same `@SQ` names in the same order as the first file; otherwise the run stops with an error. By default the header is taken from the first file to be concatenated.
 
 - `--samtools_path [path]`
 
