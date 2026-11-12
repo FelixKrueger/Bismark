@@ -799,7 +799,11 @@ fn fill_md_nm(
 
     let (nm_tag, md_tag) = (Tag::EDIT_DISTANCE, Tag::MISMATCHED_POSITIONS);
     let data = rec.data();
-    if rec.flags().is_unmapped() || (data.get(&nm_tag).is_some() && data.get(&md_tag).is_some()) {
+    // SEQ `*` has no bases to compare, so nothing can be regenerated.
+    if rec.flags().is_unmapped()
+        || rec.sequence().as_ref().is_empty()
+        || (data.get(&nm_tag).is_some() && data.get(&md_tag).is_some())
+    {
         return Ok(rec);
     }
     let (Some(id), Some(start)) = (rec.reference_sequence_id(), rec.alignment_start()) else {
@@ -1053,6 +1057,31 @@ mod tests {
                 .insert(SORT_ORDER, BString::from(so_bytes.to_vec()));
         }
         noodles_sam::Header::builder().set_header(hd).build()
+    }
+
+    fn fill_md_nm_for(sam_line: &str) -> RecordBuf {
+        let sam = format!("@SQ\tSN:chr1\tLN:8\n{sam_line}\n");
+        let mut reader = noodles_sam::io::Reader::new(Cursor::new(sam.into_bytes()));
+        let header = reader.read_header().unwrap();
+        let mut rec = RecordBuf::default();
+        reader.read_record_buf(&header, &mut rec).unwrap();
+        let repo = noodles_fasta::Repository::new(vec![noodles_fasta::Record::new(
+            noodles_fasta::record::Definition::new("chr1", None),
+            noodles_fasta::record::Sequence::from(b"ACGTACGT".to_vec()),
+        )]);
+        fill_md_nm(rec, &header, &repo).unwrap()
+    }
+
+    #[test]
+    fn fill_md_nm_regenerates_tags_but_skips_records_without_seq() {
+        use noodles_sam::alignment::record::data::field::Tag;
+        let rec = fill_md_nm_for("r1\t0\tchr1\t1\t60\t4M\t*\t0\t0\tACGA\tIIII");
+        assert!(rec.data().get(&Tag::EDIT_DISTANCE).is_some());
+        assert!(rec.data().get(&Tag::MISMATCHED_POSITIONS).is_some());
+
+        let rec = fill_md_nm_for("r2\t0\tchr1\t1\t60\t4M\t*\t0\t0\t*\t*");
+        assert!(rec.data().get(&Tag::EDIT_DISTANCE).is_none());
+        assert!(rec.data().get(&Tag::MISMATCHED_POSITIONS).is_none());
     }
 
     // ─────────────── from_extension (legacy extension dispatch) ───────────────
