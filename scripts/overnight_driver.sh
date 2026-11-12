@@ -33,7 +33,7 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE="$OUT_DIR/staged"; CSV="$OUT_DIR/results.csv"; LOG="$OUT_DIR/driver.log"
 mkdir -p "$STAGE" "$OUT_DIR/byteid" "$OUT_DIR/perf"
-export RUST_BIN="${RUST_BIN:-$HOME/Github/Bismark/rust/target/release/bismark-methylation-extractor-rs}"
+export RUST_BIN="${RUST_BIN:-$SCRIPT_DIR/../rust/target/release/bismark_methylation_extractor}"
 export PERL_BIN="${PERL_BIN:-$HOME/micromamba/envs/bismark-test/bin/bismark_methylation_extractor}"
 DEDUP_BIN="${DEDUP_BIN:-$HOME/micromamba/envs/bismark-test/bin/deduplicate_bismark}"
 

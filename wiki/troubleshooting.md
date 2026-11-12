@@ -1,48 +1,54 @@
 ---
 type: troubleshooting
 title: Troubleshooting
-description: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, M-bias, the errors that stop a run, and the warnings that do not.
+description: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, M-bias, the errors that stop a run (including bwa-mem3 errors), and the warnings that do not.
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-09
+updated: 2026-11-12
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 3a88185
+    commit: 0882360
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/config.rs
+    commit: 0882360
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/aligner.rs
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 3a88185
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: 3a88185
+    commit: 0882360
 ---
 
 # Troubleshooting
@@ -83,13 +89,13 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 
 ## 5-Base: low coverage at methylated CpG islands
 
-- **Cause in the code.** 5-Base runs give the raw reads to minimap2 or Bowtie 2 against the unconverted genome, with the engine's normal scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` in `aligner/options.rs`). Each methylated CpG is then a mismatch. Bowtie 2 aligns end-to-end with a fixed score limit, `--score_min L,0,-0.6` by default (`default_linear_score` in `aligner/options.rs`), so a read with many methylated CpGs falls below it. The same read unmethylated stays above it.
+- **Cause in the code.** 5-Base runs without `--bwamem3` give the raw reads to minimap2 or Bowtie 2 against the unconverted genome, with the engine's normal scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` in `aligner/options.rs`). Each methylated CpG is then a mismatch. Bowtie 2 aligns end-to-end with a fixed score limit, `--score_min L,0,-0.6` by default (`default_linear_score` in `aligner/options.rs`), so a read with many methylated CpGs falls below it. The same read unmethylated stays above it.
 - **What the developer measured** on the NA12878 and HG002 demo data:
   - CpGs up to about 9 per 151 bp are unaffected.
   - Partly methylated CpGs at 15 or more per 151 bp read 6–11 points low.
   - The densest CpGs that are ≥80% methylated keep 40–50% of the expected coverage.
   - Both engines are affected.
-- **What helps.** No option in the code fixes it. Expect methylated CpG islands (imprinted regions, the inactive X, hypermethylated islands) to be under-covered. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse.
+- **What helps.** Align with `--bwamem3`, which runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`): see [usage/align-5-base-reads.md](usage/align-5-base-reads.md). The developer measured that it keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 or Bowtie 2, expect methylated CpG islands (imprinted regions, the inactive X, hypermethylated islands) to be under-covered. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse.
 
 ## M-bias
 
@@ -108,6 +114,12 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `--include_overlap requires --paired-end` | Overlap option without `-p` | Add `-p` |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
 | `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
+| `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | Build it with `bwa-mem3 index --meth <genome.fa>` and pass that FASTA path as `--five_base_index` |
+| `the bwa-mem3 index does not match the genome folder` (or `output header`) | The index was built from another FASTA or assembly; contig names or lengths differ (`check_contigs_match` in `aligner/mod.rs`) | Rebuild the index from the FASTA in the `--genome` folder |
+| `bwa-mem3 ended before writing its SAM header; bwa-mem3 exited with signal 9` | bwa-mem3 was killed while loading its index, usually for lack of memory (`five_base_align_and_call_pe`, `describe_exit` in `aligner/mod.rs`) | Give the job more memory |
+| `<file>.meth.fa in the genome folder is a bwa-mem3 index file` | The bwa-mem3 index sits in the `--genome` folder (`run_pe_five_base` in `aligner/mod.rs`) | Move the index to its own folder |
+| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.16.0, or pass `--path_to_bwamem3 <dir>` |
+| `<R2> has fewer reads than <R1>` (or `more`), `<engine> produced more records than read pairs` | In a 5-Base run, R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`) | Check that the two files are mates from one run, and read the engine's own errors |
 | `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
 | `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |
 | `… (streamed run; if an aligner wrapper … use --no_stream_converted)` | An aligner instance failed in a streamed run; the suffix is added to such an error unless it already names `--no_stream_converted` (`with_wrapper_hint` in `aligner/stream.rs`) | Read the message before the suffix first. If a wrapper or another process reads the input before the aligner, re-run with `--no_stream_converted`; for gzipped input, also check it with `gzip -t` |

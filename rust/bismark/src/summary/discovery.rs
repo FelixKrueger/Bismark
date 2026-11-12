@@ -4,9 +4,9 @@
 //! derive the names of each sample's text report files. This module mirrors
 //! Perl `bismark2summary:152-367`:
 //!
-//! - **Discovery** (`:152-205`): explicit `@ARGV` verbatim, else four globs
-//!   in a fixed order, each sorted with Perl's **case-folded** glob
-//!   collation (spike-confirmed: case-fold-primary, raw-bytes-secondary,
+//! - **Discovery** (`:152-205`): explicit `@ARGV` verbatim, else Perl's
+//!   four globs (plus mm2/rammap) in a fixed order, each sorted with Perl's
+//!   **case-folded** glob collation (spike-confirmed: case-fold-primary, raw-bytes-secondary,
 //!   locale/platform-invariant — `SPIKE_glob_sort_order.md`).
 //! - **Derivation** (`:251-367`): `.bam` strip, `_pe` ⇒ PE, and the
 //!   `_PE/_SE_report.txt`, `deduplication_report.txt`, and (dedup-existence
@@ -20,13 +20,20 @@ use std::path::{Path, PathBuf};
 
 use crate::summary::error::BismarkSummaryError;
 
-/// The four auto-detect glob suffixes, in Perl's fixed order
-/// (`bismark2summary:159-197`): SE-bt2, PE-bt2, SE-hisat2, PE-hisat2.
-const GLOB_SUFFIXES: [&str; 4] = [
+/// The auto-detect glob suffixes. The first four are Perl's fixed order
+/// (`bismark2summary:159-197`): SE-bt2, PE-bt2, SE-hisat2, PE-hisat2. The
+/// minimap2 (`mm2`) and rammap outputs follow (`Aligner::token`), then the
+/// paired-end-only bwa-mem3 5-Base output; Perl's bismark2summary predates them.
+const GLOB_SUFFIXES: [&str; 9] = [
     "bismark_bt2.bam",
     "bismark_bt2_pe.bam",
     "bismark_hisat2.bam",
     "bismark_hisat2_pe.bam",
+    "bismark_mm2.bam",
+    "bismark_mm2_pe.bam",
+    "bismark_rammap.bam",
+    "bismark_rammap_pe.bam",
+    "bismark_bwamem3_pe.bam",
 ];
 
 /// Per-BAM derived report filenames (relative strings; resolved against the
@@ -109,8 +116,8 @@ pub fn sort_glob(names: &mut [String]) {
 /// Discover the BAM list (Perl `:152-205`).
 ///
 /// `explicit` non-empty ⇒ returned verbatim in argv order (no globbing, no
-/// existence check). Otherwise `dir` is scanned for the four globs in fixed
-/// order, each sorted via [`sort_glob`], concatenated. Empty result ⇒
+/// existence check). Otherwise `dir` is scanned for the `GLOB_SUFFIXES` globs
+/// in fixed order, each sorted via [`sort_glob`], concatenated. Empty result ⇒
 /// [`BismarkSummaryError::NoBamFiles`].
 pub fn discover_bams(explicit: &[PathBuf], dir: &Path) -> Result<Vec<String>, BismarkSummaryError> {
     if !explicit.is_empty() {
@@ -266,6 +273,47 @@ mod tests {
                 "p_bismark_bt2_pe.bam",
                 "s_bismark_hisat2.bam",
                 "p_bismark_hisat2_pe.bam",
+            ]
+        );
+    }
+
+    #[test]
+    fn glob_discovery_finds_mm2_and_rammap_after_perl_four() {
+        // #1167 finding 25: minimap2/rammap BAMs were never discovered.
+        let dir = tempfile::tempdir().unwrap();
+        let make = |n: &str| File::create(dir.path().join(n)).unwrap();
+        make("r_bismark_rammap_pe.bam");
+        make("m_bismark_mm2.bam");
+        make("m_bismark_mm2_pe.bam");
+        make("s_bismark_bt2.bam");
+
+        let got = discover_bams(&[], dir.path()).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                "s_bismark_bt2.bam",
+                "m_bismark_mm2.bam",
+                "m_bismark_mm2_pe.bam",
+                "r_bismark_rammap_pe.bam",
+            ]
+        );
+    }
+
+    #[test]
+    fn glob_discovery_finds_bwamem3_5_base_bams_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |n: &str| File::create(dir.path().join(n)).unwrap();
+        make("b_bismark_bwamem3_pe.bam");
+        make("m_bismark_mm2_pe.bam");
+        make("p_bismark_bt2_pe.bam");
+
+        let got = discover_bams(&[], dir.path()).unwrap();
+        assert_eq!(
+            got,
+            vec![
+                "p_bismark_bt2_pe.bam",
+                "m_bismark_mm2_pe.bam",
+                "b_bismark_bwamem3_pe.bam",
             ]
         );
     }
