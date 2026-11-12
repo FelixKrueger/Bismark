@@ -20,7 +20,7 @@
 //! filtering ([`gpc`]). Public surface:
 //!
 //! - [`cli::Cli`] / [`cli::ResolvedConfig`] — clap parser + validated config.
-//! - [`genome::Genome`] — whole-genome FASTA reader.
+//! - [`Genome`] — whole-genome FASTA reader (shared [`crate::io::genome`]).
 //! - [`run`] — load the genome + generate the report(s) + summary, the
 //!   `--merge_CpGs` post-pass, and the `--gc`/`--nome-seq` GpC report.
 //! - [`error::BismarkC2cError`] — typed errors.
@@ -35,15 +35,14 @@ pub mod cli;
 pub mod cov;
 pub mod drach;
 pub mod error;
-pub mod genome;
 pub mod gpc;
 pub mod merge;
 pub mod report;
 pub mod summary;
 
+pub use crate::io::genome::Genome;
 pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkC2cError;
-pub use genome::Genome;
 
 /// Run the tool: load the genome, then either the standalone `--drach`/`--m6A`
 /// DRACH report (an early-exit mode, Perl `:38-42`) **or** the genome-wide
@@ -52,7 +51,10 @@ pub use genome::Genome;
 /// Perl `coverage2cytosine`'s top-level flow (`:38` DRACH early-exit; otherwise
 /// `:44` report → `:49` summary → `:58` merge → `:82` GpC).
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkC2cError> {
-    let genome = Genome::load(&config.genome_folder)?;
+    let genome = Genome::load(
+        &config.genome_folder,
+        &crate::io::genome::FASTA_TIERS_WITH_GZ,
+    )?;
     eprintln!(
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()

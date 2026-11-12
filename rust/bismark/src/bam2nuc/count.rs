@@ -23,7 +23,7 @@ use noodles_sam::alignment::record_buf::Cigar;
 
 use crate::bam2nuc::error::BismarkBam2nucError;
 use crate::bam2nuc::freqs::{self, NucCounts};
-use crate::bam2nuc::genome::Genome;
+use crate::io::genome::Genome;
 
 /// Progress tallies for one input file (NOT byte-gated; informational only).
 #[derive(Debug, Default, Clone, Copy)]
@@ -254,7 +254,7 @@ mod tests {
     fn extract_span_saturation() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("g.fa"), ">chr1\nACGTACGT\n").unwrap(); // len 8
-        let g = Genome::load(t.path()).unwrap();
+        let g = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         assert_eq!(extract_span(&g, b"chr1", 1, 4), b"ACGT"); // normal
         assert_eq!(extract_span(&g, b"chr1", 6, 4), b"CGT"); // runs off end → truncated
         assert_eq!(extract_span(&g, b"chr1", 9, 2), b""); // start exactly at end
@@ -360,7 +360,7 @@ mod tests {
     fn genome_chr1_acgtacgt() -> (tempfile::TempDir, Genome) {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("g.fa"), ">chr1\nACGTACGT\n").unwrap();
-        let g = Genome::load(t.path()).unwrap();
+        let g = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         (t, g)
     }
 
