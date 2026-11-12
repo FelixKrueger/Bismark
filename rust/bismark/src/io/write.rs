@@ -91,12 +91,17 @@ impl<W: Write> BamWriter<W> {
     /// Finalise the BAM stream by writing the BGZF EOF marker. Consumes
     /// `self`.
     ///
-    /// Uses `noodles_bam::io::Writer::try_finish` directly rather than
+    /// Uses `noodles_bgzf::io::Writer::finish` directly rather than
     /// the trait-level `SamAlignmentWrite::finish` because the latter is
     /// a no-op in noodles-bam 0.89; the BGZF EOF marker would otherwise
     /// only be written via Drop, which silently swallows errors.
-    pub fn finish(mut self) -> Result<(), BismarkIoError> {
-        self.inner.try_finish()?;
+    /// `try_finish` is not enough either: it leaves the BGZF writer live, so
+    /// its Drop appends a second EOF block, and the underlying `BufWriter`
+    /// is never flushed with errors checked. `finish` takes the inner writer
+    /// out (disarming that Drop) so we can flush it ourselves.
+    pub fn finish(self) -> Result<(), BismarkIoError> {
+        let mut writer = self.inner.into_inner().finish()?;
+        writer.flush()?;
         Ok(())
     }
 }
@@ -533,6 +538,24 @@ mod tests {
             tail, BGZF_EOF_MARKER,
             "BAM file must end with the BGZF EOF marker"
         );
+    }
+
+    #[test]
+    fn bam_writer_finish_writes_exactly_one_eof_block() {
+        // Regression: `try_finish` alone left the BGZF writer live, so its
+        // Drop appended a second EOF block after the one `finish` wrote.
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("single_eof.bam");
+        let mut writer = BamWriter::from_path(&bam_path, synth_header()).unwrap();
+        writer.write_record(&synth_bismark_record()).unwrap();
+        writer.finish().unwrap();
+        let bytes = std::fs::read(&bam_path).unwrap();
+        let eof_count = bytes
+            .windows(BGZF_EOF_MARKER.len())
+            .filter(|w| *w == BGZF_EOF_MARKER)
+            .count();
+        assert_eq!(eof_count, 1, "BAM must contain exactly one BGZF EOF block");
+        assert!(bytes.ends_with(BGZF_EOF_MARKER));
     }
 
     #[test]
