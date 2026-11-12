@@ -887,6 +887,48 @@ fn all_unmapped_input_is_graceful() {
     assert_zero_count_report(&dir.path().join("unmapped.deduplication_report.txt"));
 }
 
+/// Regression: a mid-stream error on the non-UMI paths (here a PE BAM with
+/// an odd record count) used to leave a complete-looking partial BAM (Drop
+/// wrote the EOF block). The output must be removed on error, for the
+/// serial, `--parallel`, and `--multiple` variants alike.
+#[test]
+fn pe_mid_stream_error_leaves_no_partial_output() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("odd.bam");
+    let second = dir.path().join("even.bam");
+    let mut records = ot_pair("p0", 1000, 1100).to_vec();
+    records.push(ot_pair("p1", 2000, 2100)[0].clone());
+    write_bam(&input, &records);
+    write_bam(&second, &ot_pair("p2", 3000, 3100));
+
+    for (extra, out_name) in [
+        (&[][..], "odd.deduplicated.bam"),
+        (&["--parallel", "2"][..], "odd.deduplicated.bam"),
+        (&["--multiple"][..], "odd.multiple.deduplicated.bam"),
+        (
+            &["--multiple", "--parallel", "2"][..],
+            "odd.multiple.deduplicated.bam",
+        ),
+    ] {
+        let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
+        cmd.arg("--paired")
+            .args(extra)
+            .arg("--output_dir")
+            .arg(dir.path())
+            .arg(&input);
+        if extra.contains(&"--multiple") {
+            cmd.arg(&second);
+        }
+        cmd.assert()
+            .failure()
+            .stderr(predicates::str::contains("unpaired R1"));
+        assert!(
+            !dir.path().join(out_name).exists(),
+            "{extra:?}: partial output {out_name} left behind after an error"
+        );
+    }
+}
+
 /// `--multiple` with cross-file `@SQ` mismatch errors at startup before
 /// any record is processed (PLAN §10.7).
 #[test]
