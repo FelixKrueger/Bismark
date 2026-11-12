@@ -415,6 +415,34 @@ fn se_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
     assert_eq!(retained, expected);
 }
 
+/// Regression: `--sam --parallel N` on BAM input used to route to the threaded
+/// BGZF writer and write compressed bytes into `*.deduplicated.sam`.
+#[test]
+fn sam_output_with_parallel_writes_text_sam() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &[se_ot("r0", 1000), se_ot("r1", 2000)]);
+
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--single")
+        .arg("--sam")
+        .arg("--parallel")
+        .arg("2")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out = std::fs::read(dir.path().join("input.deduplicated.sam")).unwrap();
+    assert!(
+        out.starts_with(b"@"),
+        "--sam output must be text SAM, got leading bytes {:02x?}",
+        &out[..out.len().min(4)]
+    );
+}
+
 /// Non-directional library: a CTOT pair (R1 XR=GA XG=CT → CTOT pair-strand)
 /// dedups correctly. CTOT/OB is the reverse-class path through
 /// `compute_pe_key`. The pair uses **real swapped FLAGs** (147/99) — the exact
