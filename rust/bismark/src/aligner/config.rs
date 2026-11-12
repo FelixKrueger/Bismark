@@ -935,6 +935,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
 
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
+    reject_output_name_collision(cli, &layout)?;
 
     if cli.illumina_5base {
         if matches!(layout, ReadLayout::SingleEnd { .. }) {
@@ -1686,6 +1687,42 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
         check_exists(r)?;
     }
     Ok(ReadLayout::SingleEnd { reads })
+}
+
+/// Fail when two inputs (or pairs) would write the same output files, which would
+/// otherwise silently overwrite the first one's results. Outputs are named off the read
+/// (R1) file's name minus its FastQ suffix, or `--basename` for every input.
+fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
+    let reads = match layout {
+        ReadLayout::SingleEnd { reads } => reads,
+        ReadLayout::PairedEnd { mates1, .. } => mates1,
+    };
+    let mut seen: Vec<(String, &String)> = Vec::new();
+    for read in reads {
+        let name = match &cli.basename {
+            Some(b) => b.clone(),
+            None => crate::aligner::strip_fastq_suffix(
+                &Path::new(read)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+            ),
+        };
+        if let Some((_, first)) = seen.iter().find(|(n, _)| *n == name) {
+            return Err(AlignerError::Validation(format!(
+                "{first} and {read} would both write their output to the name '{name}', so \
+                 the second would overwrite the first. Rename one of them, or run them \
+                 separately{}.",
+                if cli.basename.is_some() {
+                    " (--basename names the output of a single input)"
+                } else {
+                    ""
+                }
+            )));
+        }
+        seen.push((name, read));
+    }
+    Ok(())
 }
 
 fn check_exists(file: &str) -> Result<()> {
