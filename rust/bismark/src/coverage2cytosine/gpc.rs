@@ -23,7 +23,7 @@
 //! G-C-A / G-C-C / G-C-T sites survive — Perl `:919-922` / `:931-934`).
 
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 
 use crate::coverage2cytosine::cli::ResolvedConfig;
@@ -88,10 +88,15 @@ fn run_gpc_single(
         };
         if cur_chr.as_deref() != Some(chr.as_slice()) {
             if let Some(prev) = cur_chr.take() {
-                let (rep, cov) =
-                    gpc_chromosome_bytes(&prev, genome, &buffer, config.nome, gpc_threshold);
-                report_w.write_all(&rep)?;
-                cov_w.write_all(&cov)?;
+                write_gpc_chromosome(
+                    &prev,
+                    genome,
+                    &buffer,
+                    config.nome,
+                    gpc_threshold,
+                    &mut report_w,
+                    &mut cov_w,
+                )?;
             }
             buffer.clear();
             cur_chr = Some(chr);
@@ -99,9 +104,15 @@ fn run_gpc_single(
         buffer.insert(start, (meth, nonmeth));
     }
     if let Some(prev) = cur_chr.take() {
-        let (rep, cov) = gpc_chromosome_bytes(&prev, genome, &buffer, config.nome, gpc_threshold);
-        report_w.write_all(&rep)?;
-        cov_w.write_all(&cov)?;
+        write_gpc_chromosome(
+            &prev,
+            genome,
+            &buffer,
+            config.nome,
+            gpc_threshold,
+            &mut report_w,
+            &mut cov_w,
+        )?;
     }
     report_w.finish()?;
     cov_w.finish()?;
@@ -149,7 +160,7 @@ fn run_gpc_split(
 }
 
 /// Split-mode flush: open a **fresh, truncating** per-chr GpC report + cov
-/// writer (no caching — a re-appearance truncates), write + finish. A GC-less
+/// writer (no caching — a re-appearance truncates), walk into them + finish. A GC-less
 /// chromosome still gets an empty pair of files (Perl opens the writers at the
 /// transition regardless of emitted lines).
 fn flush_gpc_split_chromosome(
@@ -159,31 +170,40 @@ fn flush_gpc_split_chromosome(
     config: &ResolvedConfig,
     gpc_threshold: u32,
 ) -> Result<(), BismarkC2cError> {
-    let (rep, cov) = gpc_chromosome_bytes(name, genome, buffer, config.nome, gpc_threshold);
     let mut rw = ReportWriter::create(&gpc_report_path(config, Some(name)), config.gzip)?;
-    rw.write_all(&rep)?;
-    rw.finish()?;
     let mut cw = ReportWriter::create(&gpc_cov_path(config, Some(name)), config.gzip)?;
-    cw.write_all(&cov)?;
+    write_gpc_chromosome(
+        name,
+        genome,
+        buffer,
+        config.nome,
+        gpc_threshold,
+        &mut rw,
+        &mut cw,
+    )?;
+    rw.finish()?;
     cw.finish()?;
     Ok(())
 }
 
-/// Walk one chromosome's `GC` dinucleotides → `(report_bytes, cov_bytes)`. A cov
-/// chromosome absent from the genome yields no bytes (Perl's empty `while`-walk
+/// Walk one chromosome's `GC` dinucleotides, writing the report and cov lines to
+/// `report_w` / `cov_w` in [`report::CHUNK_FLUSH_BYTES`] chunks. A cov
+/// chromosome absent from the genome writes nothing (Perl's empty `while`-walk
 /// over an undef sequence). The `GC` scan is non-overlapping (`/(GC)/g`): after
 /// a match at index `j`, resume at `j + 2`.
-fn gpc_chromosome_bytes(
+fn write_gpc_chromosome(
     name: &[u8],
     genome: &Genome,
     buffer: &HashMap<u32, (u32, u32)>,
     nome: bool,
     gpc_threshold: u32,
-) -> (Vec<u8>, Vec<u8>) {
+    report_w: &mut ReportWriter,
+    cov_w: &mut ReportWriter,
+) -> io::Result<()> {
     let mut report_out: Vec<u8> = Vec::new();
     let mut cov_out: Vec<u8> = Vec::new();
     let Some(seq) = genome.get(name) else {
-        return (report_out, cov_out);
+        return Ok(());
     };
     let mut j = 0usize;
     while j + 1 < seq.len() {
@@ -198,12 +218,15 @@ fn gpc_chromosome_bytes(
                 &mut report_out,
                 &mut cov_out,
             );
+            report_w.write_if_full(&mut report_out)?;
+            cov_w.write_if_full(&mut cov_out)?;
             j += 2; // non-overlapping: Perl `pos()` resumes one past the GC
         } else {
             j += 1;
         }
     }
-    (report_out, cov_out)
+    report_w.write_all(&report_out)?;
+    cov_w.write_all(&cov_out)
 }
 
 /// The per-`GC`-dinucleotide kernel (mirrors Perl `:848-940` / `:966-1060`,
@@ -366,7 +389,7 @@ mod tests {
     use super::*;
 
     /// Walk one chromosome of `seq` with the given 1-based coverage, returning
-    /// `(report, cov)` as strings (mirrors `gpc_chromosome_bytes`).
+    /// `(report, cov)` as strings (the in-memory kernel walk of `write_gpc_chromosome`).
     fn walk(seq: &[u8], cov: &[(u32, u32, u32)], nome: bool, thr: u32) -> (String, String) {
         let mut buf: HashMap<u32, (u32, u32)> = HashMap::new();
         for &(p, m, u) in cov {
@@ -422,6 +445,60 @@ mod tests {
             discordance: None,
             drach: false,
             ffs: false,
+        }
+    }
+
+    /// Write `seq` as the one-chromosome genome `chr1` and load it.
+    fn genome_of(dir: &std::path::Path, seq: &[u8]) -> Genome {
+        std::fs::write(
+            dir.join("g.fa"),
+            [b">chr1\n".as_slice(), seq, b"\n"].concat(),
+        )
+        .unwrap();
+        Genome::load(dir).unwrap()
+    }
+
+    /// Read a plain or gzip output file back to a string.
+    fn read_out(p: &std::path::Path, gzip: bool) -> String {
+        use std::io::Read;
+        let mut s = String::new();
+        if gzip {
+            flate2::read::MultiGzDecoder::new(std::fs::File::open(p).unwrap())
+                .read_to_string(&mut s)
+                .unwrap();
+        } else {
+            s = std::fs::read_to_string(p).unwrap();
+        }
+        s
+    }
+
+    /// #1167 finding 32: a chromosome whose GpC output is many times
+    /// `CHUNK_FLUSH_BYTES` is written in chunks, byte-identical to the
+    /// all-in-memory walk (report and cov, plain and gzip).
+    #[test]
+    fn gpc_chromosome_streams_byte_identically() {
+        let seq = b"TAGCAGCGCATGCCTGCT".repeat(40);
+        let t = tempfile::tempdir().unwrap();
+        let genome = genome_of(t.path(), &seq);
+        let cov: Vec<(u32, u32, u32)> = (1..=seq.len() as u32)
+            .map(|p| (p, p % 7, p % 3 + 1))
+            .collect();
+        let mut buf = HashMap::new();
+        for &(p, m, u) in &cov {
+            buf.insert(p, (m, u));
+        }
+        let (want, want_cov) = walk(&seq, &cov, false, 1);
+        assert!(want.len() > 10 * report::CHUNK_FLUSH_BYTES);
+        assert!(want_cov.len() > 10 * report::CHUNK_FLUSH_BYTES);
+        for gzip in [false, true] {
+            let (rp, cp) = (t.path().join("r"), t.path().join("c"));
+            let mut rw = ReportWriter::create(&rp, gzip).unwrap();
+            let mut cw = ReportWriter::create(&cp, gzip).unwrap();
+            write_gpc_chromosome(b"chr1", &genome, &buf, false, 1, &mut rw, &mut cw).unwrap();
+            rw.finish().unwrap();
+            cw.finish().unwrap();
+            assert_eq!(read_out(&rp, gzip), want);
+            assert_eq!(read_out(&cp, gzip), want_cov);
         }
     }
 
