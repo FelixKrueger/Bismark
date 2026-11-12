@@ -358,6 +358,15 @@ mod tests {
         let bin = dir.path().join("bwa-mem3");
         std::fs::write(&bin, script).unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A test thread forking while the script was open for writing makes exec fail briefly.
+        for _ in 0..100 {
+            match std::process::Command::new(&bin).arg("version").output() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => break,
+            }
+        }
         dir
     }
 
