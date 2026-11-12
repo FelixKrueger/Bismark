@@ -713,35 +713,9 @@ fn compute_se_umi_key(
     refid_table: &[u32],
     umi_mode: UmiMode,
 ) -> Result<UmiDedupKey, BismarkDedupError> {
-    let inner = record.inner();
-    let refid =
-        inner
-            .reference_sequence_id()
-            .ok_or_else(|| BismarkDedupError::MissingReferenceId {
-                qname: qname_lossy(record),
-            })?;
-    let chr_id = *refid_table
-        .get(refid)
-        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
-    let start = u32::try_from(record.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(record),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-    let key_pos = if is_forward(record.record_strand()) {
-        start
-    } else {
-        u32::try_from(record.cigar().reference_end(start as usize))
-            .expect("reference_end fits in u32 per BAM spec")
-    };
+    let k = compute_se_key(record, refid_table)?;
     let umi = require_umi(record, umi_mode)?;
-    Ok(UmiDedupKey::se(
-        record.record_strand(),
-        chr_id,
-        key_pos,
-        umi,
-    ))
+    Ok(UmiDedupKey::se(k.strand, k.chr_id, k.start, umi))
 }
 
 /// Compute the UMI-aware PE dedup key. Mirrors [`compute_pe_key`] but
@@ -754,40 +728,9 @@ fn compute_pe_umi_key(
     refid_table: &[u32],
     umi_mode: UmiMode,
 ) -> Result<UmiDedupKey, BismarkDedupError> {
-    let r1 = pair.r1();
-    let r2 = pair.r2();
-    let refid = r1.inner().reference_sequence_id().ok_or_else(|| {
-        BismarkDedupError::MissingReferenceId {
-            qname: qname_lossy(r1),
-        }
-    })?;
-    let chr_id = *refid_table
-        .get(refid)
-        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
-    let r1_start = u32::try_from(r1.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(r1),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-    let r2_start = u32::try_from(r2.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(r2),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-
-    let (start, end) = if is_forward(pair.pair_strand()) {
-        let end = u32::try_from(r2.cigar().reference_end(r2_start as usize))
-            .expect("reference_end fits in u32 per BAM spec");
-        (r1_start, end)
-    } else {
-        let end = u32::try_from(r1.cigar().reference_end(r1_start as usize))
-            .expect("reference_end fits in u32 per BAM spec");
-        (r2_start, end)
-    };
-    let umi = require_umi(r1, umi_mode)?;
-    Ok(UmiDedupKey::pe(pair.pair_strand(), chr_id, start, end, umi))
+    let k = compute_pe_key(pair, refid_table)?;
+    let umi = require_umi(pair.r1(), umi_mode)?;
+    Ok(UmiDedupKey::pe(k.strand, k.chr_id, k.start, k.end, umi))
 }
 
 /// Stream SE records with UMI-aware keys. Sibling of [`stream_se`].
