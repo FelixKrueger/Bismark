@@ -414,9 +414,11 @@ impl Cli {
             return Err(BismarkExtractorError::BufferSizeWithAmpleMemory);
         }
 
-        // --include_overlap is PE-only (Perl 1217).
-        // Reviewer A Medium #2.
-        if self.include_overlap && !self.paired_end {
+        // --include_overlap is PE-only (Perl 1217). Only an explicit
+        // --single-end is rejected here; an auto-detected SE file is
+        // rejected after detection in `process_one_file` (Perl checks
+        // after its @PG auto-detection too).
+        if self.include_overlap && self.single_end {
             return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
         }
 
@@ -879,12 +881,18 @@ mod tests {
         assert!(config.buffer_size.is_none());
     }
 
-    /// Reviewer A Medium #2: `--include_overlap` without `--paired-end`
-    /// rejects (Perl line 1217).
+    /// Reviewer A Medium #2: `--include_overlap` with explicit `--single-end`
+    /// rejects (Perl line 1217). Without `-s`/`-p` the check is deferred to
+    /// after auto-detection (#1167 finding 24).
     #[test]
-    fn validate_rejects_include_overlap_without_paired_end() {
+    fn validate_rejects_include_overlap_with_single_end() {
         let f = temp_input();
-        let cli = parse(&["--include_overlap", f.path().to_str().unwrap()]).unwrap();
+        let cli = parse(&[
+            "--include_overlap",
+            "--single-end",
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
         assert!(matches!(
             cli.validate(),
             Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd)
