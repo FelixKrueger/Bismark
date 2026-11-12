@@ -1194,7 +1194,7 @@ mod tests {
             [b">chr1\n".as_slice(), &seq, b"\n"].concat(),
         )
         .unwrap();
-        let genome = Genome::load(t.path()).unwrap();
+        let genome = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let mut buf = HashMap::new();
         for p in (1..seq.len() as u32).step_by(3) {
             buf.insert(p, (p % 7, p % 5 + 1));

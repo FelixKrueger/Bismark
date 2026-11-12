@@ -4,8 +4,8 @@
 //!
 //! This is the **shared, tier-parameterized** reader used by
 //! `coverage2cytosine`, `bam2nuc` and `NOMe_filtering` (each maps
-//! [`GenomeError`] onto its own error type). It is distinct from [`crate::io::cram_ref`] (which
-//! reconstitutes a CRAM reference and does NOT uppercase).
+//! [`GenomeError`] onto its own error type). It is distinct from [`crate::io::cram_ref`], which
+//! builds the indexed FASTA repository for CRAM I/O.
 //!
 //! Quirks reproduced:
 //! - **Tier-parameterized glob priority**: the caller supplies an ordered list

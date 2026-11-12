@@ -433,7 +433,7 @@ mod tests {
             [b">chr1\n".as_slice(), seq, b"\n"].concat(),
         )
         .unwrap();
-        Genome::load(dir).unwrap()
+        Genome::load(dir, &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap()
     }
 
     /// Read a plain or gzip output file back to a string.
