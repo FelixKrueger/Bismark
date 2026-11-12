@@ -207,9 +207,32 @@ fn split_contiguous(
     Ok(paths)
 }
 
-/// Count effective PE *pairs* over the COMMON (min) record count — mirroring
-/// `drive_merge_pe`'s break-on-first-incomplete (`lib.rs:1037–1049`). A pair exists
-/// iff BOTH mates have a record; `skip`/`upto` apply on the pair ordinal (B-I6).
+/// Error when exactly one mate file still has a record: single-core Bowtie 2
+/// aborts ("fewer reads in file specified with -2"), so the split must not
+/// silently truncate to the shorter file. Not an error once `--upto` has already
+/// ended the window (`count` complete pairs read so far).
+fn check_mates_even(
+    has1: bool,
+    has2: bool,
+    count: u64,
+    upto: Option<u64>,
+    r1: &Path,
+    r2: &Path,
+) -> Result<()> {
+    if has1 == has2 || past_upto(count + 1, upto) {
+        return Ok(());
+    }
+    let (longer, shorter) = if has1 { (r1, r2) } else { (r2, r1) };
+    Err(AlignerError::Validation(format!(
+        "paired-end input files have unequal read counts: {shorter:?} ends before pair {} \
+         while {longer:?} still has reads",
+        count + 1
+    )))
+}
+
+/// Count effective PE *pairs*. A pair exists iff BOTH mates have a record; uneven
+/// mate files are an error (`check_mates_even`). `skip`/`upto` apply on the pair
+/// ordinal (B-I6).
 fn count_effective_pe(
     r1: &Path,
     r2: &Path,
@@ -226,6 +249,7 @@ fn count_effective_pe(
         let has1 = read_record(a.as_mut(), arity, &mut buf1)?;
         let has2 = read_record(b.as_mut(), arity, &mut buf2)?;
         if !(has1 && has2) {
+            check_mates_even(has1, has2, count, upto, r1, r2)?;
             break;
         }
         count += 1;
@@ -239,7 +263,7 @@ fn count_effective_pe(
     Ok(eff)
 }
 
-/// PE lockstep split: partition the COMMON (min) pair count into `n` contiguous
+/// PE lockstep split: partition the pair count into `n` contiguous
 /// chunks, writing both mates' subset files on identical boundaries. Returns
 /// `(r1 subset paths, r2 subset paths)`.
 fn split_contiguous_pe(
@@ -294,6 +318,7 @@ fn split_contiguous_pe(
         let has1 = read_record(a.as_mut(), arity, &mut buf1)?;
         let has2 = read_record(b.as_mut(), arity, &mut buf2)?;
         if !(has1 && has2) {
+            check_mates_even(has1, has2, count, upto, r1, r2)?;
             break;
         }
         count += 1;
@@ -1082,10 +1107,9 @@ mod tests {
     }
 
     #[test]
-    fn pe_split_partitions_common_min_count_in_lockstep() {
-        // R1 has 7 records, R2 has 5 → common = 5 pairs (drive_merge_pe truncates).
+    fn pe_split_partitions_pairs_in_lockstep() {
         let dir = TempDir::new().unwrap();
-        let r1 = fq_file(dir.path(), "r1.fq", 7);
+        let r1 = fq_file(dir.path(), "r1.fq", 5);
         let r2 = fq_file(dir.path(), "r2.fq", 5);
         assert_eq!(count_effective_pe(&r1, &r2, 4, None, None).unwrap(), 5);
         let (p1, p2) = split_contiguous_pe(&r1, &r2, dir.path(), 2, 4, None, None).unwrap();
@@ -1100,6 +1124,25 @@ mod tests {
         assert_eq!(recs(&p1[1]), recs(&p2[1]));
         // 5 pairs over 2 chunks → 3 + 2.
         assert_eq!(recs(&p1[0]) + recs(&p1[1]), 5);
+    }
+
+    #[test]
+    fn pe_split_uneven_mates_is_an_error_unless_upto_stopped_first() {
+        // R1 has 7 records, R2 has 5: single-core Bowtie 2 aborts, so must we.
+        let dir = TempDir::new().unwrap();
+        let r1 = fq_file(dir.path(), "r1.fq", 7);
+        let r2 = fq_file(dir.path(), "r2.fq", 5);
+        for (a, b) in [(&r1, &r2), (&r2, &r1)] {
+            let msg = count_effective_pe(a, b, 4, None, None)
+                .unwrap_err()
+                .to_string();
+            assert!(msg.contains("r1.fq") && msg.contains("r2.fq") && msg.contains("pair 6"));
+            assert!(split_contiguous_pe(a, b, dir.path(), 2, 4, None, None).is_err());
+        }
+        // --upto 5 ends the window before the missing mate is reached.
+        assert_eq!(count_effective_pe(&r1, &r2, 4, None, Some(5)).unwrap(), 5);
+        assert!(split_contiguous_pe(&r1, &r2, dir.path(), 2, 4, None, Some(5)).is_ok());
+        assert!(count_effective_pe(&r1, &r2, 4, None, Some(6)).is_err());
     }
 
     #[test]
