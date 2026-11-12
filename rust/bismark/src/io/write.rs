@@ -148,16 +148,21 @@ impl<W: Write> BamWriter<W> {
     /// Finalise the BAM stream by writing the BGZF EOF marker. Consumes
     /// `self`.
     ///
-    /// Uses `noodles_bam::io::Writer::try_finish` directly rather than
+    /// Uses `noodles_bgzf::io::Writer::finish` directly rather than
     /// the trait-level `SamAlignmentWrite::finish` because the latter is
     /// a no-op in noodles-bam 0.89; the BGZF EOF marker would otherwise
     /// only be written via Drop, which silently swallows errors.
-    pub fn finish(mut self) -> Result<(), BismarkIoError> {
-        match self.inner.get_mut() {
-            Bgzf::Single(w) => w.try_finish()?,
-            Bgzf::Threaded(w) => drop(w.finish()?),
+    /// `try_finish` is not enough either: it leaves the BGZF writer live, so
+    /// its Drop appends a second EOF block, and the underlying `BufWriter`
+    /// is never flushed with errors checked. `finish` takes the inner writer
+    /// out (disarming that Drop) so we can flush it ourselves.
+    pub fn finish(self) -> Result<(), BismarkIoError> {
+        let Self { inner, tap, .. } = self;
+        match inner.into_inner() {
+            Bgzf::Single(w) => w.finish()?.flush()?,
+            Bgzf::Threaded(mut w) => drop(w.finish()?),
         }
-        if let Some(tap) = self.tap.take() {
+        if let Some(tap) = tap {
             tap.end()?;
         }
         Ok(())
@@ -607,6 +612,24 @@ mod tests {
     }
 
     #[test]
+    fn bam_writer_finish_writes_exactly_one_eof_block() {
+        // Regression: `try_finish` alone left the BGZF writer live, so its
+        // Drop appended a second EOF block after the one `finish` wrote.
+        let tmp = TempDir::new().unwrap();
+        let bam_path = tmp.path().join("single_eof.bam");
+        let mut writer = BamWriter::from_path(&bam_path, synth_header()).unwrap();
+        writer.write_record(&synth_bismark_record()).unwrap();
+        writer.finish().unwrap();
+        let bytes = std::fs::read(&bam_path).unwrap();
+        let eof_count = bytes
+            .windows(BGZF_EOF_MARKER.len())
+            .filter(|w| *w == BGZF_EOF_MARKER)
+            .count();
+        assert_eq!(eof_count, 1, "BAM must contain exactly one BGZF EOF block");
+        assert!(bytes.ends_with(BGZF_EOF_MARKER));
+    }
+
+    #[test]
     fn bam_writer_roundtrip_via_tempfile() {
         // BAM is BGZF-compressed binary; testing in-memory is awkward
         // because the BgzfWriter's into_inner consumes the wrapper.
@@ -652,12 +675,8 @@ mod tests {
         let (single, threaded) = (write("single.bam", false), write("threaded.bam", true));
         let blocks = |b: &[u8]| b.windows(4).filter(|w| w == &[0x1f, 0x8b, 8, 4]).count();
         assert!(blocks(&single) > 3, "{} blocks", blocks(&single));
-        // The single-threaded writer ends with a second EOF block: noodles' `Drop`
-        // finishes again after `try_finish`. Every data block is the same.
-        let eof = &single[single.len() - 28..];
-        assert!(blocks(eof) == 1 && threaded.ends_with(eof));
         assert!(
-            single == [&threaded[..], eof].concat(),
+            single == threaded,
             "{} vs {} bytes",
             single.len(),
             threaded.len()

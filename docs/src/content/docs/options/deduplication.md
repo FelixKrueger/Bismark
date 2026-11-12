@@ -24,11 +24,11 @@ A space-separated list of Bismark result files in BAM/SAM format.
 
 #### OPTIONS:
 
-- `-s/--single-end`
+- `-s/--single`
 
   Deduplicate single-end BAM/SAM Bismark files. Default: [AUTO-DETECT]
 
-- `-p/--paired-end`
+- `-p/--paired`
 
   Deduplicate paired-end BAM/SAM Bismark files. Default: [AUTO-DETECT]
 
@@ -54,11 +54,15 @@ The output will be written out in SAM format. Default: OFF.
 
 - `--multiple`
 
-All specified input files are treated as one sample and concatenated together for deduplication. This uses Unix `cat` for SAM files and `samtools cat` for BAM files. Additional notes for BAM files:	Although this works on either BAM or CRAM, all input files must be the same format as each other. The sequence dictionary of each input file must be identical, although this command does not check this. By default the header is taken from the first file to be concatenated.
+All specified input files are treated as one sample and concatenated together for deduplication. The files are read one after the other as one stream; no `cat` or `samtools cat` is run. Additional notes for BAM files:	Although this works on either BAM or CRAM, all input files must be the same format as each other. Every input must have the same `@SQ` names in the same order as the first file; otherwise the run stops with an error. By default the header is taken from the first file to be concatenated.
 
 - `--samtools_path [path]`
 
 Accepted for compatibility but **ignored** by the Rust suite, which does all BAM/SAM/CRAM I/O with pure-Rust `noodles` — no Samtools installation is required
+
+- `--cram_ref [path]`
+
+CRAM reference FASTA, with a `.fai` index next to it. Required when the input is CRAM. Reads from CRAM keep every field, but for about half of the pairs the TLEN sign can differ from `samtools view`; use BAM input if TLEN matters.
 
 - `--version`
 

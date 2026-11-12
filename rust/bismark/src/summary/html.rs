@@ -11,10 +11,10 @@
 //!   percentages are `%.2f` verbatim; the six **unmethylated** arrays are
 //!   `100 - <rounded %.2f>` re-stringified via `%.15g` ([`format_g15`]).
 
+use crate::bedgraph::fmt_g::format_g15;
 use crate::summary::BISMARK_VERSION;
 use crate::summary::assets;
 use crate::summary::error::BismarkSummaryError;
-use crate::summary::fmt_g::format_g15;
 use crate::summary::parse::SampleMetrics;
 use crate::summary::plot::{self, num};
 

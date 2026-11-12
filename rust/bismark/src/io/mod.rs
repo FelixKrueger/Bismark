@@ -28,7 +28,6 @@ pub mod umi;
 pub mod write;
 
 pub use cigar::{AlignedPosition, AlignedPositions, CigarExt};
-pub use cram_ref::reconstitute_cram_reference_from_bismark_genome;
 pub use error::BismarkIoError;
 pub use genome::{Genome, GenomeError};
 pub use pair::BismarkPair;

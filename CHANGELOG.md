@@ -7,6 +7,14 @@
 
 - **New `bismark run`: one sample from raw FastQ to coverage files in one command.** It runs Trim Galore, alignment, deduplication, methylation extraction (bedGraph, `.bismark.cov.gz`, CpG report) and the HTML report. All steps run at the same time and hand their output to each other in memory: Trim Galore's trimmed reads go straight to the aligner without being written, and no step reads the previous step's BAM back from disk; every BAM is still written, and the output is the same as running the steps one by one. `--preset wgbs|rrbs|pbat|scbs|accel|zymo|emseq` applies the [library types](docs/src/content/docs/usage/library-types.md) recommendations (for example no deduplication for RRBS), and any option of `trim_galore`, `bismark align`, `bismark dedup` or `bismark extract` can be given under its own name. See the [`bismark run` guide](docs/src/content/docs/usage/run.md).
 
+### bismark (aligner)
+
+- **New `--bwamem3` adds bwa-mem3 0.16.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered; see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
+- **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine.**
+- **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end; this applies to the core calls (`XM`), not yet to `--five_base_duplex`, `--five_base_consensus` or `--five_base_deconvolution`.**
+- **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length.**
+
+
 ## Bismark 3.2.0 (released 2026-11-09)
 
 ### Repository layout

@@ -136,6 +136,47 @@ jobs:
       - name: cargo test -p bismark --features binseq-input
         run: cargo test -p bismark --features binseq-input
 
+  bwamem3:
+    name: bwa-mem3 5-Base gate (${{ matrix.runner }})
+    # bwa-mem3 is not in apt; it comes from bioconda in an env of its own, and only its
+    # binary goes on PATH so no other conda tool shadows the apt ones.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install bwa-mem3 0.16.0 (bioconda)
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3.2.1
+        with:
+          environment-name: bwm3
+          create-args: -c conda-forge -c bioconda bwa-mem3=0.16.0
+          cache-environment: true
+          cache-environment-key: bwm3-0.16.0-${{ runner.arch }}
+          init-shell: none
+      - name: Put only bwa-mem3 on PATH
+        run: |
+          mkdir -p "$HOME/bwm3bin"
+          ln -sf "$MAMBA_ROOT_PREFIX/envs/bwm3/bin/bwa-mem3" "$HOME/bwm3bin/bwa-mem3"
+          echo "$HOME/bwm3bin" >> "$GITHUB_PATH"
+      - name: bwa-mem3 version
+        run: bwa-mem3 version
+      - name: cargo test (bwa-mem3 gates)
+        env:
+          BISMARK_TEST_BWAMEM3: "1"
+        run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake
+
   fmt:
     name: cargo fmt --check
     runs-on: ubuntu-latest

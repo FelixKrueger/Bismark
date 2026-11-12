@@ -562,6 +562,8 @@ impl<R: BufRead> SamReader<R> {
 pub struct CramReader<R: Read + Seek> {
     inner: noodles_cram::io::Reader<R>,
     header: Header,
+    /// Kept to regenerate MD/NM (see [`fill_md_nm`]); noodles keeps its copy private.
+    repo: noodles_fasta::Repository,
     filter: RecordFilter,
     skip_counts: std::cell::Cell<SkipCounts>,
 }
@@ -571,14 +573,16 @@ impl CramReader<File> {
     /// FASTA reference with an existing `.fai` index alongside.
     pub fn from_path(path: &Path, cram_ref: &Path) -> Result<Self, BismarkIoError> {
         let repo = build_fasta_repository(cram_ref)?;
+        // shortcut: noodles-cram re-signs TLEN of attached mates (first record positive, not htslib's leftmost rule), upgrade when noodles fixes resolve_mates
         let mut inner = noodles_cram::io::reader::Builder::default()
-            .set_reference_sequence_repository(repo)
+            .set_reference_sequence_repository(repo.clone())
             .build_from_path(path)?;
         let header = inner.read_header()?;
         check_not_coordinate_sorted(&header)?;
         Ok(Self {
             inner,
             header,
+            repo,
             filter: RecordFilter::default(),
             skip_counts: std::cell::Cell::default(),
         })
@@ -591,12 +595,13 @@ impl CramReader<File> {
     ) -> Result<Self, BismarkIoError> {
         let repo = build_fasta_repository(cram_ref)?;
         let mut inner = noodles_cram::io::reader::Builder::default()
-            .set_reference_sequence_repository(repo)
+            .set_reference_sequence_repository(repo.clone())
             .build_from_path(path)?;
         let header = inner.read_header()?;
         Ok(Self {
             inner,
             header,
+            repo,
             filter: RecordFilter::default(),
             skip_counts: std::cell::Cell::default(),
         })
@@ -626,8 +631,10 @@ impl<R: Read + Seek> CramReader<R> {
         let header = &self.header;
         let filter = self.filter;
         let counts = &self.skip_counts;
+        let repo = &self.repo;
         self.inner
             .records(header)
+            .map(move |item| item.and_then(|rec| fill_md_nm(rec, header, repo)))
             .filter_map(move |item| filter_then_classify(item, filter, counts))
     }
 
@@ -638,8 +645,10 @@ impl<R: Read + Seek> CramReader<R> {
         extractor: fn(&[u8]) -> Option<&[u8]>,
     ) -> impl Iterator<Item = Result<BismarkRecord, BismarkIoError>> + '_ {
         let header = &self.header;
+        let repo = &self.repo;
         self.inner
             .records(header)
+            .map(move |item| item.and_then(|rec| fill_md_nm(rec, header, repo)))
             .filter_map(move |item| filter_unmapped_then_classify_with_umi(item, extractor))
     }
 }
@@ -772,6 +781,104 @@ pub fn open_reader_without_sort_check(
             )?))
         }
     }
+}
+
+/// htslib does not store MD/NM in CRAM by default and regenerates them from
+/// the reference on decode; noodles does not, so do it here. NM and MD go
+/// first, as Bismark writes them. Records that already have both tags,
+/// unmapped records, and records whose reference span is unavailable are
+/// returned unchanged.
+fn fill_md_nm(
+    mut rec: RecordBuf,
+    header: &Header,
+    repo: &noodles_fasta::Repository,
+) -> std::io::Result<RecordBuf> {
+    use noodles_sam::alignment::record::cigar::op::Kind;
+    use noodles_sam::alignment::record::data::field::Tag;
+    use noodles_sam::alignment::record_buf::data::field::Value;
+
+    let (nm_tag, md_tag) = (Tag::EDIT_DISTANCE, Tag::MISMATCHED_POSITIONS);
+    let data = rec.data();
+    // SEQ `*` has no bases to compare, so nothing can be regenerated.
+    if rec.flags().is_unmapped()
+        || rec.sequence().as_ref().is_empty()
+        || (data.get(&nm_tag).is_some() && data.get(&md_tag).is_some())
+    {
+        return Ok(rec);
+    }
+    let (Some(id), Some(start)) = (rec.reference_sequence_id(), rec.alignment_start()) else {
+        return Ok(rec);
+    };
+    let Some((name, _)) = header.reference_sequences().get_index(id) else {
+        return Ok(rec);
+    };
+    let Some(reference) = repo.get(name).transpose()? else {
+        return Ok(rec);
+    };
+    let reference: &[u8] = (*reference).as_ref();
+    let seq = rec.sequence().as_ref();
+
+    let (mut r, mut q, mut nm, mut run) = (start.get() - 1, 0usize, 0u32, 0u32);
+    let mut md = Vec::new();
+    for op in rec.cigar().as_ref() {
+        let len = op.len();
+        match op.kind() {
+            Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                let Some(ref_span) = reference.get(r..r + len) else {
+                    return Ok(rec);
+                };
+                for (i, &rb) in ref_span.iter().enumerate() {
+                    let rb = rb.to_ascii_uppercase();
+                    if seq.get(q + i).map(u8::to_ascii_uppercase) == Some(rb) {
+                        run += 1;
+                    } else {
+                        nm += 1;
+                        md.extend_from_slice(run.to_string().as_bytes());
+                        md.push(rb);
+                        run = 0;
+                    }
+                }
+                (r, q) = (r + len, q + len);
+            }
+            Kind::Insertion => (nm, q) = (nm + len as u32, q + len),
+            Kind::Deletion => {
+                let Some(ref_span) = reference.get(r..r + len) else {
+                    return Ok(rec);
+                };
+                nm += len as u32;
+                md.extend_from_slice(run.to_string().as_bytes());
+                md.push(b'^');
+                md.extend(ref_span.iter().map(u8::to_ascii_uppercase));
+                (r, run) = (r + len, 0);
+            }
+            Kind::Skip => r += len,
+            Kind::SoftClip => q += len,
+            Kind::HardClip | Kind::Pad => {}
+        }
+    }
+    md.extend_from_slice(run.to_string().as_bytes());
+
+    // Smallest unsigned type, as htslib picks when it regenerates NM.
+    let nm = match (u8::try_from(nm), u16::try_from(nm)) {
+        (Ok(n), _) => Value::UInt8(n),
+        (_, Ok(n)) => Value::UInt16(n),
+        _ => Value::UInt32(nm),
+    };
+    let nm = data.get(&nm_tag).cloned().unwrap_or(nm);
+    let md = data
+        .get(&md_tag)
+        .cloned()
+        .unwrap_or(Value::String(md.into()));
+    let rest = data
+        .iter()
+        .filter(|(t, _)| *t != nm_tag && *t != md_tag)
+        .map(|(t, v)| (t, v.clone()));
+    let new_data = [(nm_tag, nm), (md_tag, md)]
+        .into_iter()
+        .chain(rest)
+        .collect();
+    *rec.data_mut() = new_data;
+    Ok(rec)
 }
 
 /// Filter out unmapped records (FLAG & 0x4) and classify the rest as
@@ -950,6 +1057,31 @@ mod tests {
                 .insert(SORT_ORDER, BString::from(so_bytes.to_vec()));
         }
         noodles_sam::Header::builder().set_header(hd).build()
+    }
+
+    fn fill_md_nm_for(sam_line: &str) -> RecordBuf {
+        let sam = format!("@SQ\tSN:chr1\tLN:8\n{sam_line}\n");
+        let mut reader = noodles_sam::io::Reader::new(Cursor::new(sam.into_bytes()));
+        let header = reader.read_header().unwrap();
+        let mut rec = RecordBuf::default();
+        reader.read_record_buf(&header, &mut rec).unwrap();
+        let repo = noodles_fasta::Repository::new(vec![noodles_fasta::Record::new(
+            noodles_fasta::record::Definition::new("chr1", None),
+            noodles_fasta::record::Sequence::from(b"ACGTACGT".to_vec()),
+        )]);
+        fill_md_nm(rec, &header, &repo).unwrap()
+    }
+
+    #[test]
+    fn fill_md_nm_regenerates_tags_but_skips_records_without_seq() {
+        use noodles_sam::alignment::record::data::field::Tag;
+        let rec = fill_md_nm_for("r1\t0\tchr1\t1\t60\t4M\t*\t0\t0\tACGA\tIIII");
+        assert!(rec.data().get(&Tag::EDIT_DISTANCE).is_some());
+        assert!(rec.data().get(&Tag::MISMATCHED_POSITIONS).is_some());
+
+        let rec = fill_md_nm_for("r2\t0\tchr1\t1\t60\t4M\t*\t0\t0\t*\t*");
+        assert!(rec.data().get(&Tag::EDIT_DISTANCE).is_none());
+        assert!(rec.data().get(&Tag::MISMATCHED_POSITIONS).is_none());
     }
 
     // ─────────────── from_extension (legacy extension dispatch) ───────────────
@@ -1558,5 +1690,68 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
             "bismark --genome /g -1 R1.fq -2 R2.fq",
         );
         assert_eq!(detect_paired_from_header(&header), Some(true));
+    }
+
+    /// `softclip_indel_se.cram` is `softclip_indel_se.bam` written by samtools,
+    /// which drops MD everywhere and NM where it matches the reference (all but
+    /// the two soft-clipped records). Reading it must give back the BAM records,
+    /// NM/MD included and in Bismark's tag order.
+    #[test]
+    fn samtools_cram_without_md_nm_reads_back_as_original_bam() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/five_base_bisulfite");
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        // Single-line copy of the reference so the `.fai` is trivial.
+        let fasta = std::fs::read_to_string(data.join("pUC19.fa")).unwrap();
+        let seq: String = fasta.lines().skip(1).collect();
+        let fasta_path = tmp.path().join("ref.fa");
+        std::fs::write(&fasta_path, format!(">pUC19\n{seq}\n")).unwrap();
+        let fai = format!("pUC19\t{0}\t7\t{0}\t{1}\n", seq.len(), seq.len() + 1);
+        std::fs::write(tmp.path().join("ref.fa.fai"), fai).unwrap();
+
+        let mut bam = noodles_bam::io::reader::Builder
+            .build_from_path(data.join("softclip_indel_se.bam"))
+            .unwrap();
+        let header = bam.read_header().unwrap();
+        let original: Vec<RecordBuf> = bam.record_bufs(&header).map(Result::unwrap).collect();
+
+        let mut cram =
+            CramReader::from_path(&data.join("softclip_indel_se.cram"), &fasta_path).unwrap();
+        let read_back: Vec<RecordBuf> =
+            cram.records().map(|r| r.unwrap().inner().clone()).collect();
+        assert_eq!(read_back.len(), 8);
+        assert_eq!(read_back, original);
+    }
+
+    /// `tests/data/cram_pe/tlen_pe.cram` is `tlen_pe.bam` (14 Bismark PE pairs)
+    /// written by samtools. Every field and tag reads back as in the BAM except
+    /// TLEN: noodles re-signs TLEN of attached mates (first record positive),
+    /// while htslib uses the leftmost rule, so 4 of the 14 pairs come back with
+    /// the sign flipped. TLEN is cleared on both sides so this pins the rest.
+    #[test]
+    fn samtools_pe_cram_reads_back_as_bam_except_tlen() {
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/cram_pe");
+        let mut bam = noodles_bam::io::reader::Builder
+            .build_from_path(data.join("tlen_pe.bam"))
+            .unwrap();
+        let header = bam.read_header().unwrap();
+        let clear_tlen = |mut r: RecordBuf| {
+            *r.template_length_mut() = 0;
+            r
+        };
+        let original: Vec<RecordBuf> = bam
+            .record_bufs(&header)
+            .map(|r| clear_tlen(r.unwrap()))
+            .collect();
+
+        let mut cram =
+            CramReader::from_path(&data.join("tlen_pe.cram"), &data.join("ecoli_window.fa"))
+                .unwrap();
+        let read_back: Vec<RecordBuf> = cram
+            .records()
+            .map(|r| clear_tlen(r.unwrap().inner().clone()))
+            .collect();
+        assert_eq!(read_back.len(), 28);
+        assert_eq!(read_back, original);
     }
 }
