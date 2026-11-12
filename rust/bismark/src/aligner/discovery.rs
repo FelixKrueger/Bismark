@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use crate::aligner::config::Aligner;
 use crate::aligner::error::{AlignerError, Result};
+use crate::genome_prep::discovery::fasta_name_cmp;
 
 /// Which FASTA extension category was found (extension-priority order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,15 +58,6 @@ impl FastaKind {
             FastaKind::FastaGz => name.ends_with(b".fasta.gz"),
         }
     }
-}
-
-/// Compare FASTA file names the way Perl's `<*.fa>` sorts them: **case-insensitively**
-/// (ASCII fold) with the raw bytes as a tiebreak. Must match
-/// `bismark-genome-preparation::discovery::fasta_name_cmp` exactly.
-fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    a.to_ascii_lowercase()
-        .cmp(&b.to_ascii_lowercase())
-        .then_with(|| a.cmp(b))
 }
 
 /// Resolved genome indexes + raw FASTA inventory (the input contract for the

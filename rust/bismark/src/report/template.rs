@@ -4,9 +4,9 @@
 //! importantly `{{filename}}`, which can be non-UTF8 — round-trip byte-for-byte
 //! like Perl. The embedded template/assets are ASCII (`&str`).
 
+use crate::genome_prep::logging::Logger;
 use crate::report::discovery::Job;
 use crate::report::error::ReportError;
-use crate::report::logging::Logger;
 use crate::report::{assets, reports, timestamp};
 
 /// Replace ALL non-overlapping occurrences of `needle` with `repl` (Perl `s///g`).

@@ -29,10 +29,10 @@ use std::path::PathBuf;
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::report::{
     self, Context, ReportWriter, classify_context, perl_substr, revcomp,
 };
+use crate::io::genome::Genome;
 
 /// Generate the GpC-context report + cov (Perl `generate_GC_context_report`).
 ///
@@ -42,12 +42,16 @@ use crate::coverage2cytosine::report::{
 /// and the report/cov writers are finished empty (there is no
 /// `EmptyCoverageInput` guard here, and as of plan 06142026 the core report no
 /// longer errors on empty either, so `--gc`/`--nome-seq` complete with exit 0).
-pub fn run_gpc(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
+pub fn run_gpc(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
     // Perl bumps the threshold to 1 inside this function (`:758-761`); the core
     // report already ran at the user's threshold. A LOCAL value — never mutate
     // `config.threshold` (the immutable user value).
     let gpc_threshold = config.threshold.max(1);
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+    let mut reader = open_cov()?;
     if config.split_by_chromosome {
         run_gpc_split(config, genome, reader.as_mut(), gpc_threshold)
     } else {
@@ -451,7 +455,7 @@ mod tests {
             [b">chr1\n".as_slice(), seq, b"\n"].concat(),
         )
         .unwrap();
-        Genome::load(dir).unwrap()
+        Genome::load(dir, &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap()
     }
 
     /// Read a plain or gzip output file back to a string.
