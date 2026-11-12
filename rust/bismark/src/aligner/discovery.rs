@@ -365,7 +365,11 @@ pub(crate) fn discover_fastas(genome_dir: &Path) -> Result<(Vec<PathBuf>, FastaK
             .filter(|p| {
                 p.is_file()
                     && p.file_name()
-                        .map(|n| kind.matches(n.as_encoded_bytes()))
+                        // Perl's `<*.fa>` glob skips dotfiles (e.g. macOS `._chr1.fa`).
+                        .map(|n| {
+                            let n = n.as_encoded_bytes();
+                            !n.starts_with(b".") && kind.matches(n)
+                        })
                         .unwrap_or(false)
             })
             .collect();
@@ -695,6 +699,16 @@ mod tests {
         assert_eq!(names, vec!["a.fa".to_string(), "B.fa".to_string()]);
         assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
         assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    #[test]
+    fn fasta_discovery_skips_dotfiles() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("._chr1.fa"), b"\x00\x05\x16\x07garbage").unwrap();
+        fs::write(tmp.path().join("chr1.fa"), b">chr1\nACGT\n").unwrap();
+        let (fastas, kind) = discover_fastas(tmp.path()).unwrap();
+        assert_eq!(kind, FastaKind::Fa);
+        assert_eq!(fastas, vec![tmp.path().join("chr1.fa")]);
     }
 
     /// v2: a complete `Combined/BS_combined.*.bt2` set is discovered as

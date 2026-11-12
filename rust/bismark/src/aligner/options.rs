@@ -107,6 +107,19 @@ pub fn build_aligner_options(
     // rammap is minimap-like: it reuses the identical clean-slate `map-ont`
     // option assembly + `--mm2_*` knobs (design#2/#3), so the same branch fires.
     if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
+        // The clean slate drops the Bowtie 2 effort options; Perl dies on them (7881/7887).
+        for (set, flag) in [
+            (cli.seed_extension_fails.is_some(), "-D"),
+            (cli.reseed_repetitive_seeds.is_some(), "-R"),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "The option '{flag} <int>' is not available with --{}: it is a Bowtie 2 \
+                     seed-effort option.",
+                    aligner.name()
+                )));
+            }
+        }
         return Ok((minimap2_options(cli)?, gp));
     }
     Ok((options, gp))
