@@ -355,22 +355,31 @@ pub(crate) fn emit_position(
     }
 }
 
-/// Build one chromosome's report lines (the Phase-B kernel walk). A cov
-/// chromosome absent from the genome yields no bytes (Perl's empty `while`-walk).
-/// The caller routes the bytes to the single shared writer (non-split) or a
+/// Buffered report bytes are written out once they pass this size, so a whole
+/// chromosome (~3 GB for human chr1 under `--CX`) is never held in memory.
+/// Tiny under `cfg(test)` so unit tests cross it.
+const REPORT_FLUSH_BYTES: usize = if cfg!(test) { 64 } else { 1 << 20 };
+
+/// Write one chromosome's report lines (the Phase-B kernel walk) to `report_w`,
+/// and the NOMe `.cov` companion to `cov_w`, in [`REPORT_FLUSH_BYTES`] chunks.
+/// A cov chromosome absent from the genome writes nothing (Perl's empty
+/// `while`-walk). The caller passes the single shared writer (non-split) or a
 /// per-chromosome writer (split).
-fn chromosome_report_bytes(
+#[allow(clippy::too_many_arguments)]
+fn write_chromosome_report(
     name: &[u8],
     genome: &Genome,
     buffer: &HashMap<u32, (u32, u32)>,
     config: &ResolvedConfig,
     accumulate_summary: bool,
     summary: &mut ContextSummary,
-) -> (Vec<u8>, Vec<u8>) {
+    report_w: &mut ReportWriter,
+    mut cov_w: Option<&mut ReportWriter>,
+) -> io::Result<()> {
     let mut out: Vec<u8> = Vec::new();
     let mut cov_out: Vec<u8> = Vec::new(); // stays empty unless config.nome
     let Some(seq) = genome.get(name) else {
-        return (out, cov_out);
+        return Ok(());
     };
     for i in 0..seq.len() {
         if seq[i] == b'C' || seq[i] == b'G' {
@@ -389,9 +398,23 @@ fn chromosome_report_bytes(
                 &mut out,
                 &mut cov_out,
             );
+            if out.len() >= REPORT_FLUSH_BYTES {
+                report_w.write_all(&out)?;
+                out.clear();
+            }
+            if cov_out.len() >= REPORT_FLUSH_BYTES {
+                if let Some(cw) = cov_w.as_deref_mut() {
+                    cw.write_all(&cov_out)?;
+                }
+                cov_out.clear();
+            }
         }
     }
-    (out, cov_out)
+    report_w.write_all(&out)?;
+    if let Some(cw) = cov_w {
+        cw.write_all(&cov_out)?;
+    }
+    Ok(())
 }
 
 /// Generate the genome-wide cytosine report(s) + context summary. Dispatches
@@ -447,12 +470,16 @@ fn run_single(
         };
         if cur_chr.as_deref() != Some(chr.as_slice()) {
             if let Some(prev) = cur_chr.take() {
-                let (bytes, cov_bytes) =
-                    chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
-                report_w.write_all(&bytes)?;
-                if let Some(cw) = cov_w.as_mut() {
-                    cw.write_all(&cov_bytes)?;
-                }
+                write_chromosome_report(
+                    &prev,
+                    genome,
+                    &buffer,
+                    config,
+                    true,
+                    summary,
+                    &mut report_w,
+                    cov_w.as_mut(),
+                )?;
             }
             buffer.clear();
             seen.insert(chr.clone());
@@ -478,12 +505,16 @@ fn run_single(
     match cur_chr.take() {
         None => { /* empty-but-valid: fall through; per-mode report path handles it */ }
         Some(prev) => {
-            let (bytes, cov_bytes) =
-                chromosome_report_bytes(&prev, genome, &buffer, config, true, summary);
-            report_w.write_all(&bytes)?;
-            if let Some(cw) = cov_w.as_mut() {
-                cw.write_all(&cov_bytes)?;
-            }
+            write_chromosome_report(
+                &prev,
+                genome,
+                &buffer,
+                config,
+                true,
+                summary,
+                &mut report_w,
+                cov_w.as_mut(),
+            )?;
         }
     }
     // Uncovered-chromosome pass — runs ONLY at the default threshold 0 in
@@ -495,9 +526,17 @@ fn run_single(
         let empty: HashMap<u32, (u32, u32)> = HashMap::new();
         for name in genome.names_sorted() {
             if !seen.contains(name) {
-                let (bytes, _cov) =
-                    chromosome_report_bytes(name, genome, &empty, config, false, summary);
-                report_w.write_all(&bytes)?;
+                // Non-NOMe only (gate above), so there is no `.cov` companion.
+                write_chromosome_report(
+                    name,
+                    genome,
+                    &empty,
+                    config,
+                    false,
+                    summary,
+                    &mut report_w,
+                    None,
+                )?;
             }
         }
     }
@@ -595,10 +634,10 @@ fn run_split(
     Ok(())
 }
 
-/// Split-mode per-chromosome flush: walk the chromosome, open a **fresh,
-/// truncating** per-chr report writer (no caching — a re-appearance truncates),
-/// write + finish; then create/truncate an empty per-chr summary file. Returns
-/// that summary path so the caller can route the full summary to the last one.
+/// Split-mode per-chromosome flush: open a **fresh, truncating** per-chr report
+/// writer (no caching — a re-appearance truncates), walk the chromosome into it
+/// and finish; then create/truncate an empty per-chr summary file. Returns that
+/// summary path so the caller can route the full summary to the last one.
 fn flush_split_chromosome(
     name: &[u8],
     genome: &Genome,
@@ -607,17 +646,30 @@ fn flush_split_chromosome(
     accumulate_summary: bool,
     summary: &mut ContextSummary,
 ) -> Result<PathBuf, BismarkC2cError> {
-    let (bytes, cov_bytes) =
-        chromosome_report_bytes(name, genome, buffer, config, accumulate_summary, summary);
     let mut w = ReportWriter::create(&report_path(config, Some(name)), config.gzip)?;
-    w.write_all(&bytes)?;
-    w.finish()?; // zero-emit chr: empty file (plain) / valid empty-gzip stream
     // NOMe `.cov` companion — a fresh truncating per-chr writer (no caching), so
     // a non-contiguous chromosome re-appearance re-truncates its `.cov` exactly
     // as the report does (Perl reopens GCCOV/CYTCOV with '>').
-    if config.nome {
-        let mut cw = ReportWriter::create(&nome_cov_path(config, Some(name)), config.gzip)?;
-        cw.write_all(&cov_bytes)?;
+    let mut cw = if config.nome {
+        Some(ReportWriter::create(
+            &nome_cov_path(config, Some(name)),
+            config.gzip,
+        )?)
+    } else {
+        None
+    };
+    write_chromosome_report(
+        name,
+        genome,
+        buffer,
+        config,
+        accumulate_summary,
+        summary,
+        &mut w,
+        cw.as_mut(),
+    )?;
+    w.finish()?; // zero-emit chr: empty file (plain) / valid empty-gzip stream
+    if let Some(cw) = cw {
         cw.finish()?;
     }
     let summary_path = summary_path(config, Some(name));
@@ -1127,6 +1179,105 @@ mod tests {
             discordant_cov_name("merge.CpG_report.txt.gz", true),
             "merge.CpG_report.discordant_CpG_evidence.cov.gz"
         );
+    }
+
+    /// #1167 finding 15: a chromosome whose report is many times
+    /// `REPORT_FLUSH_BYTES` is written in chunks, byte-identical to the old
+    /// whole-chromosome buffer (report and NOMe `.cov`, plain and gzip).
+    #[test]
+    fn chromosome_report_streams_byte_identically() {
+        use std::io::Read;
+        let seq: Vec<u8> = b"TTACGTTAGCATCGTTCCAGG".repeat(50);
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(
+            t.path().join("g.fa"),
+            [b">chr1\n".as_slice(), &seq, b"\n"].concat(),
+        )
+        .unwrap();
+        let genome = Genome::load(t.path()).unwrap();
+        let mut buf = HashMap::new();
+        for p in (1..seq.len() as u32).step_by(3) {
+            buf.insert(p, (p % 7, p % 5 + 1));
+        }
+        let read = |p: &Path, gzip: bool| {
+            let mut s = Vec::new();
+            if gzip {
+                flate2::read::MultiGzDecoder::new(File::open(p).unwrap())
+                    .read_to_end(&mut s)
+                    .unwrap();
+            } else {
+                s = std::fs::read(p).unwrap();
+            }
+            s
+        };
+        for (cpg_only, nome, gzip) in [(false, false, false), (true, true, true)] {
+            let config = ResolvedConfig {
+                cov_infile: PathBuf::from("in.cov"),
+                output_raw: "s".to_string(),
+                output_stem: "s".to_string(),
+                output_dir: String::new(),
+                parent_dir: PathBuf::from("."),
+                genome_folder: PathBuf::from("g"),
+                cpg_only,
+                cx_context: !cpg_only,
+                gc_context: false,
+                nome,
+                zero_based: false,
+                split_by_chromosome: false,
+                threshold: u32::from(nome),
+                gzip,
+                merge_cpgs: false,
+                discordance: None,
+                drach: false,
+                ffs: false,
+            };
+            // The old all-in-memory result.
+            let (mut want, mut want_cov) = (Vec::new(), Vec::new());
+            let mut summ = ContextSummary::new();
+            for i in 0..seq.len() {
+                if seq[i] == b'C' || seq[i] == b'G' {
+                    emit_position(
+                        b"chr1",
+                        &seq,
+                        i,
+                        &buf,
+                        cpg_only,
+                        false,
+                        config.threshold,
+                        nome,
+                        false,
+                        true,
+                        &mut summ,
+                        &mut want,
+                        &mut want_cov,
+                    );
+                }
+            }
+            assert!(want.len() > 10 * REPORT_FLUSH_BYTES);
+
+            let (rp, cp) = (t.path().join("r"), t.path().join("c"));
+            let mut rw = ReportWriter::create(&rp, gzip).unwrap();
+            let mut cw = ReportWriter::create(&cp, gzip).unwrap();
+            let mut summ2 = ContextSummary::new();
+            write_chromosome_report(
+                b"chr1",
+                &genome,
+                &buf,
+                &config,
+                true,
+                &mut summ2,
+                &mut rw,
+                nome.then_some(&mut cw),
+            )
+            .unwrap();
+            rw.finish().unwrap();
+            cw.finish().unwrap();
+            assert_eq!(read(&rp, gzip), want);
+            assert_eq!(read(&cp, gzip), want_cov);
+            if nome {
+                assert!(want_cov.len() > 10 * REPORT_FLUSH_BYTES);
+            }
+        }
     }
 
     // ── Phase C: ReportWriter (plain / gz / empty-gz stream) ──
