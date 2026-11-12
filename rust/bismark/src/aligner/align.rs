@@ -554,6 +554,8 @@ pub struct FileSamStream {
     reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamRecord>,
     line_buf: String,
+    /// Primary records read so far (as [`AlignerStream`]).
+    records: u64,
 }
 
 impl FileSamStream {
@@ -581,6 +583,7 @@ impl FileSamStream {
             break Some(SamRecord::parse(&line)?);
         };
         Ok(FileSamStream {
+            records: u64::from(current.as_ref().is_some_and(is_primary)),
             reader,
             current,
             line_buf: String::new(),
@@ -603,7 +606,17 @@ impl FileSamStream {
         } else {
             Some(SamRecord::parse(&self.line_buf)?)
         };
+        self.records += u64::from(self.current.as_ref().is_some_and(is_primary));
         Ok(())
+    }
+
+    /// The 1-based primary record the merge stopped at, if it did not consume the
+    /// file (as [`AlignerStream::stopped_at`]).
+    pub fn stopped_at(&self) -> Option<u64> {
+        self.current
+            .as_ref()
+            .is_some_and(is_primary)
+            .then_some(self.records)
     }
 }
 
@@ -888,6 +901,8 @@ impl Drop for PairedAlignerStream {
 pub struct PairedFileSamStream {
     reader: BufReader<noodles_bgzf::io::Reader<File>>,
     current: Option<SamPair>,
+    /// Pairs read so far (as [`PairedAlignerStream`]).
+    records: u64,
 }
 
 impl PairedFileSamStream {
@@ -923,7 +938,11 @@ impl PairedFileSamStream {
                 Some(SamPair::from_lines(&line1, &line2)?)
             };
         };
-        Ok(PairedFileSamStream { reader, current })
+        Ok(PairedFileSamStream {
+            records: u64::from(current.is_some()),
+            reader,
+            current,
+        })
     }
 
     /// Peek the current pair without consuming it (`None` at EOF).
@@ -948,7 +967,14 @@ impl PairedFileSamStream {
         } else {
             Some(SamPair::from_lines(&line1, &line2)?)
         };
+        self.records += u64::from(self.current.is_some());
         Ok(())
+    }
+
+    /// The 1-based pair the merge stopped at, if it did not consume the file (as
+    /// [`PairedAlignerStream::stopped_at`]).
+    pub fn stopped_at(&self) -> Option<u64> {
+        self.current.is_some().then_some(self.records)
     }
 }
 

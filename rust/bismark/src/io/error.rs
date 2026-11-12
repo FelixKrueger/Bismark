@@ -111,18 +111,6 @@ pub enum BismarkIoError {
     #[error("FASTA index (.fai) missing for CRAM reference: {0} — generate with `samtools faidx`")]
     MissingFastaIndex(PathBuf),
 
-    /// The reconstituted multi-FASTA would contain duplicate chromosome
-    /// names because multiple input FASTAs declared the same chromosome.
-    /// Inspect the Bismark genome directory.
-    #[error(
-        "duplicate chromosome name in reconstituted reference: {name} \
-         (multiple input FASTAs in the Bismark genome directory declared this chromosome)"
-    )]
-    DuplicateChromosomeName {
-        /// The duplicate chromosome name (lossy-decoded for display).
-        name: String,
-    },
-
     /// The given file path does not have a recognised BAM/SAM/CRAM
     /// extension.
     ///
