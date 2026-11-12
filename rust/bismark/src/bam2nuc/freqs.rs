@@ -16,7 +16,7 @@
 //! (Perl skips only the literal `N`); the ACGT restriction lives only in the
 //! stats report, never here or in the cache.
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use crate::bam2nuc::error::BismarkBam2nucError;
@@ -189,9 +189,16 @@ pub fn write_cache(counts: &NucCounts, genome_folder: &Path, output_dir: &str) {
     );
 }
 
+/// Write via `<path>.tmp.<pid>` + rename, so a concurrent bam2nuc job never
+/// reads a partial cache and a failed write never leaves a truncated one.
 fn write_all_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut f = std::fs::File::create(path)?;
-    f.write_all(bytes)
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".tmp.{}", std::process::id()));
+    let r = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// Read a `genomic_nucleotide_frequencies.txt` cache into a [`NucCounts`].
@@ -380,6 +387,33 @@ mod tests {
         std::fs::write(&p, &bytes).unwrap();
         let back = read_cache(&p).unwrap();
         assert_eq!(back.cache_bytes(), bytes);
+    }
+
+    #[test]
+    fn write_cache_goes_through_temp_file_and_rename() {
+        let c = counts_of(b"ACGT");
+        // Success: final cache has the bytes, no temp file is left behind.
+        let gdir = tempfile::tempdir().unwrap();
+        write_cache(&c, gdir.path(), "");
+        assert_eq!(
+            std::fs::read(gdir.path().join(CACHE_FILE)).unwrap(),
+            c.cache_bytes()
+        );
+        let names: Vec<_> = std::fs::read_dir(gdir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [CACHE_FILE]);
+
+        // Failure: an unwritable temp path must not leave a cache in the genome
+        // folder (the write falls back to the output dir instead).
+        let gdir = tempfile::tempdir().unwrap();
+        let odir = tempfile::tempdir().unwrap();
+        let tmp = format!("{CACHE_FILE}.tmp.{}", std::process::id());
+        std::fs::create_dir(gdir.path().join(tmp)).unwrap();
+        write_cache(&c, gdir.path(), &format!("{}/", odir.path().display()));
+        assert!(!gdir.path().join(CACHE_FILE).exists());
+        assert!(odir.path().join(CACHE_FILE).exists());
     }
 
     #[cfg(unix)]
