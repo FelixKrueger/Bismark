@@ -16,11 +16,11 @@
 //! (Perl skips only the literal `N`); the ACGT restriction lives only in the
 //! stats report, never here or in the cache.
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use crate::bam2nuc::error::BismarkBam2nucError;
-use crate::bam2nuc::genome::Genome;
+use crate::io::genome::Genome;
 
 /// The genome-composition cache filename (reused byte-for-byte if present).
 pub const CACHE_FILE: &str = "genomic_nucleotide_frequencies.txt";
@@ -127,8 +127,8 @@ pub fn process_sequence(seq: &[u8], counts: &mut NucCounts) {
 #[must_use]
 pub fn compute_genomic(genome: &Genome) -> NucCounts {
     let mut counts = NucCounts::default();
-    for (_name, seq) in genome.seqs() {
-        process_sequence(seq, &mut counts);
+    for name in genome.names_sorted() {
+        process_sequence(genome.get(name).unwrap_or_default(), &mut counts);
     }
     counts
 }
@@ -189,9 +189,16 @@ pub fn write_cache(counts: &NucCounts, genome_folder: &Path, output_dir: &str) {
     );
 }
 
+/// Write via `<path>.tmp.<pid>` + rename, so a concurrent bam2nuc job never
+/// reads a partial cache and a failed write never leaves a truncated one.
 fn write_all_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut f = std::fs::File::create(path)?;
-    f.write_all(bytes)
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(format!(".tmp.{}", std::process::id()));
+    let r = std::fs::write(&tmp, bytes).and_then(|()| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// Read a `genomic_nucleotide_frequencies.txt` cache into a [`NucCounts`].
@@ -314,7 +321,7 @@ mod tests {
     fn compute_genomic_sums_all_chromosomes() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("g.fa"), ">c1\nAC\n>c2\nGT\n").unwrap();
-        let g = Genome::load(t.path()).unwrap();
+        let g = Genome::load(t.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = compute_genomic(&g);
         // c1: mono A,C; di AC.  c2: mono G,T; di GT.  No cross-chr di.
         assert_eq!(c.mono(b'A'), 1);
@@ -330,7 +337,7 @@ mod tests {
     fn get_genomic_frequencies_computes_then_writes_cache() {
         let gdir = tempfile::tempdir().unwrap();
         std::fs::write(gdir.path().join("g.fa"), ">c1\nACGT\n").unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = get_genomic_frequencies(&g, gdir.path(), "").unwrap();
         assert_eq!(c.mono(b'A'), 1);
         // The cache file was written to the genome folder.
@@ -351,7 +358,7 @@ mod tests {
             "A\t1000\nC\t2000\nG\t3000\nT\t4000\n",
         )
         .unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let c = get_genomic_frequencies(&g, gdir.path(), "").unwrap();
         assert_eq!(c.mono(b'A'), 1000); // planted value wins (no recompute)
         assert_eq!(c.mono(b'T'), 4000);
@@ -364,7 +371,7 @@ mod tests {
         let odir = tempfile::tempdir().unwrap();
         std::fs::write(gdir.path().join("g.fa"), ">c1\nACGT\n").unwrap();
         std::fs::write(odir.path().join(CACHE_FILE), "A\t9999\n").unwrap();
-        let g = Genome::load(gdir.path()).unwrap();
+        let g = Genome::load(gdir.path(), &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap();
         let out_prefix = format!("{}/", odir.path().display());
         let c = get_genomic_frequencies(&g, gdir.path(), &out_prefix).unwrap();
         // genome_folder has no cache → recompute (NOT the planted 9999).
@@ -380,6 +387,33 @@ mod tests {
         std::fs::write(&p, &bytes).unwrap();
         let back = read_cache(&p).unwrap();
         assert_eq!(back.cache_bytes(), bytes);
+    }
+
+    #[test]
+    fn write_cache_goes_through_temp_file_and_rename() {
+        let c = counts_of(b"ACGT");
+        // Success: final cache has the bytes, no temp file is left behind.
+        let gdir = tempfile::tempdir().unwrap();
+        write_cache(&c, gdir.path(), "");
+        assert_eq!(
+            std::fs::read(gdir.path().join(CACHE_FILE)).unwrap(),
+            c.cache_bytes()
+        );
+        let names: Vec<_> = std::fs::read_dir(gdir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [CACHE_FILE]);
+
+        // Failure: an unwritable temp path must not leave a cache in the genome
+        // folder (the write falls back to the output dir instead).
+        let gdir = tempfile::tempdir().unwrap();
+        let odir = tempfile::tempdir().unwrap();
+        let tmp = format!("{CACHE_FILE}.tmp.{}", std::process::id());
+        std::fs::create_dir(gdir.path().join(tmp)).unwrap();
+        write_cache(&c, gdir.path(), &format!("{}/", odir.path().display()));
+        assert!(!gdir.path().join(CACHE_FILE).exists());
+        assert!(odir.path().join(CACHE_FILE).exists());
     }
 
     #[cfg(unix)]

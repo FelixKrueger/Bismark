@@ -71,6 +71,19 @@ pub enum BismarkDedupError {
         extra_chrs: Vec<String>,
     },
 
+    /// `--multiple` inputs have the same `@SQ` names as file1 but in a
+    /// different order. Records are written unchanged (raw refID) under
+    /// file1's header, so a different order would move reads to the wrong
+    /// chromosome.
+    #[error(
+        "--multiple inputs have the same @SQ names in a different order: {offending_file} \
+         does not match the first file's @SQ order (reheader it to the first file's order)"
+    )]
+    MultipleSqOrderMismatch {
+        /// Path of the input file whose @SQ order diverges from file1's.
+        offending_file: PathBuf,
+    },
+
     /// `--multiple` inputs span more than one file format. All inputs must
     /// share format (matches Perl's all-BAM-or-all-SAM assumption at
     /// lines 195–201).

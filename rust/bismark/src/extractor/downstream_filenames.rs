@@ -372,9 +372,18 @@ pub fn run_downstream_chain(
                 tool: "coverage2cytosine",
                 message: e.to_string(),
             })?;
-        crate::coverage2cytosine::run(&c2c_cfg).map_err(|e| BismarkExtractorError::Downstream {
-            tool: "coverage2cytosine",
-            message: e.to_string(),
+        // c2c reads the coverage lines from `sorted` (still in memory), not from
+        // the `.cov.gz` just written: same bytes, no re-read.
+        let open_cov = || -> Result<Box<dyn std::io::BufRead + '_>, _> {
+            Ok(Box::new(crate::bedgraph::output::coverage_lines(
+                &b2bg_cfg, sorted,
+            )))
+        };
+        crate::coverage2cytosine::run_with_cov(&c2c_cfg, &open_cov).map_err(|e| {
+            BismarkExtractorError::Downstream {
+                tool: "coverage2cytosine",
+                message: e.to_string(),
+            }
         })?;
     }
 
@@ -421,6 +430,7 @@ mod tests {
             quiet: false,
             verbose: false,
             allow_discordant: false,
+            cram_ref: None,
         }
     }
 

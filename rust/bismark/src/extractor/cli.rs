@@ -191,6 +191,11 @@ pub struct Cli {
     #[arg(short = 'g', long = "genome_folder")]
     pub genome_folder: Option<PathBuf>,
 
+    /// Reference FASTA (with a sibling `.fai`) used to decode CRAM input.
+    /// Required when any input file is CRAM; ignored for BAM/SAM.
+    #[arg(long = "cram_ref")]
+    pub cram_ref: Option<PathBuf>,
+
     /// Report all C-contexts (not just CpG) in the coverage/bedGraph and the
     /// cytosine_report. Valid with --bedGraph or --cytosine_report; significant
     /// runtime increase.
@@ -351,6 +356,8 @@ pub struct ResolvedConfig {
     pub ample_memory: bool,
     /// Genome folder for cytosine_report (mandatory when cytosine_report set).
     pub genome_folder: Option<PathBuf>,
+    /// CRAM reference FASTA, if `--cram_ref` was supplied.
+    pub cram_ref: Option<PathBuf>,
     /// Rayon worker thread count (Phase F).
     pub parallel: usize,
     /// Suppress informational stderr log (#882). Errors/warnings still print.
@@ -414,9 +421,11 @@ impl Cli {
             return Err(BismarkExtractorError::BufferSizeWithAmpleMemory);
         }
 
-        // --include_overlap is PE-only (Perl 1217).
-        // Reviewer A Medium #2.
-        if self.include_overlap && !self.paired_end {
+        // --include_overlap is PE-only (Perl 1217). Only an explicit
+        // --single-end is rejected here; an auto-detected SE file is
+        // rejected after detection in `process_one_file` (Perl checks
+        // after its @PG auto-detection too).
+        if self.include_overlap && self.single_end {
             return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
         }
 
@@ -557,6 +566,7 @@ impl Cli {
             gazillion: self.gazillion,
             ample_memory: self.ample_memory,
             genome_folder: self.genome_folder,
+            cram_ref: self.cram_ref,
             parallel: self.parallel as usize,
             quiet: self.quiet,
             verbose: self.verbose,
@@ -879,12 +889,18 @@ mod tests {
         assert!(config.buffer_size.is_none());
     }
 
-    /// Reviewer A Medium #2: `--include_overlap` without `--paired-end`
-    /// rejects (Perl line 1217).
+    /// Reviewer A Medium #2: `--include_overlap` with explicit `--single-end`
+    /// rejects (Perl line 1217). Without `-s`/`-p` the check is deferred to
+    /// after auto-detection (#1167 finding 24).
     #[test]
-    fn validate_rejects_include_overlap_without_paired_end() {
+    fn validate_rejects_include_overlap_with_single_end() {
         let f = temp_input();
-        let cli = parse(&["--include_overlap", f.path().to_str().unwrap()]).unwrap();
+        let cli = parse(&[
+            "--include_overlap",
+            "--single-end",
+            f.path().to_str().unwrap(),
+        ])
+        .unwrap();
         assert!(matches!(
             cli.validate(),
             Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd)
