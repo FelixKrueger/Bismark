@@ -141,12 +141,13 @@ fn correct_pe(span: Vec<u8>, flag: u16) -> Vec<u8> {
 /// BAM opens with raw `noodles_bam::io::Reader` (no XR/XG/XM validation, no
 /// unmapped filter, no coordinate-sort check). CRAM (`cram_ref` required) goes
 /// through the shared [`crate::io::open_reader_without_sort_check`]. Then
-/// detects SE/PE from the `@PG` header and tallies each clean-CIGAR read's
-/// strand-corrected genomic span.
+/// detects SE/PE from the `@PG` header (unless `paired` sets it) and tallies
+/// each clean-CIGAR read's strand-corrected genomic span.
 pub fn count_reads_in_file(
     genome: &Genome,
     path: &Path,
     cram_ref: Option<&Path>,
+    paired: Option<bool>,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError> {
     if crate::io::AlignmentKind::from_path(path)? == crate::io::AlignmentKind::Cram {
         // shortcut: the shared reader drops unmapped records and needs XR/XG/XM,
@@ -158,11 +159,11 @@ pub fn count_reads_in_file(
             r.map(|rec| rec.inner().clone())
                 .map_err(std::io::Error::other)
         });
-        return count_with_header(&header, records, genome);
+        return count_with_header(&header, records, genome, paired);
     }
     let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(path)?));
     let header = reader.read_header()?;
-    count_with_header(&header, reader.record_bufs(&header), genome)
+    count_with_header(&header, reader.record_bufs(&header), genome, paired)
 }
 
 /// Resolve the chromosome table and SE/PE mode from `header`, then count.
@@ -170,12 +171,14 @@ fn count_with_header<I>(
     header: &Header,
     records: I,
     genome: &Genome,
+    paired: Option<bool>,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError>
 where
     I: Iterator<Item = std::io::Result<RecordBuf>>,
 {
     let chr_names = build_chr_name_table(header)?;
-    let paired = crate::io::detect_paired_from_header(header)
+    let paired = paired
+        .or_else(|| crate::io::detect_paired_from_header(header))
         .ok_or(BismarkBam2nucError::SePeUndetermined)?;
     count_records(records, paired, &chr_names, genome)
 }

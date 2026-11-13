@@ -197,6 +197,18 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                 .into(),
         ));
     }
+    // The standalone paths below return before resolve(), which handles these flags.
+    if !cli.five_base_consensus_from_bam.is_empty() || !cli.five_base_bisulfite_bam.is_empty() {
+        config::reject_old_flag(cli)?;
+        if cli.nucleotide_coverage {
+            return Err(AlignerError::Validation(
+                "--nucleotide_coverage applies to an alignment run; it has no effect on \
+                 --five_base_consensus_from_bam or --five_base_bisulfite_bam. Run \
+                 `bismark bam2nuc` on their output instead."
+                    .into(),
+            ));
+        }
+    }
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
@@ -215,14 +227,6 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // the run (the transcode FASTQ is consumed by BOTH the convert step and the
     // methylation-call re-read, so cleanup must follow the pipeline).
     let alt_input_temp_dirs = resolve_alt_inputs(&mut config)?;
-    let deferred = config::deferred_flags(cli);
-    if !deferred.is_empty() {
-        eprintln!(
-            "Note: these options are recognised but not yet active in this build \
-             (wired in a later phase): {}",
-            deferred.join(", ")
-        );
-    }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
@@ -313,13 +317,75 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    let result = reject_crlf_inputs(&config.layout).and_then(|()| pipeline(&config));
+    let result = reject_crlf_inputs(&config.layout)
+        .and_then(|()| pipeline(&config))
+        .and_then(|()| run_nucleotide_coverage(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
     for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
+}
+
+/// `--nucleotide_coverage` (Perl 931-946): bam2nuc on every input's final BAM, in
+/// `--output_dir`, after the alignment has finished.
+fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
+    if !config.nucleotide_coverage {
+        return Ok(());
+    }
+    // The layout, not bam2nuc's @PG sniff: positional paired uBAM/BINSEQ/CRAM input has no `-1`/`-2`.
+    let (reads, paired): (&[String], bool) = match &config.layout {
+        ReadLayout::SingleEnd { reads } => (reads, false),
+        ReadLayout::PairedEnd { mates1, .. } => (mates1, true),
+    };
+    let tok = config.aligner.token();
+    let pe = if paired { "_pe" } else { "" };
+    let mut output_dir = config.output.output_dir.to_string_lossy().into_owned();
+    if !output_dir.is_empty() && !output_dir.ends_with('/') {
+        output_dir.push('/');
+    }
+    let parent_dir = std::env::current_dir()?;
+    eprintln!("Now calculating observed and expected nucleotide coverage statistics...");
+    // One BAM per call, so an input without usable reads does not skip the next one.
+    for read in reads {
+        let bam = derive_output_path(
+            read,
+            config,
+            &format!("_bismark_{tok}{pe}.bam"),
+            &format!("{pe}.bam"),
+        );
+        let bam2nuc = crate::bam2nuc::ResolvedConfig {
+            inputs: vec![bam.clone()],
+            genome_folder: config.genome.genome_dir.clone(),
+            output_dir: output_dir.clone(),
+            parent_dir: parent_dir.clone(),
+            genomic_composition_only: false,
+            cram_ref: None,
+            paired: Some(paired),
+        };
+        match crate::bam2nuc::run(&bam2nuc) {
+            Ok(()) => {}
+            Err(e @ crate::bam2nuc::BismarkBam2nucError::ZeroDivision { .. }) => {
+                let name = bam.file_name().unwrap_or_default().to_string_lossy();
+                let stats = format!(
+                    "{output_dir}{}.nucleotide_stats.txt",
+                    name.strip_suffix(".bam").unwrap_or(&name)
+                );
+                let _ = std::fs::remove_file(&stats);
+                eprintln!(
+                    "Warning: no nucleotide coverage statistics for {}: {e}",
+                    bam.display()
+                );
+            }
+            Err(e) => {
+                return Err(AlignerError::Validation(format!(
+                    "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Fail on a read input with Windows (CRLF) line endings.

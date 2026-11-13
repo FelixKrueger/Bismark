@@ -73,7 +73,7 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
             freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
 
         let (sample, stats) =
-            count::count_reads_in_file(&genome, infile, config.cram_ref.as_deref())?;
+            count::count_reads_in_file(&genome, infile, config.cram_ref.as_deref(), config.paired)?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped

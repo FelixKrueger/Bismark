@@ -227,15 +227,7 @@ Once CRAM output is supported, it requires you to specify a reference genome as 
 
 - `--old_flag`
 
-  Only in paired-end SAM mode, uses the FLAG values used by Bismark 0.8.2 and before. In addition, this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since both the appended read IDs and custom FLAG values may cause problems with some downstream tools such as Picard, new defaults were implemented as of version 0.8.3.
-
-                default                  old_flag
-           ===================     ===================
-           Read 1       Read 2     Read 1       Read 2
-         OT:    99           147        67           131
-         OB:    83           163       115           179
-         CTOT:  99           147        67           131
-         CTOB:  83           163       115           179
+  Not supported by the Rust aligner; the run is rejected. In Perl Bismark this used the paired-end FLAG values of Bismark 0.8.2 and before.
 
 - `--ambig_bam`
 
@@ -243,7 +235,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--nucleotide_coverage`
 
-  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete by calling `bismark bam2nuc`. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. If a file _nucleotide_stats.txt_ is found with the Bismark reports it will be automatically detected and used for the Bismark HTML report. This option works only for BAM or CRAM files.
+  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete, by running `bismark bam2nuc` on each final BAM in the same process. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. The _nucleotide_stats.txt_ file is written to the output directory, and `bismark report` detects it and adds it to the HTML report. If bam2nuc fails, the run exits with an error after the alignment outputs are complete; an input without usable reads only gets a warning and no stats file.
 
 ##### Other:
 

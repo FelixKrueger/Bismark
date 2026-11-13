@@ -69,6 +69,7 @@ The developer gave this order. Most workflows run these steps:
 - 5-Base runs keep only pairs on one contig, on opposite strands, pointing at each other (`five_base_pair_geometry` in `aligner/mod.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
+- `--nucleotide_coverage` runs bam2nuc on each final BAM once alignment has finished (`run_nucleotide_coverage` in `aligner/mod.rs`); `--old_flag` stops the run (`reject_old_flag` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
 - `extract --cytosine_report` needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
 - The extractor reads only BAMs with Bismark `XM`/`XR`/`XG` tags. For a BAM from another aligner, `extract --allow_discordant` handles cross-chromosome and discordant pairs, orphan reads, and secondary or supplementary records (`classify_pair` in `extractor/pair_class.rs`).
