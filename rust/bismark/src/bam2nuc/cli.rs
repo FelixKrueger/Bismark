@@ -90,6 +90,8 @@ pub struct ResolvedConfig {
     pub genomic_composition_only: bool,
     /// CRAM reference path, if `--cram_ref` was supplied.
     pub cram_ref: Option<PathBuf>,
+    /// SE/PE mode set by the caller; `None` detects it from the `@PG` header.
+    pub paired: Option<bool>,
 }
 
 impl Cli {
@@ -120,6 +122,7 @@ impl Cli {
             parent_dir,
             genomic_composition_only: self.genomic_composition_only,
             cram_ref: self.cram_ref,
+            paired: None,
         })
     }
 }

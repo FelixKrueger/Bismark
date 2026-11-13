@@ -586,6 +586,8 @@ pub struct RunConfig {
     pub add_umi: bool,
     /// `--strandID`: write `YS:Z:<strand>` on paired-end records.
     pub strand_id: bool,
+    /// `--nucleotide_coverage`: run bam2nuc on each final BAM after alignment.
+    pub nucleotide_coverage: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -786,7 +788,7 @@ fn discover_genome_for_run(
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     let aligner = resolve_aligner(cli)?;
-    reject_unwired_flags(cli)?;
+    reject_old_flag(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
     // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
     // that dies in `resolve_aligner`).
@@ -1159,6 +1161,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         add_barcode: cli.add_barcode,
         add_umi: cli.add_umi,
         strand_id: cli.strand_id,
+        nucleotide_coverage: cli.nucleotide_coverage,
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
@@ -1649,17 +1652,8 @@ fn validate_multicore(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// Reject the flags that are parsed but not wired in this build, rather than
-/// accepting them and writing output that ignores them.
-fn reject_unwired_flags(cli: &Cli) -> Result<()> {
-    if cli.nucleotide_coverage {
-        return Err(AlignerError::Unsupported(
-            "--nucleotide_coverage is not supported by the aligner in this build. Run \
-             `bismark bam2nuc` on the BAM afterwards instead; `bismark report` picks up its \
-             nucleotide_stats.txt."
-                .into(),
-        ));
-    }
+/// Reject `--old_flag`, which is parsed for Perl compatibility but not implemented.
+pub(crate) fn reject_old_flag(cli: &Cli) -> Result<()> {
     if cli.old_flag {
         return Err(AlignerError::Unsupported(
             "--old_flag (the legacy pre-v0.8.3 SAM FLAG values) is not supported in this build."
@@ -2003,6 +1997,7 @@ pub fn run_config_stub(
         add_barcode: false,
         add_umi: false,
         strand_id: false,
+        nucleotide_coverage: false,
         output: OutputTarget {
             output_dir: PathBuf::from("."),
             temp_dir: PathBuf::from("."),

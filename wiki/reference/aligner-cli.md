@@ -111,7 +111,8 @@ With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth
 |---|---|
 | `--sam`, `--cram` | `resolve_output` |
 | `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
-| `--nucleotide_coverage` (run `bismark bam2nuc` afterwards), `--old_flag` | `reject_unwired_flags` |
+| `--old_flag` | `reject_old_flag` |
+| `--nucleotide_coverage` or `--old_flag` with `--five_base_consensus_from_bam` / `--five_base_bisulfite_bam` | `run` in `aligner/mod.rs` |
 | minimap2 or rammap with paired-end reads, or a positional paired uBAM/BINSEQ (outside 5-Base) | `reject_unsupported_paired_aligner` |
 | Read files with Windows (CRLF) line endings | `reject_crlf_inputs` in `aligner/mod.rs`, before any aligner starts |
 | `--local` with minimap2, rammap or `--combined_index` | `resolve` |

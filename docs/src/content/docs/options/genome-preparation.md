@@ -49,7 +49,7 @@ Use several threads for each indexing process to speed up the genome preparation
 
 - `--genomic_composition`
 
-  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bismark bam2nuc`.
+  Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bismark bam2nuc` or the Bismark option `--nucleotide_coverage`.
 
 - `--slam`
 
