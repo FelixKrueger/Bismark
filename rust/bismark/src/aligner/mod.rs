@@ -213,7 +213,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
-        return finish_staged(run_five_base_consensus_standalone(cli, &command_line));
+        return staging::scope(|| run_five_base_consensus_standalone(cli, &command_line));
     }
     // #1095 standalone bisulfite-convention re-encode over EXISTING BAM(s) — same shape,
     // but needs no genome: the reference is reconstructed per record from MD.
@@ -319,7 +319,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     eprintln!("{}", config.summary());
     let result = reject_crlf_inputs(&config.layout)
-        .and_then(|()| finish_staged(pipeline(&config)))
+        .and_then(|()| staging::scope(|| pipeline(&config)))
         .and_then(|()| run_nucleotide_coverage(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
@@ -327,17 +327,6 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
-}
-
-/// Publish the staged outputs of a successful run; delete them after a failed one.
-fn finish_staged(result: Result<()>) -> Result<()> {
-    match result {
-        Ok(()) => Ok(staging::commit()?),
-        Err(e) => {
-            staging::discard();
-            Err(e)
-        }
-    }
 }
 
 /// `--nucleotide_coverage` (Perl 931-946): bam2nuc on every input's final BAM, in
@@ -358,7 +347,13 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
         output_dir.push('/');
     }
     let parent_dir = std::env::current_dir()?;
+    let failed = |e: crate::bam2nuc::BismarkBam2nucError| {
+        AlignerError::Validation(format!(
+            "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
+        ))
+    };
     eprintln!("Now calculating observed and expected nucleotide coverage statistics...");
+    let genome = crate::bam2nuc::load_genome(&config.genome.genome_dir).map_err(failed)?;
     // One BAM per call, so an input without usable reads does not skip the next one.
     for read in reads {
         let bam = derive_output_path(
@@ -376,28 +371,30 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
             cram_ref: None,
             paired: Some(paired),
         };
-        match crate::bam2nuc::run(&bam2nuc) {
-            Ok(()) => {}
-            Err(e @ crate::bam2nuc::BismarkBam2nucError::ZeroDivision { .. }) => {
-                let name = bam.file_name().unwrap_or_default().to_string_lossy();
-                let stats = format!(
-                    "{output_dir}{}.nucleotide_stats.txt",
-                    name.strip_suffix(".bam").unwrap_or(&name)
-                );
-                let _ = std::fs::remove_file(&stats);
-                eprintln!(
-                    "Warning: no nucleotide coverage statistics for {}: {e}",
-                    bam.display()
-                );
+        if let Err(e) = crate::bam2nuc::run_with_genome(&bam2nuc, &genome) {
+            remove_stats_file(&output_dir, &bam);
+            if !matches!(e, crate::bam2nuc::BismarkBam2nucError::ZeroDivision { .. }) {
+                return Err(failed(e));
             }
-            Err(e) => {
-                return Err(AlignerError::Validation(format!(
-                    "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
-                )));
-            }
+            eprintln!(
+                "Warning: no nucleotide coverage statistics for {}: {e}",
+                bam.display()
+            );
         }
     }
     Ok(())
+}
+
+/// Remove `bam`'s stats file after a failed bam2nuc run; a stale one would be read by
+/// `bismark report`. Anything but a file or symlink at that path is left alone.
+fn remove_stats_file(output_dir: &str, bam: &Path) {
+    let Ok(name) = crate::bam2nuc::output_name::derive_output_name(bam) else {
+        return;
+    };
+    let stats = PathBuf::from(format!("{output_dir}{name}"));
+    if std::fs::symlink_metadata(&stats).is_ok_and(|m| !m.is_dir()) {
+        let _ = std::fs::remove_file(&stats);
+    }
 }
 
 /// Fail on a read input with Windows (CRLF) line endings.
@@ -2156,7 +2153,7 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
         .output_dir
         .join(".bismark_5base_concat_ref.fa");
     let mut out = BufWriter::new(File::create(&tmp)?);
-    staging::scratch(&tmp);
+    staging::scratch(&tmp)?;
     for f in fastas {
         let mut r = open_reader(f)?;
         std::io::copy(&mut r, &mut out)?;
@@ -3514,14 +3511,14 @@ fn run_five_base_consensus(
     // Writers up front: an empty run must still leave valid header-only BAMs.
     let mut dpx_writer = match dpx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(&staging::stage(p), header.clone())
+            crate::io::BamWriter::from_path(&staging::stage(p)?, header.clone())
                 .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?,
         ),
         None => None,
     };
     let mut spx_writer = match spx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(&staging::stage(p), header.clone()).map_err(|e| {
+            crate::io::BamWriter::from_path(&staging::stage(p)?, header.clone()).map_err(|e| {
                 AlignerError::Validation(format!("simplex consensus: create BAM: {e}"))
             })?,
         ),
@@ -3859,15 +3856,12 @@ impl Write for AuxWriter {
 }
 
 impl AuxWriter {
-    /// Finalise: gz writes its trailer (`finish`); plain only flushes. Neither
-    /// path flushes mid-stream — a `flush()` would force a deflate block boundary
-    /// and break the merge's raw-byte identity (PLAN §3.5 invariant).
+    /// Finalise: gz writes its trailer (`finish`), then both drain their buffer.
+    /// Neither flushes mid-stream: that would force a deflate block boundary and
+    /// break the merge's raw-byte identity (PLAN §3.5 invariant).
     fn finish(self) -> std::io::Result<()> {
         match self {
-            AuxWriter::Gz(w) => {
-                w.finish()?;
-                Ok(())
-            }
+            AuxWriter::Gz(w) => w.finish()?.flush(),
             AuxWriter::Plain(mut w) => w.flush(),
         }
     }
@@ -3911,7 +3905,7 @@ fn open_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<Sinks> {
-    let bam = BamWriter::from_path(&staging::stage(bam_path), header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path)?, header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -3923,7 +3917,7 @@ fn open_sinks(
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
         Some(
-            BamWriter::from_path(&staging::stage(&p), header.clone()).map_err(|e| {
+            BamWriter::from_path(&staging::stage(&p)?, header.clone()).map_err(|e| {
                 AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
             })?,
         )
@@ -6136,7 +6130,7 @@ fn open_pe_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<PeSinks> {
-    let bam = BamWriter::from_path(&staging::stage(bam_path), header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path)?, header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -6148,7 +6142,7 @@ fn open_pe_sinks(
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
         Some(
-            BamWriter::from_path(&staging::stage(&p), header.clone()).map_err(|e| {
+            BamWriter::from_path(&staging::stage(&p)?, header.clone()).map_err(|e| {
                 AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
             })?,
         )
@@ -8180,6 +8174,16 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gz_aux_finish_reports_a_failed_final_write() {
+        use std::io::Write as _;
+        let full = File::create("/dev/full").unwrap();
+        let mut w = AuxWriter::Gz(GzEncoder::new(BufWriter::new(full), Compression::default()));
+        w.write_all(b"@r1\nACGT\n+\nIIII\n").unwrap();
+        assert!(w.finish().is_err());
+    }
 
     #[test]
     fn reject_crlf_inputs_passes_empty_and_lf_files_and_names_a_crlf_one() {

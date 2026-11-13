@@ -70,15 +70,19 @@ def main():
 
         infile.close()
 
+    # Checked before writing, so a bad input leaves no partial output file.
+    for chrom in allcov:
+        for pos in allcov[chrom]:
+            if (allcov[chrom][pos]['meth'] + allcov[chrom][pos]['unmeth'] == 0):
+                # This should not happen in real data, as coverage files by definition only show covered positions
+                print (f"Error: Both methylated and unmethylated counts were 0 at {chrom}:{pos}. Dying now...", file=sys.stderr)
+                sys.exit(1)
+
     print (f"Now printing out a new, merged coverage file to >>{outfile}<<")
 
     with gzip.open(outfile,"wt") as out:
         for chrom in sorted(allcov.keys()):
             for pos in sorted(allcov[chrom].keys()):
-                if (allcov[chrom][pos]['meth'] + allcov[chrom][pos]['unmeth'] == 0):
-                    # This should not happen in real data, as coverage files by definition only show covered positions
-                    print ("Error: Both methylated and unmethylated positions were 0. Dying now...", file=sys.stderr)
-                    sys.exit(1)
                 perc = allcov[chrom][pos]['meth'] / (allcov[chrom][pos]['meth'] + allcov[chrom][pos]['unmeth']) * 100
 
                 # percentage is displayed with 2 decimals with f-string formatting

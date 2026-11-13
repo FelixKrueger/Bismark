@@ -41,20 +41,30 @@ pub use error::BismarkBam2nucError;
 ///    once for file #1, then reused), count the reads, and write
 ///    `<sample>.nucleotide_stats.txt`.
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
-    use std::io::Write;
+    let genome = load_genome(&config.genome_folder)?;
+    run_with_genome(config, &genome)
+}
 
-    let genome = Genome::load(
-        &config.genome_folder,
-        &crate::io::genome::FASTA_TIERS_WITH_GZ,
-    )?;
+/// Load `genome_folder` as bam2nuc reads it, and report how many sequences it holds.
+pub fn load_genome(genome_folder: &std::path::Path) -> Result<Genome, BismarkBam2nucError> {
+    let genome = Genome::load(genome_folder, &crate::io::genome::FASTA_TIERS_WITH_GZ)?;
     eprintln!(
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()
     );
+    Ok(genome)
+}
+
+/// [`run`] on a genome that is already loaded.
+pub fn run_with_genome(
+    config: &ResolvedConfig,
+    genome: &Genome,
+) -> Result<(), BismarkBam2nucError> {
+    use std::io::Write;
 
     // --genomic_composition_only: compute + write the cache (or reuse), exit.
     if config.genomic_composition_only {
-        freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
+        freqs::get_genomic_frequencies(genome, &config.genome_folder, &config.output_dir)?;
         eprintln!("Finished processing genomic nucleotide frequencies");
         return Ok(());
     }
@@ -70,10 +80,10 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
 
         // Genomic composition: reused from the genome-folder cache after file #1.
         let genomic =
-            freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
+            freqs::get_genomic_frequencies(genome, &config.genome_folder, &config.output_dir)?;
 
         let (sample, stats) =
-            count::count_reads_in_file(&genome, infile, config.cram_ref.as_deref(), config.paired)?;
+            count::count_reads_in_file(genome, infile, config.cram_ref.as_deref(), config.paired)?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped

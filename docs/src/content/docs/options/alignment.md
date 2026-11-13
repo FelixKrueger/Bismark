@@ -171,7 +171,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `-o/--output_dir <dir>`
 
-  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute. While an input is being processed, its outputs are written as `<name>.<pid>.partial` and renamed when that input has finished; a failed run removes the partial files of the input it failed on.
+  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute. While an input is being processed, its outputs are written as `<name>.<pid>.partial` and renamed when that input has finished; a failed run removes the partial files of the input it failed on, and leaves any finished outputs of an earlier run in place.
 
 - `--temp_dir <dir>`
 
