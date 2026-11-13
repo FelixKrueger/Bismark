@@ -162,20 +162,32 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
     )
 }
 
-/// Never-silent notice for an `--illumina_5base` run, naming the engine that runs.
-fn five_base_notice(aligner: Aligner) -> String {
-    format!(
-        "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
-         with {} to the UNCONVERTED genome and methylation is called with inverted \
-         polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
-         NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
-        aligner.name()
-    )
+/// Never-silent notice for a run on the 5-Base path, naming the chemistry and the engine.
+fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String {
+    match chem {
+        config::FiveBaseChemistry::Illumina5Base => format!(
+            "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
+             with {} to the UNCONVERTED genome and methylation is called with inverted \
+             polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
+            aligner.name()
+        ),
+        config::FiveBaseChemistry::Taps => format!(
+            "Note: --taps is the TAPS (mC->T) mode: reads are aligned with {} to the \
+             UNCONVERTED genome and methylation is called with inverted polarity (a read T at a \
+             genomic C = methylated). Directional, paired-end only. NOT byte-identical (Perl \
+             Bismark has no TAPS oracle).",
+            aligner.name()
+        ),
+    }
 }
 
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    let expanded = config::expand_taps(cli)?;
+    // Everything below, both standalone dispatches included, sees the expanded flags.
+    let cli: &cli::Cli = &expanded;
     // Mutual exclusion FIRST: both of the standalone-over-existing-BAM paths `return`, so a
     // check placed beside either dispatch would never fire for the other one.
     if !cli.five_base_consensus_from_bam.is_empty() && !cli.five_base_bisulfite_bam.is_empty() {
@@ -256,7 +268,10 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 
     // Never-silent opt-in notice (#787): 5-Base has no Perl oracle, so it is not byte-identical.
     if config.five_base {
-        eprintln!("{}", five_base_notice(config.aligner));
+        eprintln!(
+            "{}",
+            five_base_notice(config.aligner, config.five_base_chemistry)
+        );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to
@@ -822,8 +837,8 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
 
     if !cli.illumina_5base {
         return Err(AlignerError::Validation(
-            "--five_base_bisulfite_bam requires --illumina_5base (it is a 5-Base interop \
-             shim; on bisulfite input the re-encode is a no-op by construction)"
+            "--five_base_bisulfite_bam requires --illumina_5base or --taps (it is a 5-Base \
+             interop shim; on bisulfite input the re-encode is a no-op by construction)"
                 .into(),
         ));
     }
@@ -1053,15 +1068,16 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             flipped as f64 / letters as f64
         };
 
+        let label = config::FiveBaseChemistry::of(cli).label();
         let convention = if letters == 0 {
-            "no methylation calls"
+            "no methylation calls".to_string()
         } else if flipped == 0 {
-            "already bisulfite convention (input was NOT 5-Base) — output is unchanged"
+            format!("already bisulfite convention (input was NOT {label}) — output is unchanged")
         } else {
-            "5-Base input, re-encoded to bisulfite convention"
+            format!("{label} input, re-encoded to bisulfite convention")
         };
         let report = format!(
-            "Bismark 5-Base -> bisulfite-convention re-encode ({})\n\n\
+            "Bismark {label} -> bisulfite-convention re-encode ({})\n\n\
              input BAM\t{}\n\
              output BAM\t{}\n\n\
              records read\t{n_read}\n\
@@ -2448,7 +2464,8 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         let bam_path =
             derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
         eprintln!(
-            ">>> Writing 5-Base mapping results to {} <<<",
+            ">>> Writing {} mapping results to {} <<<",
+            config.five_base_chemistry.label(),
             bam_path.display()
         );
         let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
@@ -2474,9 +2491,13 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         if config.aligner == Aligner::BwaMem3 {
             writeln!(
                 report,
-                "bwa-mem3 version: {}\n",
+                "bwa-mem3 version: {}",
                 config.detected_aligner.version
             )?;
+            if config.five_base_chemistry == config::FiveBaseChemistry::Taps {
+                writeln!(report, "Library chemistry: TAPS (mC->T)")?;
+            }
+            writeln!(report)?;
         }
 
         let mut counters = Counters::default();
@@ -2753,7 +2774,10 @@ fn five_base_align_and_call_pe(
         engine.finish()?;
     }
     if umi_len > 0 {
-        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).");
+        eprintln!(
+            "{} UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).",
+            config.five_base_chemistry.label()
+        );
     }
     Ok(())
 }
@@ -9117,7 +9141,9 @@ mod tests {
         c.five_base = true;
         c.aligner_options = match aligner {
             Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
-            Aligner::BwaMem3 => crate::aligner::options::bwamem3_options(),
+            Aligner::BwaMem3 => {
+                crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Illumina5Base)
+            }
             _ => "-q --score-min L,0,-0.6 --maxins 800".into(),
         };
         c.bowtie_threads = Some(4);
@@ -9164,6 +9190,18 @@ mod tests {
 
         std::fs::write(format!("{}.ann", p.display()), "18 2 11\n0 chr1\n").unwrap();
         assert!(read_bwa_ann(&p).is_err());
+    }
+
+    #[test]
+    fn taps_bwamem3_options_append_threads() {
+        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        c.five_base_chemistry = config::FiveBaseChemistry::Taps;
+        c.aligner_options =
+            crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Taps);
+        c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
+        let opts = five_base_aligner_options(&c);
+        assert!(opts.starts_with("mem --meth=taps "), "{opts}");
+        assert!(opts.ends_with("-K 100000000 -t 4"), "{opts}");
     }
 
     #[test]
@@ -9216,6 +9254,28 @@ mod tests {
     }
 
     #[test]
+    fn taps_notice_names_taps_and_bwamem3() {
+        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps);
+        assert!(
+            n.starts_with("Note: --taps is the TAPS (mC->T) mode"),
+            "{n}"
+        );
+        assert!(
+            n.contains("aligned with bwa-mem3 to the UNCONVERTED genome"),
+            "{n}"
+        );
+        assert!(n.contains("Perl Bismark has no TAPS oracle"), "{n}");
+        assert!(
+            !n.contains("5-Base") && !n.contains("DRAGEN") && !n.contains("rastair"),
+            "{n}"
+        );
+        assert!(
+            five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Illumina5Base)
+                .contains("concordance-validated vs DRAGEN")
+        );
+    }
+
+    #[test]
     fn five_base_notice_names_the_engine_that_runs() {
         for aligner in [
             config::Aligner::Minimap2,
@@ -9223,7 +9283,7 @@ mod tests {
             config::Aligner::Hisat2,
             config::Aligner::BwaMem3,
         ] {
-            let notice = five_base_notice(aligner);
+            let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base);
             assert!(
                 notice.contains(&format!(
                     "aligned with {} to the UNCONVERTED",
