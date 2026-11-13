@@ -186,7 +186,7 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
             // coordinate-sort check (detection must work on a coord-sorted
             // SE file). The probe is dropped before extract_*_parallel
             // re-opens the file — OS caches the header bytes.
-            let probe = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
+            let probe = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
             let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
                 BismarkExtractorError::AutoDetectFailed {
                     message: format!(
@@ -197,6 +197,14 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
                 }
             })?;
             drop(probe);
+            // Mode-dependent checks Perl runs after auto-detection (1217, 1334).
+            // Under AutoDetect `no_overlap == !include_overlap`.
+            if !is_paired && !config.no_overlap {
+                return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
+            }
+            if is_paired && config.output_mode == OutputMode::Yacht {
+                return Err(BismarkExtractorError::YachtRequiresSingleEnd);
+            }
             if is_paired {
                 // PE re-opens with the checking constructor → coordinate-sorted
                 // PE input is rejected here with `UnsortedInput`.

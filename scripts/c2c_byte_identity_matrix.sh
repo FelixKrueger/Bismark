@@ -2,7 +2,7 @@
 #
 # c2c_byte_identity_matrix.sh — bismark-coverage2cytosine release gate.
 #
-# Runs the Rust `coverage2cytosine_rs` and Perl `coverage2cytosine` (v0.25.1)
+# Runs the Rust `coverage2cytosine` and Perl `coverage2cytosine` (v0.25.1)
 # over a 15-cell representative flag matrix against a Perl-bismark2bedGraph
 # `.bismark.cov.gz` + genome, and asserts RAW-BYTE-IDENTITY Rust≡Perl on every
 # in-scope output stream (gzip compared after decompression). A clean pass
@@ -27,7 +27,7 @@
 #     --disk-floor-gb N pre-flight + per-cell free-space floor in GiB (default 30)
 #     --keep-all        keep large outputs even on PASS (default: purge on pass)
 #     --perl-c2c PATH   Perl coverage2cytosine (default: $PERL_C2C or repo-root ./legacy_perl/coverage2cytosine)
-#     --rust-c2c PATH   Rust binary (default: $RUST_C2C or rust/target/release/coverage2cytosine_rs)
+#     --rust-c2c PATH   Rust binary (default: $RUST_C2C or rust/target/release/coverage2cytosine)
 #     -h|--help
 #
 # Exit codes:
@@ -129,9 +129,9 @@ fi
 
 # 6. Rust binary discoverable (build --release on demand)
 if [[ -z "$RUST_C2C" ]]; then
-  RUST_C2C="$REPO_ROOT/rust/target/release/coverage2cytosine_rs"
+  RUST_C2C="$REPO_ROOT/rust/target/release/coverage2cytosine"
   if [[ ! -x "$RUST_C2C" ]]; then
-    echo "==> building Rust coverage2cytosine_rs (--release) ..." >&2
+    echo "==> building Rust coverage2cytosine (--release) ..." >&2
     ( cd "$REPO_ROOT/rust" && cargo build --release -p bismark ) >&2 \
       || usage_err "cargo build --release failed"
   fi

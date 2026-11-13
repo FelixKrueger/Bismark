@@ -25,13 +25,12 @@ pub mod cli;
 pub mod count;
 pub mod error;
 pub mod freqs;
-pub mod genome;
 pub mod output_name;
 pub mod report;
 
+pub use crate::io::genome::Genome;
 pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkBam2nucError;
-pub use genome::Genome;
 
 /// Run the nucleotide-coverage report (Perl `bam2nuc`'s top-level flow,
 /// `:36-61`):
@@ -44,7 +43,10 @@ pub use genome::Genome;
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
     use std::io::Write;
 
-    let genome = Genome::load(&config.genome_folder)?;
+    let genome = Genome::load(
+        &config.genome_folder,
+        &crate::io::genome::FASTA_TIERS_WITH_GZ,
+    )?;
     eprintln!(
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()

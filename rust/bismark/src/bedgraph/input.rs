@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 
 use crate::bedgraph::aggregate::Aggregator;
 use crate::bedgraph::error::BismarkBedgraphError;
@@ -58,11 +58,12 @@ pub fn select_input_files(
 }
 
 /// Open a methylation-call file for reading, transparently gunzipping when
-/// the path ends in `.gz` (Perl detects via `/gz$/`).
+/// the path ends in `.gz` (Perl detects via `/gz$/`). Every concatenated
+/// gzip member is read, as with Perl `gunzip -c`.
 fn open_reader(path: &Path) -> Result<Box<dyn BufRead>, BismarkBedgraphError> {
     let file = File::open(path)?;
     if path.extension().and_then(|e| e.to_str()) == Some("gz") {
-        Ok(Box::new(BufReader::new(GzDecoder::new(file))))
+        Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
     } else {
         Ok(Box::new(BufReader::new(file)))
     }
@@ -334,6 +335,29 @@ mod tests {
         let mut agg_nohdr = Aggregator::new();
         read_into(&path, true, "CpG_OT_nohdr.txt", &mut agg_nohdr).unwrap();
         assert_eq!(agg_nohdr.into_sorted()[0].1, vec![(10, 1, 1)]);
+    }
+
+    #[test]
+    fn concatenated_gzip_members_are_all_read() {
+        // `cat a.txt.gz b.txt.gz > all.txt.gz` (Perl `gunzip -c` reads every
+        // member): calls in the second gzip member must not be dropped.
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write;
+        let gz = |text: &str| {
+            let mut e = GzEncoder::new(Vec::new(), Compression::default());
+            e.write_all(text.as_bytes()).unwrap();
+            e.finish().unwrap()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CpG_OT_cat.txt.gz");
+        let mut bytes = gz("Bismark header\nr\t+\t1\t10\tZ\n");
+        bytes.extend(gz("r\t-\t1\t20\tz\n"));
+        std::fs::write(&path, bytes).unwrap();
+
+        let mut agg = Aggregator::new();
+        read_into(&path, false, "CpG_OT_cat.txt.gz", &mut agg).unwrap();
+        assert_eq!(agg.into_sorted()[0].1, vec![(10, 1, 0), (20, 0, 1)]);
     }
 
     #[test]

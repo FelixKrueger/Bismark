@@ -81,6 +81,13 @@ pub struct Counters {
     /// combined-mode SE report for visibility.
     pub combined_spurious_count: u64,
 
+    /// 5-Base only: pairs the engine marked proper that are same-strand, cross-contig, pointing
+    /// apart, or whose R2 is not flagged proper. Also counted as no alignment.
+    pub five_base_pair_orientation_rejected: u64,
+
+    /// 5-Base only: aligned read bases past the mate's 5' end, never called.
+    pub five_base_overhang_bases_masked: u64,
+
     // ---- Phase 5: per-strand counts (Perl 4402/4411/4426/4441) -------------
     // Incremented in genomic extraction, ONLY when no chromosome-edge guard
     // fired (so an edge read counts in `unique_best` but in no strand bucket).

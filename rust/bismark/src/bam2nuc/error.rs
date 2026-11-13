@@ -136,6 +136,21 @@ pub enum BismarkBam2nucError {
     SamNotSupported,
 }
 
+/// Keeps this tool's Perl-worded genome-reading messages on top of the shared
+/// [`crate::io::genome`] reader.
+impl From<crate::io::genome::GenomeError> for BismarkBam2nucError {
+    fn from(e: crate::io::genome::GenomeError) -> Self {
+        use crate::io::genome::GenomeError as G;
+        match e {
+            G::NoGenomeFasta { dir } => Self::NoGenomeFasta { dir },
+            G::MalformedFastaHeader { file } => Self::MalformedFastaHeader { file },
+            G::DuplicateChromosomeName { name } => Self::DuplicateChromosomeName { name },
+            G::ChromosomeTooLong { name, len } => Self::ChromosomeTooLong { name, len },
+            G::Io(e) => Self::Io(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
