@@ -29,7 +29,7 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
     after_help = HELP_FOOTER
 )]
 pub struct Cli {
-    /// Bismark BAM or CRAM file(s) to split by read methylation consistency.
+    /// Bismark BAM, SAM or CRAM file(s) to split by read methylation consistency.
     pub files: Vec<PathBuf>,
 
     /// Force paired-end mode (R1+R2 calls are summed). Default: auto-detect.

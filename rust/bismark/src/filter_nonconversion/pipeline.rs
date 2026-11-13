@@ -45,7 +45,7 @@ type BamWriter = bam::io::Writer<noodles_bgzf::io::Writer<File>>;
 /// caller's STDERR echo + timing-line bookkeeping.
 ///
 /// `explicit_mode`: `Some(true)` = PE, `Some(false)` = SE, `None` = detect
-/// from the `@PG` header. `cram_ref` is required for a `.cram` input.
+/// from the `@PG` header. `cram_ref` is required for a CRAM input.
 pub fn filter_one(
     infile: &Path,
     mode: FilterMode,
@@ -54,7 +54,7 @@ pub fn filter_one(
 ) -> Result<FilterReport, BismarkFilterError> {
     let infile_str = infile.to_string_lossy().into_owned();
 
-    if infile_str.ends_with(".cram") {
+    if crate::io::AlignmentKind::from_path(infile).ok() == Some(crate::io::AlignmentKind::Cram) {
         // shortcut: the shared reader drops unmapped records and needs XR/XG/XM,
         // which all Bismark output has; add a raw-record CRAM iterator to
         // `crate::io` if non-Bismark CRAMs must pass through like BAMs.

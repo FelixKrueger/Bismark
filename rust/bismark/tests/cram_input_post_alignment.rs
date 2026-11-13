@@ -305,3 +305,45 @@ fn methylation_consistency_cram31_matches_bam() {
     assert_eq!(from_bam, from_cram);
     assert_cram_without_ref_fails("methylation_consistency", &[&cram]);
 }
+
+#[test]
+fn filter_non_conversion_detects_cram_by_content_not_name() {
+    let fx = fixture();
+    let run = |input: &Path, cram_ref: bool| {
+        let mut cmd = Command::cargo_bin("filter_non_conversion").unwrap();
+        if cram_ref {
+            cmd.arg("--cram_ref").arg(&fx.reference);
+        }
+        cmd.arg(input).assert().success();
+        let dir = input.parent().unwrap();
+        (
+            bam_records(&dir.join("in.nonCG_filtered.bam")),
+            bam_records(&dir.join("in.nonCG_removed_seqs.bam")),
+        )
+    };
+    let from_bam = run(&stage(&fx, "bam", &fx.bam), false);
+    let d = fx.dir.path().join("cram_named_bam");
+    std::fs::create_dir(&d).unwrap();
+    let cram_as_bam = d.join("in.bam");
+    std::fs::copy(&fx.cram, &cram_as_bam).unwrap();
+    assert_eq!(run(&cram_as_bam, true), from_bam);
+}
+
+#[test]
+fn filter_non_conversion_keeps_its_errors_for_empty_and_missing_bam() {
+    let dir = TempDir::new().unwrap();
+    let empty = dir.path().join("empty.bam");
+    std::fs::write(&empty, b"").unwrap();
+    Command::cargo_bin("filter_non_conversion")
+        .unwrap()
+        .arg(&empty)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("appears to be truncated"));
+    Command::cargo_bin("filter_non_conversion")
+        .unwrap()
+        .arg(dir.path().join("missing.bam"))
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("os error 2"));
+}
