@@ -35,8 +35,9 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
     after_help = HELP_FOOTER
 )]
 pub struct Cli {
-    /// Input alignment file(s) in BAM format (`*.bam`). One stats file is
-    /// written per input. Not required with `--genomic_composition_only`.
+    /// Input alignment file(s) in BAM or CRAM format (`*.bam`, `*.cram`). One
+    /// stats file is written per input. Not required with
+    /// `--genomic_composition_only`.
     #[arg(value_name = "INPUT")]
     pub inputs: Vec<PathBuf>,
 
@@ -58,6 +59,10 @@ pub struct Cli {
     /// port reads BAM with pure-Rust noodles (no samtools subprocess).
     #[arg(long = "samtools_path")]
     pub samtools_path: Option<String>,
+
+    /// CRAM reference FASTA (required when an input is CRAM; needs a `.fai`).
+    #[arg(long = "cram_ref")]
+    pub cram_ref: Option<PathBuf>,
 
     /// Only calculate + write the genomic composition table
     /// (`genomic_nucleotide_frequencies.txt`) and exit; no input files needed.
@@ -83,6 +88,8 @@ pub struct ResolvedConfig {
     pub parent_dir: PathBuf,
     /// `--genomic_composition_only` requested.
     pub genomic_composition_only: bool,
+    /// CRAM reference path, if `--cram_ref` was supplied.
+    pub cram_ref: Option<PathBuf>,
 }
 
 impl Cli {
@@ -112,6 +119,7 @@ impl Cli {
             output_dir,
             parent_dir,
             genomic_composition_only: self.genomic_composition_only,
+            cram_ref: self.cram_ref,
         })
     }
 }

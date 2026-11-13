@@ -37,7 +37,7 @@ pub use error::BismarkBam2nucError;
 /// 1. Load the genome into memory.
 /// 2. `--genomic_composition_only` → compute + write the cache, then exit.
 /// 3. Otherwise, for each input file (argv order): gate the format (accept
-///    `.bam`; reject `.sam`/`.cram`), resolve the genomic composition (computed
+///    BAM and CRAM; reject SAM), resolve the genomic composition (computed
 ///    once for file #1, then reused), count the reads, and write
 ///    `<sample>.nucleotide_stats.txt`.
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
@@ -60,21 +60,20 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
     }
 
     for infile in &config.inputs {
-        // Input-format gate (content sniff): accept BAM; reject SAM (SPEC Q2)
-        // and CRAM (SPEC Q3). Done before counting — for a `.bam` the output
+        // Input-format gate (content sniff): accept BAM and CRAM; reject SAM
+        // (SPEC Q2). Done before counting — for a `.bam`/`.cram` the output
         // name always derives cleanly, so the observable outcome matches Perl
         // (which derives the name after counting).
-        match crate::io::AlignmentKind::from_path(infile)? {
-            crate::io::AlignmentKind::Bam => {}
-            crate::io::AlignmentKind::Sam => return Err(BismarkBam2nucError::SamNotSupported),
-            crate::io::AlignmentKind::Cram => return Err(BismarkBam2nucError::CramNotSupported),
+        if crate::io::AlignmentKind::from_path(infile)? == crate::io::AlignmentKind::Sam {
+            return Err(BismarkBam2nucError::SamNotSupported);
         }
 
         // Genomic composition: reused from the genome-folder cache after file #1.
         let genomic =
             freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
 
-        let (sample, stats) = count::count_reads_in_file(&genome, infile)?;
+        let (sample, stats) =
+            count::count_reads_in_file(&genome, infile, config.cram_ref.as_deref())?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped

@@ -136,21 +136,48 @@ fn correct_pe(span: Vec<u8>, flag: u16) -> Vec<u8> {
     }
 }
 
-/// Count the genomic-sequence composition of one BAM file.
+/// Count the genomic-sequence composition of one BAM or CRAM file.
 ///
-/// Opens with raw `noodles_bam::io::Reader` (no XR/XG/XM validation, no unmapped
-/// filter, no coordinate-sort check), detects SE/PE from the `@PG` header, and
-/// tallies each clean-CIGAR read's strand-corrected genomic span.
+/// BAM opens with raw `noodles_bam::io::Reader` (no XR/XG/XM validation, no
+/// unmapped filter, no coordinate-sort check). CRAM (`cram_ref` required) goes
+/// through the shared [`crate::io::open_reader_without_sort_check`]. Then
+/// detects SE/PE from the `@PG` header and tallies each clean-CIGAR read's
+/// strand-corrected genomic span.
 pub fn count_reads_in_file(
     genome: &Genome,
     path: &Path,
+    cram_ref: Option<&Path>,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError> {
+    if crate::io::AlignmentKind::from_path(path)? == crate::io::AlignmentKind::Cram {
+        // shortcut: the shared reader drops unmapped records and needs XR/XG/XM,
+        // which all Bismark output has; add a raw-record CRAM iterator to
+        // `crate::io` if non-Bismark CRAMs must be counted like BAMs.
+        let mut reader = crate::io::open_reader_without_sort_check(path, cram_ref)?;
+        let header = reader.header().clone();
+        let records = reader.records().map(|r| {
+            r.map(|rec| rec.inner().clone())
+                .map_err(std::io::Error::other)
+        });
+        return count_with_header(&header, records, genome);
+    }
     let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(path)?));
     let header = reader.read_header()?;
-    let chr_names = build_chr_name_table(&header)?;
-    let paired = crate::io::detect_paired_from_header(&header)
+    count_with_header(&header, reader.record_bufs(&header), genome)
+}
+
+/// Resolve the chromosome table and SE/PE mode from `header`, then count.
+fn count_with_header<I>(
+    header: &Header,
+    records: I,
+    genome: &Genome,
+) -> Result<(NucCounts, ReadStats), BismarkBam2nucError>
+where
+    I: Iterator<Item = std::io::Result<RecordBuf>>,
+{
+    let chr_names = build_chr_name_table(header)?;
+    let paired = crate::io::detect_paired_from_header(header)
         .ok_or(BismarkBam2nucError::SePeUndetermined)?;
-    count_records(reader.record_bufs(&header), paired, &chr_names, genome)
+    count_records(records, paired, &chr_names, genome)
 }
 
 /// The per-record loop, factored out of [`count_reads_in_file`] so it can be

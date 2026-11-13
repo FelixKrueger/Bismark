@@ -230,14 +230,12 @@ fn sam_input_is_rejected() {
 }
 
 #[test]
-fn cram_input_is_rejected() {
+fn cram_input_without_cram_ref_is_rejected() {
     let tmp = copy_genome("genome_acgtn");
     let genome = tmp.path().join("genome");
     // CRAM magic bytes are enough for the format sniff to classify Cram.
     let cram = tmp.path().join("reads.cram");
     std::fs::write(&cram, b"CRAM\x03\x00\x00\x00").unwrap();
-    // Strengthened (L-2): assert exit code 1 AND the specific CramNotSupported
-    // message ("not yet supported"), not merely any mention of CRAM.
     bin()
         .arg("-g")
         .arg(&genome)
@@ -245,7 +243,7 @@ fn cram_input_is_rejected() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicates::str::contains("not yet supported"));
+        .stderr(predicates::str::contains("CRAM reference required for"));
 }
 
 #[test]
