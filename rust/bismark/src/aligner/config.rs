@@ -950,7 +950,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     }
     if cli.five_base_baseq > 0 && !cli.illumina_5base {
         return Err(AlignerError::Validation(
-            "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
+            "--five_base_baseq requires --illumina_5base or --taps (it masks low-quality bases in the \
              5-Base methylation call)."
                 .into(),
         ));
@@ -1074,16 +1074,18 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // --illumina_5base (#787) scope guards. The 5-Base path is paired-end +
     // directional, FASTQ, single-instance only; everything else is rejected.
     // Reject loudly (never silently degrade) BEFORE the generic minimap2 guards
-    // so the error names --illumina_5base, not --minimap2.
+    // so the error names the mode flag, not --minimap2.
     // Early CLI-level SE rejection fires before layout resolution (no -1/-2 supplied).
     let chem = FiveBaseChemistry::of(cli);
     let (flag, label) = (chem.flag(), chem.label());
-    let paired_end_only = format!(
-        "{flag} is paired-end only: the {label} library is paired-end. \
-         Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
-    );
+    let paired_end_only = || {
+        AlignerError::Unsupported(format!(
+            "{flag} is paired-end only: the {label} library is paired-end. \
+             Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
+        ))
+    };
     if cli.illumina_5base && cli.mates1.is_none() {
-        return Err(AlignerError::Unsupported(paired_end_only));
+        return Err(paired_end_only());
     }
 
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
@@ -1092,7 +1094,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
 
     if cli.illumina_5base {
         if matches!(layout, ReadLayout::SingleEnd { .. }) {
-            return Err(AlignerError::Unsupported(paired_end_only));
+            return Err(paired_end_only());
         }
         if cli.non_directional || cli.pbat {
             return Err(AlignerError::Unsupported(format!(
@@ -1246,7 +1248,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ),
         // #787 5-Base mode (guarded above: PE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
-        five_base_chemistry: FiveBaseChemistry::of(cli),
+        five_base_chemistry: chem,
         five_base_deconvolution: cli.five_base_deconvolution,
         five_base_index: cli.five_base_index.clone(),
         five_base_umi_len: cli.five_base_umi_len,

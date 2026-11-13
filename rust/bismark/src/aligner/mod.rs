@@ -842,6 +842,7 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
                 .into(),
         ));
     }
+    let label = config::FiveBaseChemistry::of(cli).label();
 
     let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&out_dir).map_err(|e| {
@@ -1033,7 +1034,7 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
                 return Err(AlignerError::Validation(format!(
                     "bisulfite: {} has a methylation-call flip rate of {rate:.6} ({flipped} of \
                  {letters} calls). It must be exactly 0 (already bisulfite convention) or 1 \
-                 (5-Base). A value in between means the input is mixed or partly converted; \
+                 ({label}). A value in between means the input is mixed or partly converted; \
                  refusing rather than writing a file that is half one convention and half the \
                  other.",
                     bam.display()
@@ -1068,7 +1069,6 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             flipped as f64 / letters as f64
         };
 
-        let label = config::FiveBaseChemistry::of(cli).label();
         let convention = if letters == 0 {
             "no methylation calls".to_string()
         } else if flipped == 0 {
@@ -1101,7 +1101,7 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             eprintln!(
                 "Note: {masked} no-call cytosine(s) were masked to N. This input appears to \
                  have been produced with --five_base_baseq: those positions keep the raw \
-                 5-Base base in SEQ, which downstream SEQ-reading tools would score with \
+                 {label} base in SEQ, which downstream SEQ-reading tools would score with \
                  INVERTED polarity. N makes them a no-call instead."
             );
         }

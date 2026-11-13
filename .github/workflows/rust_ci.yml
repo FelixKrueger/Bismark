@@ -137,7 +137,7 @@ jobs:
         run: cargo test -p bismark --features binseq-input
 
   bwamem3:
-    name: bwa-mem3 5-Base gate (${{ matrix.runner }})
+    name: bwa-mem3 5-Base and TAPS gate (${{ matrix.runner }})
     # bwa-mem3 is not in apt; it comes from bioconda in an env of its own, and only its
     # binary goes on PATH so no other conda tool shadows the apt ones.
     runs-on: ${{ matrix.runner }}

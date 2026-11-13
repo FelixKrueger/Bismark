@@ -653,7 +653,7 @@ fn bwamem3_other_version_warns_and_runs() {
 }
 
 /// `bismark --taps` for `run`, before any extra arguments.
-#[allow(dead_code)]
+#[cfg(unix)]
 fn taps_cmd(run: &FakeRun) -> Command {
     let mut c = bin();
     c.arg("--taps")
@@ -679,7 +679,13 @@ fn taps_flag_is_in_help_and_marker_is_not() {
     assert!(help.contains("--taps"), "{help}");
     assert!(help.contains("TAPS (mC->T)"), "{help}");
     assert!(!help.contains("taps_expanded"), "{help}");
-    bin().args(["align", "--taps_expanded"]).assert().failure();
+    bin()
+        .args(["align", "--taps_expanded"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unexpected argument '--taps_expanded'",
+        ));
 }
 
 #[cfg(unix)]
@@ -776,9 +782,15 @@ fn taps_notice_and_summary_say_taps() {
 #[cfg(unix)]
 #[test]
 fn taps_rejections_spawn_nothing_and_write_nothing() {
-    for extra in [
-        &["--minimap2"][..],
-        &["--five_base_consensus_from_bam", "x.bam"],
+    for (extra, why) in [
+        (
+            &["--minimap2"][..],
+            "--taps aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--five_base_consensus_from_bam", "x.bam"][..],
+            "--five_base_consensus_from_bam is validated for Illumina 5-Base only, not TAPS.",
+        ),
     ] {
         let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
         let argv = run.bins.path().join("argv.txt");
@@ -799,7 +811,7 @@ fn taps_rejections_spawn_nothing_and_write_nothing() {
             .arg("-2")
             .arg(&run.r2)
             .env("FAKE_ARGV_DUMP", &argv);
-        c.assert().failure();
+        c.assert().failure().stderr(predicate::str::contains(why));
         assert!(!argv.exists(), "{extra:?}: the engine was spawned");
         assert!(!out_dir.exists(), "{extra:?}: output dir created");
     }
@@ -852,4 +864,26 @@ fn taps_report_html_matches_five_base_twin() {
     let (t, f) = (norm(html(&taps), &taps), norm(html(&five), &five));
     assert!(t.len() > 1000, "empty HTML");
     assert_eq!(t, f);
+}
+
+/// `--five_base_baseq` reaches the TAPS call: a low-quality T at the CpG C is not called.
+#[cfg(unix)]
+#[test]
+fn taps_five_base_baseq_masks_low_quality_calls() {
+    let r1 = |recs: &[bismark::io::BismarkRecord]| {
+        recs.iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1")
+            .xm()
+            .to_vec()
+    };
+    let unmasked = fake_run("@p\nATGTAC\n+\nI#IIII\n", &[("chr1", 8)], SQ_OK);
+    taps_cmd(&unmasked).assert().success();
+    assert_eq!(r1(&bam_records(&unmasked)), b".Z...z");
+    let masked = fake_run("@p\nATGTAC\n+\nI#IIII\n", &[("chr1", 8)], SQ_OK);
+    taps_cmd(&masked)
+        .args(["--five_base_baseq", "30"])
+        .assert()
+        .success();
+    assert_eq!(r1(&bam_records(&masked)), b".....z");
 }

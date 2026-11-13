@@ -222,7 +222,7 @@ fn taps_spike_ins_polarity_counts_and_identity() {
     assert!(!want_report.is_empty() && !want_calls.is_empty());
     for (label, value) in &want_report {
         assert!(
-            rep.contains(&format!("{label}\t{value}")),
+            rep.contains(&format!("{label}\t{value}\n")),
             "report line {label:?} should be {value}:\n{rep}"
         );
     }
