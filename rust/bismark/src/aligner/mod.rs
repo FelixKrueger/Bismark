@@ -60,6 +60,7 @@ pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+mod staging;
 pub mod stream;
 pub mod ubam;
 
@@ -212,7 +213,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
-        return run_five_base_consensus_standalone(cli, &command_line);
+        return finish_staged(run_five_base_consensus_standalone(cli, &command_line));
     }
     // #1095 standalone bisulfite-convention re-encode over EXISTING BAM(s) — same shape,
     // but needs no genome: the reference is reconstructed per record from MD.
@@ -318,7 +319,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     }
     eprintln!("{}", config.summary());
     let result = reject_crlf_inputs(&config.layout)
-        .and_then(|()| pipeline(&config))
+        .and_then(|()| finish_staged(pipeline(&config)))
         .and_then(|()| run_nucleotide_coverage(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
@@ -326,6 +327,17 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
+}
+
+/// Publish the staged outputs of a successful run; delete them after a failed one.
+fn finish_staged(result: Result<()>) -> Result<()> {
+    match result {
+        Ok(()) => Ok(staging::commit()?),
+        Err(e) => {
+            staging::discard();
+            Err(e)
+        }
+    }
 }
 
 /// `--nucleotide_coverage` (Perl 931-946): bam2nuc on every input's final BAM, in
@@ -1911,7 +1923,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -1941,6 +1953,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup (rev1 A): delete EVERY converted temp file for this
         // read — 1 for directional/pbat, 2 (C→T + G→A) for non-directional. Byte-
@@ -2143,6 +2156,7 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
         .output_dir
         .join(".bismark_5base_concat_ref.fa");
     let mut out = BufWriter::new(File::create(&tmp)?);
+    staging::scratch(&tmp);
     for f in fastas {
         let mut r = open_reader(f)?;
         std::io::copy(&mut r, &mut out)?;
@@ -2459,7 +2473,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_five_base_report_header(
             &mut report,
             &ReportHeader {
@@ -2515,7 +2529,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 &format!("_bismark_{tok}_pe.5base_deconvolution.txt"),
                 "_pe.5base_deconvolution.txt",
             );
-            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+            run_five_base_deconvolution(&genome, &staging::current(&bam_path), &deconv_path)?;
         }
 
         // #787 optional PAIRED-END duplex family pass over the just-written _pe.bam.
@@ -2533,7 +2547,12 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 &format!("_bismark_{tok}_pe.5base_duplex.txt"),
                 "_pe.5base_duplex.txt",
             );
-            run_five_base_duplex_pe(&genome, &bam_path, &duplex_path, umi_swap)?;
+            run_five_base_duplex_pe(
+                &genome,
+                &staging::current(&bam_path),
+                &duplex_path,
+                umi_swap,
+            )?;
 
             // #787 optional PE consensus COLLAPSE (one consensus read per duplex family).
             if config.five_base_consensus {
@@ -2560,7 +2579,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 run_five_base_consensus(
                     &genome,
                     &refid,
-                    &[bam_path.as_path()],
+                    &[staging::current(&bam_path).as_path()],
                     outputs,
                     &header,
                     umi_swap,
@@ -2568,6 +2587,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 )?;
             }
         }
+        staging::commit()?;
     }
 
     if let Some(tmp) = ref_tmp {
@@ -3117,7 +3137,7 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
         }
     }
 
-    let mut w = BufWriter::new(File::create(report_path)?);
+    let mut w = BufWriter::new(staging::create(report_path)?);
     let s = dec.write_report(&mut w, DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)?;
     w.flush()?;
     eprintln!(
@@ -3256,7 +3276,7 @@ fn run_five_base_duplex_pe(
         );
     }
 
-    let mut w = BufWriter::new(File::create(report_path)?);
+    let mut w = BufWriter::new(staging::create(report_path)?);
     let s = w_duplex_report(&mut w, &fams)?;
     w.flush()?;
     eprintln!(
@@ -3494,14 +3514,14 @@ fn run_five_base_consensus(
     // Writers up front: an empty run must still leave valid header-only BAMs.
     let mut dpx_writer = match dpx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(p, header.clone())
+            crate::io::BamWriter::from_path(&staging::stage(p), header.clone())
                 .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?,
         ),
         None => None,
     };
     let mut spx_writer = match spx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(p, header.clone()).map_err(|e| {
+            crate::io::BamWriter::from_path(&staging::stage(p), header.clone()).map_err(|e| {
                 AlignerError::Validation(format!("simplex consensus: create BAM: {e}"))
             })?,
         ),
@@ -3891,7 +3911,7 @@ fn open_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<Sinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path), header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -3902,9 +3922,11 @@ fn open_sinks(
             ".ambig.bam",
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
-        Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
-            AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
-        })?)
+        Some(
+            BamWriter::from_path(&staging::stage(&p), header.clone()).map_err(|e| {
+                AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
+            })?,
+        )
     } else {
         None
     };
@@ -3917,7 +3939,7 @@ fn open_sinks(
         let name = aux_out::aux_filename(&filename, prefix, base, kind, fasta, None);
         let p = config.output.output_dir.join(name);
         Ok(GzEncoder::new(
-            BufWriter::new(File::create(&p)?),
+            BufWriter::new(staging::create(&p)?),
             Compression::default(),
         ))
     };
@@ -4280,7 +4302,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4322,6 +4344,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4381,7 +4404,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4422,6 +4445,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4683,7 +4707,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4724,6 +4748,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -5115,7 +5140,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -5156,6 +5181,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -5357,7 +5383,7 @@ fn run_se_combined_nondir_tagged(config: &RunConfig, reads: &[String]) -> Result
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -5398,6 +5424,7 @@ fn run_se_combined_nondir_tagged(config: &RunConfig, reads: &[String]) -> Result
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -6022,7 +6049,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6051,6 +6078,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup (rev1 A; Perl 2155): delete EVERY converted temp
         // file — 2 for directional/pbat, 4 for non-directional. Best-effort.
@@ -6108,7 +6136,7 @@ fn open_pe_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<PeSinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path), header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -6119,9 +6147,11 @@ fn open_pe_sinks(
             "_pe.ambig.bam",
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
-        Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
-            AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
-        })?)
+        Some(
+            BamWriter::from_path(&staging::stage(&p), header.clone()).map_err(|e| {
+                AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
+            })?,
+        )
     } else {
         None
     };
@@ -6133,7 +6163,7 @@ fn open_pe_sinks(
     let open_gz = |name: String| -> Result<GzEncoder<BufWriter<File>>> {
         let p = config.output.output_dir.join(name);
         Ok(GzEncoder::new(
-            BufWriter::new(File::create(&p)?),
+            BufWriter::new(staging::create(&p)?),
             Compression::default(),
         ))
     };
@@ -6543,7 +6573,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6588,6 +6618,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: delete both converted temp files (C→T R1, G→A R2).
         for cr in &converted {
@@ -6650,7 +6681,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6695,6 +6726,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: delete both converted temp files (G→A R1, C→T R2).
         for cr in &converted {
@@ -7003,7 +7035,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -7042,6 +7074,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: the 4 converted files (R1/R2 × C→T/G→A).
         for cr in &converted {
@@ -7565,7 +7598,7 @@ fn run_pe_combined_nondir_sequential(
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -7606,6 +7639,7 @@ fn run_pe_combined_nondir_sequential(
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -7803,7 +7837,7 @@ fn run_pe_combined_nondir_tagged(
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -7844,6 +7878,7 @@ fn run_pe_combined_nondir_tagged(
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
