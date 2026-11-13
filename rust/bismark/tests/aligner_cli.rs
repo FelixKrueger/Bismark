@@ -1322,6 +1322,55 @@ fn nucleotide_coverage_uses_the_run_layout_for_positional_paired_ubam() {
     );
 }
 
+/// An input without usable reads gets a warning and no stats file; the next input is
+/// still counted and the run succeeds.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_warns_for_an_input_without_usable_reads() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    // The fake's 6M hit does not fit an 8 bp read, so `a` has no usable reads.
+    let a = input.path().join("a.fq");
+    let b = input.path().join("b.fq");
+    fs::write(&a, b"@r1\nACGTACGT\n+\nFFFFFFFF\n").unwrap();
+    fs::write(&b, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--nucleotide_coverage")
+        .arg(&a)
+        .arg(&b)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Warning: no nucleotide coverage statistics for",
+        ));
+    assert!(
+        !outdir
+            .path()
+            .join("a_bismark_bt2.nucleotide_stats.txt")
+            .exists()
+    );
+    assert!(
+        outdir
+            .path()
+            .join("b_bismark_bt2.nucleotide_stats.txt")
+            .exists()
+    );
+}
+
 /// A bam2nuc failure after a successful alignment exits non-zero and keeps the BAM.
 #[cfg(unix)]
 #[test]

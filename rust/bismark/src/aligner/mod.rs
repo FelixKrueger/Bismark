@@ -341,36 +341,51 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
     };
     let tok = config.aligner.token();
     let pe = if paired { "_pe" } else { "" };
-    let inputs = reads
-        .iter()
-        .map(|read| {
-            derive_output_path(
-                read,
-                config,
-                &format!("_bismark_{tok}{pe}.bam"),
-                &format!("{pe}.bam"),
-            )
-        })
-        .collect();
     let mut output_dir = config.output.output_dir.to_string_lossy().into_owned();
     if !output_dir.is_empty() && !output_dir.ends_with('/') {
         output_dir.push('/');
     }
+    let parent_dir = std::env::current_dir()?;
     eprintln!("Now calculating observed and expected nucleotide coverage statistics...");
-    let bam2nuc = crate::bam2nuc::ResolvedConfig {
-        inputs,
-        genome_folder: config.genome.genome_dir.clone(),
-        output_dir,
-        parent_dir: std::env::current_dir()?,
-        genomic_composition_only: false,
-        cram_ref: None,
-        paired: Some(paired),
-    };
-    crate::bam2nuc::run(&bam2nuc).map_err(|e| {
-        AlignerError::Validation(format!(
-            "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
-        ))
-    })
+    // One BAM per call, so an input without usable reads does not skip the next one.
+    for read in reads {
+        let bam = derive_output_path(
+            read,
+            config,
+            &format!("_bismark_{tok}{pe}.bam"),
+            &format!("{pe}.bam"),
+        );
+        let bam2nuc = crate::bam2nuc::ResolvedConfig {
+            inputs: vec![bam.clone()],
+            genome_folder: config.genome.genome_dir.clone(),
+            output_dir: output_dir.clone(),
+            parent_dir: parent_dir.clone(),
+            genomic_composition_only: false,
+            cram_ref: None,
+            paired: Some(paired),
+        };
+        match crate::bam2nuc::run(&bam2nuc) {
+            Ok(()) => {}
+            Err(e @ crate::bam2nuc::BismarkBam2nucError::ZeroDivision { .. }) => {
+                let name = bam.file_name().unwrap_or_default().to_string_lossy();
+                let stats = format!(
+                    "{output_dir}{}.nucleotide_stats.txt",
+                    name.strip_suffix(".bam").unwrap_or(&name)
+                );
+                let _ = std::fs::remove_file(&stats);
+                eprintln!(
+                    "Warning: no nucleotide coverage statistics for {}: {e}",
+                    bam.display()
+                );
+            }
+            Err(e) => {
+                return Err(AlignerError::Validation(format!(
+                    "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Fail on a read input with Windows (CRLF) line endings.
