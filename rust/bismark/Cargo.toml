@@ -40,7 +40,7 @@ noodles-csi = "=0.50.0"
 mimalloc = { version = "=0.1.52", default-features = false }
 # --- aligner optional backends (feature-gated below; default-OFF / release-ON) ---
 rammap-core = { version = "=1.1.1", git = "https://github.com/jwanglab/rammap", rev = "5ea62cd5e2f7875fef5234d57ada12ac5a30dbba", default-features = false, features = ["parallel"], optional = true }
-rayon = { version = "1", optional = true }
+rayon = { version = "=1.12.0", optional = true }
 binseq = { version = "=0.9.3", default-features = false, features = ["anyhow"], optional = true }
 
 [features]
@@ -53,7 +53,7 @@ binseq-input = ["dep:binseq"]
 assert_cmd = "=2.0.16"
 predicates = "=3.1.2"
 tempfile = "=3.10.1"
-proptest = "1"
+proptest = "=1.11.0"
 # Aligner function-level micro-benchmark (dev-only; never in the shipped binary).
 criterion = { version = "=0.5.1", default-features = false, features = ["cargo_bench_support"] }
 

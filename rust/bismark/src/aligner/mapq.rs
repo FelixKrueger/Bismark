@@ -964,11 +964,13 @@ mod tests {
             Aligner::Hisat2,
             Aligner::Minimap2,
             Aligner::Rammap,
+            Aligner::BwaMem3,
         ] {
-            // EXHAUSTIVE on purpose: a fifth backend fails to COMPILE here until it is
-            // classified, instead of silently inheriting `from_emitted`'s `_ => 0.0` arm.
+            // EXHAUSTIVE on purpose: a new backend fails to COMPILE here until it is
+            // classified, instead of silently inheriting a wildcard arm.
             let minimap_like = match aligner {
-                Aligner::Bowtie2 | Aligner::Hisat2 => false,
+                // bwa-mem3 is 5-Base only, where MAPQ comes from the engine; no bonus here.
+                Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3 => false,
                 Aligner::Minimap2 | Aligner::Rammap => true,
             };
             // `--local` is rejected for the minimap-like aligners, so their model must not

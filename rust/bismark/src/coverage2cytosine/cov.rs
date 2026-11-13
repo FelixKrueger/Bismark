@@ -17,6 +17,10 @@ use crate::coverage2cytosine::error::BismarkC2cError;
 /// and column 3 (percentage) are discarded.
 pub type CovRecord = (Vec<u8>, u32, u32, u32);
 
+/// Opens the coverage lines for one pass (the report and the `--gc` pass each
+/// read them once): the `.cov` file, or lines the caller already holds in memory.
+pub type OpenCov<'a> = &'a dyn Fn() -> Result<Box<dyn BufRead + 'a>, BismarkC2cError>;
+
 /// Open the coverage file, transparently decompressing `.gz` (plain gzip via
 /// `MultiGzDecoder`, matching Perl's `gunzip -c`).
 pub fn open_cov(path: &Path) -> Result<Box<dyn BufRead>, BismarkC2cError> {

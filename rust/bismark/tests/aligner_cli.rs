@@ -971,6 +971,45 @@ exit 1
     }
 }
 
+/// Two inputs that would write the same output name are rejected rather than the second
+/// silently overwriting the first (#1167 finding 22).
+#[cfg(unix)]
+#[test]
+fn inputs_sharing_an_output_name_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let (a, b) = (genome.path().join("a"), genome.path().join("b"));
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    let read = b"@r1\nACGTACGT\n+\nIIIIIIII\n";
+    for p in [a.join("x.fq"), b.join("x.fastq"), a.join("y.fq")] {
+        fs::write(p, read).unwrap();
+    }
+    let cases: [(&[&str], Vec<PathBuf>); 2] = [
+        (&[], vec![a.join("x.fq"), b.join("x.fastq")]),
+        (&["--basename", "foo"], vec![a.join("x.fq"), a.join("y.fq")]),
+    ];
+    for (flags, reads) in cases {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args(flags)
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .args(&reads)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("would both write"));
+        assert_eq!(fs::read_dir(outdir.path()).unwrap().count(), 0);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_index_errors() {
@@ -1016,6 +1055,32 @@ fn sam_output_is_deferred() {
         .failure()
         .code(1)
         .stderr(predicate::str::contains("SAM output is not yet supported"));
+}
+
+/// `--rg_id`/`--rg_sample` alone (without `--rg_tag`) must be rejected too, not
+/// silently ignored.
+#[cfg(unix)]
+#[test]
+fn rg_id_and_rg_sample_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+
+    for flag in ["--rg_id", "--rg_sample"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args([flag, "S1"])
+            .arg(&read)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("--rg_tag/--rg_id/--rg_sample"));
+    }
 }
 
 // ---- paired-end layout validation (resolves before discovery; hermetic) ----
@@ -3295,6 +3360,50 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// A minimap2 run prints no developer text, and the Bowtie 2 effort options `-D` / `-R`,
+/// which minimap2 cannot take, are rejected rather than dropped (#1167 finding 31).
+#[cfg(unix)]
+#[test]
+fn minimap2_summary_is_clean_and_bowtie2_effort_options_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    for (extra, ok) in [
+        (&[][..], true),
+        (&["-D", "20"][..], false),
+        (&["-R", "3"][..], false),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--minimap2")
+            .arg("--path_to_minimap2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(temp.path())
+            .args(extra)
+            .arg(&read)
+            .assert();
+        if ok {
+            assert
+                .success()
+                .stderr(predicate::str::contains("unique best alignments:   1"))
+                .stderr(predicate::str::contains("Phase 6").not());
+        } else {
+            assert.failure().code(1).stderr(
+                predicate::str::contains(format!("'{} <int>'", extra[0]))
+                    .and(predicate::str::contains("--minimap2")),
+            );
+        }
+    }
+}
+
 /// Run `bismark --minimap2` on the 6 bp fixture read and return the single record's MAPQ.
 #[cfg(unix)]
 fn minimap2_bam_mapq(genome: &Path, bins: &Path) -> u8 {
@@ -3933,6 +4042,45 @@ fn combined_index_ot_read_end_to_end() {
     let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
     assert_eq!(v(*b"XR"), Some(Value::String("CT".into())));
     assert_eq!(v(*b"XG"), Some(Value::String("CT".into())));
+}
+
+/// A combined-index aligner whose read names stop matching the input must fail
+/// loud (as the faithful path does), not turn every later read into a no-alignment.
+#[cfg(unix)]
+#[test]
+fn combined_index_read_name_desync_is_an_error() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Emits every read under a mangled name (`<id>_X`), so no group ever matches.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "_X\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF"; }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot", "r_ob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "returned read names that stop matching the input at read 1",
+        ));
 }
 
 /// THE OB→1 REGRESSION: a combined-index OB read (rev + `_GA_converted`) must map
@@ -6702,6 +6850,96 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
      }' "$r1"
 "#;
     write_exec(&dir.join("bowtie2"), script);
+}
+
+/// `--upto` must stop the 5-Base engine even when its output outgrows the pipe buffer.
+#[cfg(unix)]
+#[test]
+fn five_base_pe_upto_terminates_with_a_large_engine_output() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base_pe(bins.path());
+    let reads: String = (0..5000)
+        .map(|i| format!("@p{i}\nATGTAC\n+\nIIIIII\n"))
+        .collect();
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &reads).unwrap();
+    fs::write(&r2, &reads).unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--upto")
+        .arg("10")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
+    assert!(
+        report.contains("Sequence pairs analysed in total:\t10\n"),
+        "{report}"
+    );
+}
+
+/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
+/// of the calls.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_umi_bases_are_not_called() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idx = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idx.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let r1_xm = |umi: &str| {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .args(["--illumina_5base", "--bowtie2", "--five_base_umi_len", umi])
+            .arg("--five_base_index")
+            .arg(idx.path().join("puc"))
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .assert()
+            .success();
+        let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+        let r1_rec = recs
+            .iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1");
+        bismark::io::tags::xm(r1_rec.inner().data())
+            .unwrap()
+            .to_vec()
+    };
+    assert_eq!(r1_xm("0"), b".Z...z".to_vec());
+    assert_eq!(r1_xm("2"), b".....z".to_vec());
 }
 
 /// `--illumina_5base` PE end-to-end via minimap2: a read pair `ATGTAC`/`ATGTAC`

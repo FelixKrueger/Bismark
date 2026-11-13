@@ -41,7 +41,7 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 )]
 pub struct Cli {
     /// Optional explicit Bismark BAM file(s). If none are given, the current
-    /// directory is scanned for `*bismark_{bt2,hisat2}[_pe].bam`.
+    /// directory is scanned for `*bismark_{bt2,hisat2,mm2,rammap}[_pe].bam`.
     pub bam_files: Vec<PathBuf>,
 
     /// Basename of the output files; emits `<basename>.txt` and
