@@ -3,9 +3,8 @@
 //! Faithful to Perl `process_sequence_files` (lines 360–516). The transform
 //! operates on **raw line bytes including the terminator**, so CRLF stays CRLF
 //! and a final line without a newline keeps none — never trim-and-re-emit.
-//! The one exception (a deliberate divergence from Perl): when such a line is
-//! followed by another header in the same output, a `\n` is written first so
-//! the header is not glued onto the previous sequence.
+//! When such a line is followed by another header in the same output, a `\n`
+//! is written first, as Perl does, so the header stays on its own line.
 //!
 //! Per sequence byte: uppercase → map anything not in `{A,T,C,G,N,\r,\n}` to
 //! `N` → then `tr` (`C→T`/`G→A`, or slam `T→C`/`A→G`). Headers are rewritten as
@@ -289,7 +288,8 @@ pub fn convert_split(
 /// **Combined reference (Bismark-Rust extension).** Write a single FASTA = the
 /// CT-converted records of all files (glob order), then the GA-converted
 /// records of all files. Built directly from the converted stream, so it is
-/// well-defined in both MFA and `--single_fasta` modes. No uniqueness re-check
+/// well-defined in both MFA and `--single_fasta` modes. A `\n` separates the
+/// two halves when the last file ends without one. No uniqueness re-check
 /// (already validated by [`convert_split`]).
 pub fn write_combined(
     files: &[PathBuf],
@@ -522,6 +522,20 @@ mod tests {
         assert_eq!(
             fs::read(&combined_path).unwrap(),
             [&ct[..], &ga[..]].concat()
+        );
+    }
+
+    #[test]
+    fn combined_separates_halves_when_last_file_lacks_final_newline() {
+        let d = tempdir().unwrap();
+        let gdir = d.path().join("genome");
+        fs::create_dir_all(&gdir).unwrap();
+        fs::write(gdir.join("a.fa"), b">chr1\nACGT").unwrap();
+        let combined_path = d.path().join("combined.fa");
+        write_combined(&[gdir.join("a.fa")], &combined_path, false).unwrap();
+        assert_eq!(
+            fs::read(&combined_path).unwrap(),
+            b">chr1_CT_converted\nATGT\n>chr1_GA_converted\nACAT".to_vec()
         );
     }
 
