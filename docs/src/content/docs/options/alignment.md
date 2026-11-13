@@ -171,7 +171,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `-o/--output_dir <dir>`
 
-  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute. While an input is being processed, its outputs are written as `<name>.<pid>.partial` and renamed when that input has finished; a failed run removes the partial files of the input it failed on, and leaves any finished outputs of an earlier run in place.
+  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute. While an input is being processed, its outputs are written as `<name>.<pid>.partial` and renamed when that input has finished; a failed run removes the partial files of the input it failed on. Outputs of an earlier run with the same names are replaced as each input finishes.
 
 - `--temp_dir <dir>`
 
@@ -235,7 +235,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--nucleotide_coverage`
 
-  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete, by running `bismark bam2nuc` on each final BAM in the same process. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. The _nucleotide_stats.txt_ file is written to the output directory, and `bismark report` detects it and adds it to the HTML report. If bam2nuc fails, the run exits with an error after the alignment outputs are complete; an input without usable reads only gets a warning and no stats file.
+  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete, by running `bismark bam2nuc` on each final BAM in the same process. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. The _nucleotide_stats.txt_ file is written to the output directory, and `bismark report` detects it and adds it to the HTML report. If bam2nuc fails, the run exits with an error after the alignment outputs are complete; an input without usable reads only gets a warning and no stats file. Stats files of this run's inputs are removed before bam2nuc starts, so a failed run never leaves a stale one behind.
 
 ##### Other:
 

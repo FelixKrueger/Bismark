@@ -1439,6 +1439,60 @@ fn nucleotide_coverage_covers_multicore_basename_and_several_inputs() {
     );
 }
 
+/// Stats files from an earlier run are replaced on success and gone after a hard failure,
+/// including for inputs bam2nuc never reached.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_leaves_no_stale_stats_file() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    let (a, b) = (input.path().join("a.fq"), input.path().join("b.fq"));
+    for f in [&a, &b] {
+        fs::write(f, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    }
+    let run = |outdir: &Path| {
+        let temp = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--no_stream_converted")
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir)
+            .arg("--nucleotide_coverage")
+            .arg(&a)
+            .arg(&b)
+            .assert()
+    };
+
+    let ok = TempDir::new().unwrap();
+    let b_stats = ok.path().join("b_bismark_bt2.nucleotide_stats.txt");
+    fs::write(&b_stats, b"stale").unwrap();
+    run(ok.path()).success();
+    assert_eq!(
+        fs::read(&b_stats).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &ok.path().join("b_bismark_bt2.bam"),
+            "b_bismark_bt2.nucleotide_stats.txt"
+        )
+    );
+
+    // A directory at a's stats path stops the loop before b is counted.
+    let failed = TempDir::new().unwrap();
+    fs::create_dir(failed.path().join("a_bismark_bt2.nucleotide_stats.txt")).unwrap();
+    let b_stats = failed.path().join("b_bismark_bt2.nucleotide_stats.txt");
+    fs::write(&b_stats, b"stale").unwrap();
+    run(failed.path()).failure().code(1);
+    assert!(!b_stats.exists());
+}
+
 /// A bam2nuc write that fails mid-file leaves no stats file behind.
 #[cfg(target_os = "linux")]
 #[test]
