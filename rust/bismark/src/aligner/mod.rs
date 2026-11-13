@@ -352,16 +352,25 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
             "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
         ))
     };
+    let bams: Vec<PathBuf> = reads
+        .iter()
+        .map(|read| {
+            derive_output_path(
+                read,
+                config,
+                &format!("_bismark_{tok}{pe}.bam"),
+                &format!("{pe}.bam"),
+            )
+        })
+        .collect();
+    // Stats from an earlier run must not sit next to a BAM this run rewrote.
+    for bam in &bams {
+        remove_stats_file(&output_dir, bam);
+    }
     eprintln!("Now calculating observed and expected nucleotide coverage statistics...");
     let genome = crate::bam2nuc::load_genome(&config.genome.genome_dir).map_err(failed)?;
     // One BAM per call, so an input without usable reads does not skip the next one.
-    for read in reads {
-        let bam = derive_output_path(
-            read,
-            config,
-            &format!("_bismark_{tok}{pe}.bam"),
-            &format!("{pe}.bam"),
-        );
+    for bam in bams {
         let bam2nuc = crate::bam2nuc::ResolvedConfig {
             inputs: vec![bam.clone()],
             genome_folder: config.genome.genome_dir.clone(),
@@ -385,8 +394,8 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
     Ok(())
 }
 
-/// Remove `bam`'s stats file after a failed bam2nuc run; a stale one would be read by
-/// `bismark report`. Anything but a file or symlink at that path is left alone.
+/// Remove `bam`'s stats file, which `bismark report` would otherwise read. A directory
+/// at that path is left alone.
 fn remove_stats_file(output_dir: &str, bam: &Path) {
     let Ok(name) = crate::bam2nuc::output_name::derive_output_name(bam) else {
         return;
