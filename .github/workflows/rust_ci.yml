@@ -175,7 +175,7 @@ jobs:
       - name: cargo test (bwa-mem3 gates)
         env:
           BISMARK_TEST_BWAMEM3: "1"
-        run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake
+        run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake --test aligner_taps_bwamem3
 
   fmt:
     name: cargo fmt --check
