@@ -5,26 +5,29 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-07
+updated: 2026-11-12
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: f64426c
+    commit: 0882360
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: f64426c
+    commit: 0882360
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/aligner.rs
+    commit: 0882360
 ---
 
 # Aligner options
@@ -52,7 +55,8 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--non_directional` | directional | Align to all four strands |
 | `--pbat` | directional | Align to CTOT and CTOB only |
 | `--bowtie2` / `--hisat2` / `--minimap2` / `--rammap` | Bowtie 2 | Aligner; pick one |
-| `--path_to_bowtie2` (and `_hisat2`, `_minimap2`, `_rammap`) `<dir>` | `PATH` | Folder that holds the aligner binary |
+| `--bwamem3` | off | bwa-mem3 as the 5-Base engine; needs `--illumina_5base` and `--five_base_index` |
+| `--path_to_bowtie2` (and `_hisat2`, `_minimap2`, `_rammap`, `_bwamem3`) `<dir>` | `PATH` | Folder that holds the aligner binary |
 | `--rammap_subprocess` | in-process | Run the external `rammap` binary; needs `--rammap` |
 | `--combined_index` | off | Align against `Bisulfite_Genome/Combined/BS_combined` |
 | `--combined_index_sequential` / `_parallel` / `_single_pass` | sequential | Execution model for `--combined_index --non_directional` |
@@ -83,7 +87,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 | Option | Default | Meaning |
 |---|---|---|
 | `-o <dir>` (`--output_dir`) | current folder | Created with parents if missing |
-| `--temp_dir <dir>` | current folder | Where the converted-read FIFOs or files, `--multicore` input chunks, and decoded uBAM/BINSEQ input go during the run |
+| `--temp_dir <dir>` | current folder | Where the converted-read FIFOs or files, `--multicore` input chunks, and decoded uBAM/CRAM/BINSEQ input go during the run |
 | `--no_stream_converted` | off | Write the converted reads to `--temp_dir` as files instead of streaming them (`resolve_stream_converted`); each file is deleted once its input has been aligned; see [usage/align-reads.md](../usage/align-reads.md) |
 | `-B <name>` (`--basename`) | from read file | Output basename |
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
@@ -98,6 +102,8 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other.
 
 With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, and `--phred33-quals` / `--phred64-quals`. The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`build_five_base_aligner_options`, `default_linear_score`). Bowtie 2 gets `--maxins 800` unless `-X` is given; HISAT2 gets no `--maxins` unless `-X` is given. With Bowtie 2, an `-I` larger than that maximum is rejected. They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant` or `--dovetail`, whatever `--dovetail` or `--no_dovetail` say. HISAT2 never gets `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected.
+
+With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth` index was built from. The bwa-mem3 options are fixed (`bwamem3_options`); `-p` or `--multicore` set its `-t`, and the alignment parameters above are rejected (`reject_bwamem3_tuning`). Which pairs are kept and which bases are not called: [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
 
 ## Rejected options and combinations
 
@@ -114,6 +120,9 @@ With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above,
 | `-p 1` | `build_aligner_options` |
 | 5-Base Bowtie 2 with `-I` larger than the maximum insert (`-X`, or 800) | `build_five_base_aligner_options` |
 | `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
+| `--bwamem3` without `--illumina_5base` or `--five_base_index`, or with another aligner; `--five_base_index` with the default minimap2 engine | `resolve_aligner` |
+| `--bwamem3` with `--local`, `--score_min`, `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `-I`, `-X`, `--dovetail`, `--no_dovetail`, `--no-spliced-alignment`, `--known-splicesite-infile` or `--most_valid_alignments` | `reject_bwamem3_tuning` |
+| `--bwamem3` with a missing index file, or bwa-mem3 older than 0.16.0 | `check_bwamem3_index_files`, `detect_aligner` in `aligner/aligner.rs` |
 
 `--most_valid_alignments` and `--dovetail` have no effect.
 

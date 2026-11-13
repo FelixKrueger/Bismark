@@ -1,4 +1,4 @@
-//! #1025 Phase 1 — unaligned BAM (uBAM) read input.
+//! #1025 Phase 1 — unaligned BAM (uBAM) read input, and unaligned CRAM the same way.
 //!
 //! Bismark has no native uBAM input (neither did Perl v0.25.1). This module
 //! transcodes a uBAM into a temporary FASTQ that byte-matches what
@@ -15,7 +15,8 @@
 //! FASTQ is replayable by both consumers and keeps the convert core untouched.
 //!
 //! ## Reader choice (load-bearing)
-//! Reads via **raw `noodles_bam::io::Reader::record_bufs`** — NOT
+//! Reads via **raw `noodles_bam::io::Reader::record_bufs`** (or `noodles_cram::io::Reader::records`
+//! with no reference, which is enough for unmapped reads) — NOT
 //! `bismark-io::BamReader`, which routes through `filter_unmapped_then_classify`
 //! and would **silently drop every unmapped (FLAG 0x4) record — i.e. the entire
 //! uBAM — and requires XR/XG/XM tags** uBAMs lack (mirrors `bismark-bam2nuc`).
@@ -45,16 +46,51 @@ const FLAG_SUPPLEMENTARY: u16 = 0x800;
 /// `samtools fastq` missing-quality placeholder (ASCII `B`).
 const MISSING_QUAL: u8 = b'B';
 
-/// Is `path` a BAM file? Only an authentic `Ok(Bam)` magic-byte sniff counts as
-/// uBAM input. A plain FASTQ sniffs as `Ok(Sam)` (first byte `@`) and a gzipped
+/// Is `path` a BAM or CRAM file? Only an authentic `Ok(Bam)` / `Ok(Cram)` magic-byte
+/// sniff counts as uBAM input. A plain FASTQ sniffs as `Ok(Sam)` (first byte `@`) and a gzipped
 /// FASTQ as `Err(UnrecognizedBgzfPayload)` — BOTH must return `false` so the
 /// normal FASTQ/FASTA path is never broken (plan-review R4). All other
 /// `Ok(_)`/`Err(_)` outcomes are likewise treated as "not a uBAM".
 pub fn is_bam_input(path: &Path) -> bool {
     matches!(
         crate::io::AlignmentKind::from_path(path),
-        Ok(crate::io::AlignmentKind::Bam)
+        Ok(crate::io::AlignmentKind::Bam | crate::io::AlignmentKind::Cram)
     )
+}
+
+/// Feed every record of a BAM or CRAM to `f`, in file order, until `f` returns `false`.
+fn for_each_record(path: &Path, mut f: impl FnMut(RecordBuf) -> Result<bool>) -> Result<()> {
+    if matches!(
+        crate::io::AlignmentKind::from_path(path),
+        Ok(crate::io::AlignmentKind::Cram)
+    ) {
+        // No reference: unmapped CRAM records store their bases verbatim.
+        let mut reader = noodles_cram::io::reader::Builder::default().build_from_path(path)?;
+        let header = reader.read_header()?;
+        // A mapped record needs its reference, and noodles panics without one.
+        if !header.reference_sequences().is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "{}: this CRAM has reference sequences (it looks aligned); only an unaligned \
+                 CRAM is accepted as read input — convert it with \
+                 `samtools fastq --reference <genome.fa>` first",
+                path.display()
+            )));
+        }
+        for result in reader.records(&header) {
+            if !f(result?)? {
+                break;
+            }
+        }
+    } else {
+        let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(path)?));
+        let header = reader.read_header()?;
+        for result in reader.record_bufs(&header) {
+            if !f(result?)? {
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Peek a uBAM to classify single- vs paired-end: `true` iff the first **primary**
@@ -62,17 +98,16 @@ pub fn is_bam_input(path: &Path) -> bool {
 /// A header-only / no-primary BAM returns `false` (→ the single-end path, which
 /// produces an empty FASTQ → the existing graceful-empty handling).
 pub fn is_paired(bam: &Path) -> Result<bool> {
-    let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
-    let header = reader.read_header()?;
-    for result in reader.record_bufs(&header) {
-        let rec = result?;
+    let mut paired = false;
+    for_each_record(bam, |rec| {
         let flags = u16::from(rec.flags());
         if flags & (FLAG_SECONDARY | FLAG_SUPPLEMENTARY) != 0 {
-            continue;
+            return Ok(true);
         }
-        return Ok(flags & FLAG_PAIRED != 0);
-    }
-    Ok(false)
+        paired = flags & FLAG_PAIRED != 0;
+        Ok(false)
+    })?;
+    Ok(paired)
 }
 
 /// Full-IUPAC complement, matching `samtools fastq`'s reverse-complement table.
@@ -163,17 +198,15 @@ pub fn transcode_ubam_to_fastq_se(bam: &Path, temp_dir: &Path) -> Result<PathBuf
     // (`strip_fastq_suffix(basename)`) equals what the equivalent
     // `samtools fastq > <stem>.fastq` run would produce (plan-review R3).
     let out_path = temp_dir.join(format!("{}.fastq", file_stem(bam)));
-    let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
-    let header = reader.read_header()?;
     let mut w = BufWriter::new(File::create(&out_path)?);
     let mut buf = Vec::new();
-    for result in reader.record_bufs(&header) {
-        let rec = result?;
+    for_each_record(bam, |rec| {
         buf.clear();
         if record_to_fastq_lines(&rec, &mut buf)? {
             w.write_all(&buf)?;
         }
-    }
+        Ok(true)
+    })?;
     w.flush()?;
     Ok(out_path)
 }
@@ -187,27 +220,23 @@ pub fn transcode_ubam_to_fastq_pe(bam: &Path, temp_dir: &Path) -> Result<(PathBu
     let stem = file_stem(bam);
     let p1 = temp_dir.join(format!("{stem}_1.fastq"));
     let p2 = temp_dir.join(format!("{stem}_2.fastq"));
-    let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(bam)?));
-    let header = reader.read_header()?;
     let mut w1 = BufWriter::new(File::create(&p1)?);
     let mut w2 = BufWriter::new(File::create(&p2)?);
 
     // Pair adjacent primary records (secondary/supplementary are skipped, so the
     // surviving stream is exactly READ1+READ2 per template for a collated uBAM).
     let mut pending: Option<RecordBuf> = None;
-    for result in reader.record_bufs(&header) {
-        let rec = result?;
+    for_each_record(bam, |rec| {
         let flags = u16::from(rec.flags());
         if flags & (FLAG_SECONDARY | FLAG_SUPPLEMENTARY) != 0 {
-            continue;
+            return Ok(true);
         }
         match pending.take() {
             None => pending = Some(rec),
-            Some(first) => {
-                write_pe_pair(first, rec, &mut w1, &mut w2)?;
-            }
+            Some(first) => write_pe_pair(first, rec, &mut w1, &mut w2)?,
         }
-    }
+        Ok(true)
+    })?;
     if pending.is_some() {
         return Err(AlignerError::Validation(
             "paired-end uBAM has an odd number of primary records — mates are not \
