@@ -745,3 +745,71 @@ fn simplex_never_calls_a_strand_it_did_not_sequence() {
         );
     }
 }
+
+/// The standalone consensus publishes only final names, and a failing input leaves nothing.
+#[test]
+fn consensus_from_bam_publishes_only_complete_outputs() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let n = 40;
+    write_genome(tmp.path(), n);
+    let mut recs = String::new();
+    for i in 0..n {
+        recs.push_str(&pair(
+            &format!("ot{i}"),
+            i,
+            true,
+            &seq_ot_methylated(),
+            60,
+            60,
+        ));
+        recs.push_str(&pair(&format!("ob{i}"), i, false, WINDOW, 60, 60));
+    }
+    let bam = make_bam(tmp.path(), "families", n, &recs);
+    let names = |d: &Path| {
+        let mut v: Vec<String> = std::fs::read_dir(d)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+
+    let ok = tempfile::tempdir().unwrap();
+    run_consensus(tmp.path(), ok.path(), &bam, &[]);
+    assert!(
+        names(ok.path()).iter().all(|n| !n.ends_with(".partial")),
+        "{:?}",
+        names(ok.path())
+    );
+    assert!(ok.path().join("five_base_consensus.bam").exists());
+
+    // A BAM cut short fails while its records are read, before any output is opened.
+    let bytes = std::fs::read(&bam).unwrap();
+    let cut = tmp.path().join("cut.bam");
+    std::fs::write(&cut, &bytes[..bytes.len() - 60]).unwrap();
+    let failed = tempfile::tempdir().unwrap();
+    let out = Command::new(bismark_bin())
+        .arg("--illumina_5base")
+        .arg("--five_base_consensus_from_bam")
+        .arg(&cut)
+        .arg("--genome")
+        .arg(tmp.path())
+        .arg("--output_dir")
+        .arg(failed.path())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        names(failed.path()).is_empty(),
+        "{:?}",
+        names(failed.path())
+    );
+}
