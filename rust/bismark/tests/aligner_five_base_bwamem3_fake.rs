@@ -19,6 +19,15 @@ fn write_exec(path: &Path, content: &str) {
     use std::os::unix::fs::PermissionsExt;
     fs::write(path, content).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    // A test thread forking while the script was open for writing makes exec fail briefly.
+    for _ in 0..100 {
+        match std::process::Command::new(path).arg("version").output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => break,
+        }
+    }
 }
 
 /// A genome folder with one contig, `chr1` = `ACGTACGT`.
