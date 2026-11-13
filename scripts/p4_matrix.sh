@@ -17,7 +17,7 @@
 set -uo pipefail   # NOT -e: a FAIL cell must log and the matrix must continue.
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="$REPO/rust/target/release/bismark-methylation-extractor-rs"
+BIN="$REPO/rust/target/release/bismark_methylation_extractor"
 
 # Self-activate the oxy toolchain so the tmux launch needs no env setup:
 # micromamba `bismark-test` (samtools + perl) + the Rust toolchain.
@@ -29,7 +29,7 @@ fi
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env" 2>/dev/null || true
 
 # Build the release binary (incremental; ~0s if already current at this commit).
-echo "==> building bismark-methylation-extractor-rs (release)..." >&2
+echo "==> building bismark_methylation_extractor (release)..." >&2
 ( cd "$REPO/rust" && cargo build --release -p bismark ) > /var/tmp/p4_build.log 2>&1 \
   || { echo "FATAL: cargo build failed — see /var/tmp/p4_build.log" >&2; exit 1; }
 G="$HOME/bismark_benchmarks/genome"

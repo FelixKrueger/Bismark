@@ -368,7 +368,12 @@ mod tests {
 
     #[test]
     fn five_base_pe_header_names_unconverted_genome_exactly() {
-        for aligner in [Aligner::Bowtie2, Aligner::Hisat2, Aligner::Minimap2] {
+        for aligner in [
+            Aligner::Bowtie2,
+            Aligner::Hisat2,
+            Aligner::Minimap2,
+            Aligner::BwaMem3,
+        ] {
             let h = ReportHeader {
                 sequence_file: "r_1.fq",
                 sequence_file2: Some("r_2.fq"),

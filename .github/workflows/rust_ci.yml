@@ -5,10 +5,12 @@ on:
     paths:
       - "rust/**"
       - ".github/workflows/rust_ci.yml"
+      - ".github/scripts/install-tools.sh"
   pull_request:
     paths:
       - "rust/**"
       - ".github/workflows/rust_ci.yml"
+      - ".github/scripts/install-tools.sh"
 
 env:
   CARGO_TERM_COLOR: always
@@ -38,12 +40,7 @@ jobs:
         # either, those tests would no-op silently. CI must guarantee both so the gates
         # can't pass vacuously (the tests themselves panic if the tool is missing while
         # $CI is set).
-        run: |
-          sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
-          minimap2 --version
-          bowtie2 --version | head -1
-          samtools --version | head -1
+        run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
       - name: cargo build --workspace
         run: cargo build --workspace --all-targets
       - name: cargo test --workspace
@@ -99,12 +96,7 @@ jobs:
         # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
         # the tool is missing (they must not pass vacuously). This feature job runs
         # them too, so it needs both like the main `cargo test` job.
-        run: |
-          sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
-          minimap2 --version
-          bowtie2 --version | head -1
-          samtools --version | head -1
+        run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
       - name: cargo test -p bismark --features rammap-inprocess
         run: cargo test -p bismark --features rammap-inprocess
 
@@ -140,14 +132,50 @@ jobs:
         # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
         # the tool is missing (they must not pass vacuously). This feature job runs
         # them too, so it needs both like the main `cargo test` job.
-        run: |
-          sudo apt-get update || sudo apt-get update
-          sudo apt-get install -y --no-install-recommends minimap2 samtools bowtie2
-          minimap2 --version
-          bowtie2 --version | head -1
-          samtools --version | head -1
+        run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
       - name: cargo test -p bismark --features binseq-input
         run: cargo test -p bismark --features binseq-input
+
+  bwamem3:
+    name: bwa-mem3 5-Base gate (${{ matrix.runner }})
+    # bwa-mem3 is not in apt; it comes from bioconda in an env of its own, and only its
+    # binary goes on PATH so no other conda tool shadows the apt ones.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Install bwa-mem3 0.16.0 (bioconda)
+        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3.2.1
+        with:
+          environment-name: bwm3
+          create-args: -c conda-forge -c bioconda bwa-mem3=0.16.0
+          cache-environment: true
+          cache-environment-key: bwm3-0.16.0-${{ runner.arch }}
+          init-shell: none
+      - name: Put only bwa-mem3 on PATH
+        run: |
+          mkdir -p "$HOME/bwm3bin"
+          ln -sf "$MAMBA_ROOT_PREFIX/envs/bwm3/bin/bwa-mem3" "$HOME/bwm3bin/bwa-mem3"
+          echo "$HOME/bwm3bin" >> "$GITHUB_PATH"
+      - name: bwa-mem3 version
+        run: bwa-mem3 version
+      - name: cargo test (bwa-mem3 gates)
+        env:
+          BISMARK_TEST_BWAMEM3: "1"
+        run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake
 
   fmt:
     name: cargo fmt --check
@@ -186,9 +214,7 @@ jobs:
         with:
           workspaces: rust
       - name: Install samtools
-        run: |
-          sudo apt-get update || sudo apt-get update # transient-mirror retry
-          sudo apt-get install -y --no-install-recommends samtools
+        run: ../.github/scripts/install-tools.sh samtools
       - name: Preflight — assert oracle tooling present
         # This job must NEVER add a Bismark install / the repo root to PATH —
         # doing so would erode bismark-extractor's phase_g_discovery "not-found"

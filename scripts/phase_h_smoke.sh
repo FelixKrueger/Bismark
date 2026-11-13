@@ -3,7 +3,7 @@
 # phase_h_smoke.sh — Phase H per-cell byte-identity smoke against real WGBS data.
 #
 # Runs both the Perl `bismark_methylation_extractor` and the Rust
-# `bismark-methylation-extractor-rs` on the same BAM input, then compares
+# `bismark_methylation_extractor` on the same BAM input, then compares
 # every output file. Also measures wall-clock for both runs to validate
 # SPEC §9.7's ≥ 4× speedup target at N=4.
 #
@@ -55,7 +55,7 @@
 #
 # Environment overrides:
 #   PERL_BIN                — path to bismark_methylation_extractor (default: ./legacy_perl/bismark_methylation_extractor)
-#   RUST_BIN                — path to bismark-methylation-extractor-rs (default: cargo bin in workspace)
+#   RUST_BIN                — path to bismark_methylation_extractor (default: cargo bin in workspace)
 #
 # Output:
 #   $OUT/perl/              — Perl output
@@ -134,9 +134,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PERL_BIN="${PERL_BIN:-$REPO_ROOT/legacy_perl/bismark_methylation_extractor}"
 # Build the Rust binary in release mode for fair speed comparison.
 if [[ -z "${RUST_BIN:-}" ]]; then
-  echo "==> building bismark-methylation-extractor-rs (release)..." >&2
+  echo "==> building bismark_methylation_extractor (release)..." >&2
   (cd "$REPO_ROOT/rust" && cargo build --release -p bismark) >&2
-  RUST_BIN="$REPO_ROOT/rust/target/release/bismark-methylation-extractor-rs"
+  RUST_BIN="$REPO_ROOT/rust/target/release/bismark_methylation_extractor"
 fi
 
 if [[ ! -x "$PERL_BIN" ]]; then
@@ -206,7 +206,7 @@ PERL_ELAPSED=$((PERL_END - PERL_START))
 
 # ─── Run Rust ─────────────────────────────────────────────────────────
 
-echo "==> running bismark-methylation-extractor-rs (parallel=$PARALLEL, mode=$MODE${EXTRA_RUST_STR:+, extra-rust=\"$EXTRA_RUST_STR\"})..." >&2
+echo "==> running bismark_methylation_extractor (parallel=$PARALLEL, mode=$MODE${EXTRA_RUST_STR:+, extra-rust=\"$EXTRA_RUST_STR\"})..." >&2
 RUST_START=$(date +%s)
 "$RUST_BIN" \
   --output_dir "$RUST_OUT" \
