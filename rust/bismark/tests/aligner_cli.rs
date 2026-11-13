@@ -1493,10 +1493,11 @@ fn nucleotide_coverage_leaves_no_stale_stats_file() {
     assert!(!b_stats.exists());
 }
 
-/// A bam2nuc write that fails mid-file leaves no stats file behind.
-#[cfg(target_os = "linux")]
+/// A stale stats symlink is removed before bam2nuc runs, leaving its target alone, and
+/// replaced with a real stats file.
+#[cfg(unix)]
 #[test]
-fn nucleotide_coverage_write_failure_leaves_no_stats_file() {
+fn nucleotide_coverage_replaces_a_stale_stats_symlink() {
     let genome = TempDir::new().unwrap();
     make_genome_all_dinucleotides(genome.path());
     let bins = TempDir::new().unwrap();
@@ -1504,10 +1505,12 @@ fn nucleotide_coverage_write_failure_leaves_no_stats_file() {
     let input = TempDir::new().unwrap();
     let read = input.path().join("reads.fq");
     fs::write(&read, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let target = input.path().join("elsewhere.txt");
+    fs::write(&target, b"stale").unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
     let stats = outdir.path().join("reads_bismark_bt2.nucleotide_stats.txt");
-    std::os::unix::fs::symlink("/dev/full", &stats).unwrap();
+    std::os::unix::fs::symlink(&target, &stats).unwrap();
     bin()
         .arg("--genome")
         .arg(genome.path())
@@ -1521,13 +1524,22 @@ fn nucleotide_coverage_write_failure_leaves_no_stats_file() {
         .arg("--nucleotide_coverage")
         .arg(&read)
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains(
-            "bam2nuc (--nucleotide_coverage) failed",
-        ));
-    assert!(outdir.path().join("reads_bismark_bt2.bam").exists());
-    assert!(fs::symlink_metadata(&stats).is_err());
+        .success();
+    assert!(
+        !fs::symlink_metadata(&stats)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(&stats).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &outdir.path().join("reads_bismark_bt2.bam"),
+            "reads_bismark_bt2.nucleotide_stats.txt"
+        )
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"stale");
 }
 
 /// A bam2nuc failure after a successful alignment exits non-zero and keeps the BAM.
