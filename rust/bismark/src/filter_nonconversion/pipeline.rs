@@ -1,4 +1,5 @@
-//! Per-file orchestration: read a Bismark BAM with raw noodles `RecordBuf`s,
+//! Per-file orchestration: read a Bismark BAM with raw noodles `RecordBuf`s
+//! (a CRAM goes through the shared `crate::io` reader instead),
 //! route each read (SE) / read-pair (PE) to the kept or removed output by the
 //! XM decision, and write the byte-exact report.
 //!
@@ -38,19 +39,42 @@ use crate::filter_nonconversion::report::FilterReport;
 /// Concrete BAM writer type (noodles wraps the `File` in a BGZF encoder).
 type BamWriter = bam::io::Writer<noodles_bgzf::io::Writer<File>>;
 
-/// Filter a single input BAM. Writes the kept BAM, removed BAM, and the
+/// Filter a single input BAM or CRAM. Writes the kept BAM, removed BAM, and the
 /// report file (SUMMARY block — the run-time line is appended later, only to
 /// the last file, by [`crate::filter_nonconversion::run`]). Returns the [`FilterReport`] for the
 /// caller's STDERR echo + timing-line bookkeeping.
 ///
 /// `explicit_mode`: `Some(true)` = PE, `Some(false)` = SE, `None` = detect
-/// from the `@PG` header.
+/// from the `@PG` header. `cram_ref` is required for a CRAM input.
 pub fn filter_one(
     infile: &Path,
     mode: FilterMode,
     explicit_mode: Option<bool>,
+    cram_ref: Option<&Path>,
 ) -> Result<FilterReport, BismarkFilterError> {
     let infile_str = infile.to_string_lossy().into_owned();
+
+    if crate::io::AlignmentKind::from_path(infile).ok() == Some(crate::io::AlignmentKind::Cram) {
+        // shortcut: the shared reader drops unmapped records and needs XR/XG/XM,
+        // which all Bismark output has; add a raw-record CRAM iterator to
+        // `crate::io` if non-Bismark CRAMs must pass through like BAMs.
+        let mut reader = crate::io::open_reader_without_sort_check(infile, cram_ref)
+            .map_err(std::io::Error::other)?;
+        let header = reader.header().clone();
+        let records = reader.records().map(|r| {
+            r.map(|rec| rec.inner().clone())
+                .map_err(std::io::Error::other)
+        });
+        return filter_records(
+            infile,
+            infile_str,
+            &header,
+            records,
+            true,
+            mode,
+            explicit_mode,
+        );
+    }
 
     // 4.1 BAM filename gate (Perl line 37, `=~ /bam$/`, no dot anchor).
     if !infile_str.ends_with("bam") {
@@ -72,11 +96,37 @@ pub fn filter_one(
     let header = reader
         .read_header()
         .map_err(|e| map_initial_read_err(e, dotted_bam))?;
+    let records = reader.record_bufs(&header);
+    filter_records(
+        infile,
+        infile_str,
+        &header,
+        records,
+        dotted_bam,
+        mode,
+        explicit_mode,
+    )
+}
 
+/// The per-file flow once the input is open: SE/PE detection, sort and
+/// emptiness checks, the record stream, and the report. `check_empty` gates
+/// the empty-input check (Perl `\.bam$`; always on for CRAM).
+fn filter_records<I>(
+    infile: &Path,
+    infile_str: String,
+    header: &Header,
+    mut records: I,
+    check_empty: bool,
+    mode: FilterMode,
+    explicit_mode: Option<bool>,
+) -> Result<FilterReport, BismarkFilterError>
+where
+    I: Iterator<Item = std::io::Result<RecordBuf>>,
+{
     // 4.4 SE/PE determination.
     let is_paired = match explicit_mode {
         Some(p) => p,
-        None => crate::io::detect_paired_from_header(&header).ok_or_else(|| {
+        None => crate::io::detect_paired_from_header(header).ok_or_else(|| {
             BismarkFilterError::CannotAutoDetectMode {
                 input: infile.to_path_buf(),
             }
@@ -86,21 +136,15 @@ pub fn filter_one(
     // 4.5 PE positional-sort: reject coordinate-sorted input BEFORE opening
     // writers (faithful no-output for the common case; the rare no-SO-but-
     // misordered case is caught mid-stream by the adjacent-qname check).
-    if is_paired && is_coordinate_sorted(&header) {
+    if is_paired && is_coordinate_sorted(header) {
         return Err(BismarkFilterError::CoordinateSorted);
     }
 
-    // 4.3 Emptiness: peek the first alignment record. The peek block releases
-    // the reader borrow on scope exit; the underlying reader is left
-    // positioned just past record 1, so streaming resumes from record 2 and
-    // we prepend the stashed first record.
-    let first = {
-        let mut peek = reader.record_bufs(&header);
-        peek.next()
-    };
-    let first_rec: Option<RecordBuf> = match first {
+    // 4.3 Emptiness: peek the first alignment record; streaming resumes from
+    // record 2 and we prepend the stashed first record.
+    let first_rec: Option<RecordBuf> = match records.next() {
         None => {
-            if dotted_bam {
+            if check_empty {
                 // Header-only `.bam` → die before any output (Perl bam_isEmpty).
                 return Err(BismarkFilterError::EmptyInput);
             }
@@ -110,7 +154,7 @@ pub fn filter_one(
             None
         }
         Some(Ok(r)) => Some(r),
-        Some(Err(e)) => return Err(map_initial_read_err(e, dotted_bam)),
+        Some(Err(e)) => return Err(map_initial_read_err(e, infile_str.ends_with(".bam"))),
     };
 
     // Open both output writers + create the report file empty. Perl opens
@@ -121,21 +165,20 @@ pub fn filter_one(
     let report_path = filename::report_name(&infile_str);
 
     let mut kept_w = bam::io::Writer::new(File::create(&kept_path)?);
-    kept_w.write_header(&header)?;
+    kept_w.write_header(header)?;
     let mut removed_w = bam::io::Writer::new(File::create(&removed_path)?);
-    removed_w.write_header(&header)?;
+    removed_w.write_header(header)?;
     File::create(&report_path)?; // empty (0 bytes) until the SUMMARY is written
 
     // Stream records (prepending the stashed first record).
-    let records = reader.record_bufs(&header);
     let stream_result: Result<(u64, u64), BismarkFilterError> = match first_rec {
         None => Ok((0, 0)),
         Some(fr) => {
             let combined = std::iter::once(Ok(fr)).chain(records);
             if is_paired {
-                stream_pe(combined, mode, &header, &mut kept_w, &mut removed_w)
+                stream_pe(combined, mode, header, &mut kept_w, &mut removed_w)
             } else {
-                stream_se(combined, mode, &header, &mut kept_w, &mut removed_w)
+                stream_se(combined, mode, header, &mut kept_w, &mut removed_w)
             }
         }
     };

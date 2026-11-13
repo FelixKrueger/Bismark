@@ -134,11 +134,6 @@ pub enum BismarkBam2nucError {
         "SAM input is not supported (only BAM is read in v1.0); convert to BAM with `samtools view -b`"
     )]
     SamNotSupported,
-
-    /// A `.cram` input was supplied. Perl supports CRAM via samtools; the Rust
-    /// port defers CRAM to a later release (SPEC Q3).
-    #[error("CRAM input is not yet supported in the Rust port (v1.x); use Perl bam2nuc for CRAM")]
-    CramNotSupported,
 }
 
 /// Keeps this tool's Perl-worded genome-reading messages on top of the shared

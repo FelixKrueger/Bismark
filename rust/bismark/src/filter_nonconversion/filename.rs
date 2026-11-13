@@ -14,11 +14,14 @@
 //! that merely ends in `bam` (e.g. `foobam`, which still passes the top
 //! `=~ /bam$/` gate) has nothing stripped.
 
-/// Strip a single trailing `.bam` (dot-anchored) from the input path string.
-/// Returns the input unchanged if it does not end in `.bam`.
+/// Strip a single trailing `.bam` or `.cram` (dot-anchored) from the input
+/// path string. Returns the input unchanged if it ends in neither.
 #[must_use]
 pub fn strip_bam_suffix(infile: &str) -> &str {
-    infile.strip_suffix(".bam").unwrap_or(infile)
+    infile
+        .strip_suffix(".bam")
+        .or_else(|| infile.strip_suffix(".cram"))
+        .unwrap_or(infile)
 }
 
 /// `<stem>.nonCG_filtered.bam` — the kept-reads output (Perl lines 85–87).
@@ -63,6 +66,7 @@ mod tests {
     #[test]
     fn bare_filename() {
         assert_eq!(kept_bam_name("foo.bam"), "foo.nonCG_filtered.bam");
+        assert_eq!(kept_bam_name("foo.cram"), "foo.nonCG_filtered.bam");
     }
 
     #[test]
