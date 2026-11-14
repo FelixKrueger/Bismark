@@ -227,6 +227,43 @@ fn xg_iff_flag_holds_on_the_se_fixture() {
     assert_eq!(count_of(&census, 16, "GA"), 4);
 }
 
+/// `--taps` runs the same `XM`-driven re-encode, with TAPS in its report.
+#[test]
+fn taps_reencode_matches_illumina_5base_reencode() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let five = tempfile::tempdir().unwrap();
+    assert!(run_converter(&fixture(), five.path()).status.success());
+    let taps = tempfile::tempdir().unwrap();
+    let out = Command::new(bismark_bin())
+        .arg("--taps")
+        .arg("--five_base_bisulfite_bam")
+        .arg(fixture())
+        .arg("--output_dir")
+        .arg(taps.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bam = "softclip_indel_se.bisulfite.bam";
+    let body = sam_body(&taps.path().join(bam));
+    assert!(!body.is_empty());
+    assert_eq!(body, sam_body(&five.path().join(bam)));
+    let report =
+        std::fs::read_to_string(taps.path().join("softclip_indel_se.bisulfite_report.txt"))
+            .unwrap();
+    assert!(
+        report.starts_with("Bismark TAPS -> bisulfite-convention re-encode"),
+        "{report}"
+    );
+    assert!(!report.contains("5-Base"), "{report}");
+}
+
 /// The report must say so too — 0 flips, 0 masked. `flipped == 0` is the file-level assertion
 /// that the input was not 5-Base; anything else would mean the encoding table is inverted.
 #[test]

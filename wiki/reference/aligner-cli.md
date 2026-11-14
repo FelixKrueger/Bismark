@@ -5,29 +5,29 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-14
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Aligner options
@@ -56,6 +56,7 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--pbat` | directional | Align to CTOT and CTOB only |
 | `--bowtie2` / `--hisat2` / `--minimap2` / `--rammap` | Bowtie 2 | Aligner; pick one |
 | `--bwamem3` | off | bwa-mem3 as the 5-Base engine; needs `--illumina_5base` and `--five_base_index` |
+| `--taps` | off | TAPS mode: `--illumina_5base --bwamem3` with `--meth=taps`; needs `--five_base_index` (`expand_taps`). See [usage/align-taps-reads.md](../usage/align-taps-reads.md) |
 | `--path_to_bowtie2` (and `_hisat2`, `_minimap2`, `_rammap`, `_bwamem3`) `<dir>` | `PATH` | Folder that holds the aligner binary |
 | `--rammap_subprocess` | in-process | Run the external `rammap` binary; needs `--rammap` |
 | `--combined_index` | off | Align against `Bisulfite_Genome/Combined/BS_combined` |
@@ -99,7 +100,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 
 ## 5-Base options
 
-All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other.
+All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other. `--taps` sets `--illumina_5base` itself, and accepts only `--five_base_index`, `--five_base_baseq` and `--five_base_bisulfite_bam` of these.
 
 With `--bowtie2` or `--hisat2`, 5-Base runs take the alignment parameters above, and `--phred33-quals` / `--phred64-quals`. The default `--score_min` is `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`build_five_base_aligner_options`, `default_linear_score`). Bowtie 2 gets `--maxins 800` unless `-X` is given; HISAT2 gets no `--maxins` unless `-X` is given. With Bowtie 2, an `-I` larger than that maximum is rejected. They do not get `--ignore-quals`, `--no-mixed`, `--no-discordant` or `--dovetail`, whatever `--dovetail` or `--no_dovetail` say. HISAT2 never gets `--no-softclip`, so `--local` changes nothing for it. `--known-splicesite-infile` is rejected.
 
@@ -124,6 +125,7 @@ With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth
 | `--bwamem3` without `--illumina_5base` or `--five_base_index`, or with another aligner; `--five_base_index` with the default minimap2 engine | `resolve_aligner` |
 | `--bwamem3` with `--local`, `--score_min`, `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `-I`, `-X`, `--dovetail`, `--no_dovetail`, `--no-spliced-alignment`, `--known-splicesite-infile` or `--most_valid_alignments` | `reject_bwamem3_tuning` |
 | `--bwamem3` with a missing index file, or bwa-mem3 older than 0.16.0 | `check_bwamem3_index_files`, `detect_aligner` in `aligner/aligner.rs` |
+| `--taps` with `--illumina_5base`, another aligner, a 5-Base-only option (duplex, consensus, deconvolution, UMI, `--five_base_min_mapq`), or the bwa-mem3 tuning options above | `expand_taps`, `reject_bwamem3_tuning` |
 
 `--most_valid_alignments` and `--dovetail` have no effect.
 

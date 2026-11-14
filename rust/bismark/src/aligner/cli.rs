@@ -18,7 +18,7 @@ use clap::Parser;
 const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
 
 /// The Bismark aligner wrapper (Rust port): parse + discover + detect, then convert, align, and merge.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[command(
     name = "bismark",
     about = "Bisulfite read aligner — wraps Bowtie 2 against a bisulfite-converted genome.",
@@ -68,6 +68,7 @@ pub struct Cli {
     pub rammap: bool,
     /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware). Needs
     /// --illumina_5base and a `bwa-mem3 index --meth` index given as --five_base_index.
+    /// Implied by `--taps`.
     #[arg(long = "bwamem3")]
     pub bwamem3: bool,
     /// Folder containing the `bowtie2` executable (not the executable itself).
@@ -112,6 +113,15 @@ pub struct Cli {
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
+    /// `[TAPS]` TAPS (mC->T) mode: paired-end, directional reads aligned with bwa-mem3
+    /// (`--meth=taps`) to the UNCONVERTED genome; needs `--five_base_index`, the FASTA a
+    /// `bwa-mem3 index --meth` index was built from. Uses the Illumina 5-Base calling path
+    /// (5mC and 5hmC both read as methylated); see the TAPS guide.
+    #[arg(long = "taps")]
+    pub taps: bool,
+    /// Set by `config::expand_taps`; never a command-line flag.
+    #[arg(skip)]
+    pub taps_expanded: bool,
     /// `[#787]` After a `--illumina_5base` run, deconvolute
     /// methylation from C>T/G>A genetic variants using both strands (DRAGEN's rule), and
     /// write a per-CpG report `<out>.5base_deconvolution.txt` (chrom, pos, strand,
@@ -126,8 +136,8 @@ pub struct Cli {
     /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
-    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` it is instead the
-    /// FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from.
+    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` or `--taps` it is instead
+    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
@@ -144,7 +154,7 @@ pub struct Cli {
     /// below this are ignored in the call (emitted as no-call), cutting the per-base
     /// sequencing-error noise floor that otherwise inflates non-CpG "methylation"
     /// (DRAGEN's `--methylation-baseq-threshold` precedent). 0 = off. The BAM SEQ is
-    /// unchanged (only the methylation call is masked). Requires `--illumina_5base`.
+    /// unchanged (only the methylation call is masked). Requires `--illumina_5base` or `--taps`.
     #[arg(long = "five_base_baseq", value_name = "PHRED", default_value_t = 0)]
     pub five_base_baseq: u8,
     /// `[#787]` Minimum read MAPQ for the duplex/consensus family pass
@@ -221,8 +231,8 @@ pub struct Cli {
     /// INVERTED calls on 5-Base data. `XM` itself is left untouched. NEVER use this as the
     /// primary BAM: its `SEQ` no longer matches the sequencer, and genuine `C>T` variants are
     /// encoded as methylation, so it must not feed a variant caller. Output is read-order —
-    /// `bam2pat` needs it coordinate-sorted and indexed. Requires `--illumina_5base`; needs no
-    /// `--genome`. When set, the normal align pipeline is skipped.
+    /// `bam2pat` needs it coordinate-sorted and indexed. Requires `--illumina_5base` or
+    /// `--taps`; needs no `--genome`. When set, the normal align pipeline is skipped.
     #[arg(long = "five_base_bisulfite_bam", value_name = "BAM")]
     pub five_base_bisulfite_bam: Vec<std::path::PathBuf>,
     /// Folder containing `samtools`.

@@ -5,32 +5,32 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-14
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Bismark overview
@@ -67,6 +67,7 @@ The developer gave this order. Most workflows run these steps:
 - `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`). With Bowtie 2 it caps inserts at 800 bp unless `-X` is given, and rejects an `-I` above the cap (`build_five_base_aligner_options` in `aligner/options.rs`). `--bwamem3` works only with `--illumina_5base`, and needs `--five_base_index` and bwa-mem3 0.16.0 or newer (`resolve_aligner` in `aligner/config.rs`, `detect_aligner` in `aligner/aligner.rs`).
 - 5-Base runs with minimap2, Bowtie 2 or HISAT2 align the raw reads to the unconverted genome with the engine's normal scoring, so each methylated CpG is a mismatch (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` and `default_linear_score` in `aligner/options.rs`). The developer measured that CpG-dense, heavily methylated regions are under-covered and under-called with minimap2 and Bowtie 2. `--bwamem3` runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`), and the developer measured that it covers them; see [troubleshooting.md](troubleshooting.md).
 - 5-Base runs keep only pairs on one contig, on opposite strands, pointing at each other (`five_base_pair_geometry` in `aligner/mod.rs`).
+- `--taps` runs TAPS libraries on the 5-Base path with bwa-mem3 only, under the same paired-end, directional, FastQ limits, and rejects the 5-Base duplex, consensus, deconvolution and UMI options (`expand_taps` in `aligner/config.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
 - `--nucleotide_coverage` runs bam2nuc on each final BAM once alignment has finished (`run_nucleotide_coverage` in `aligner/mod.rs`); `--old_flag` stops the run (`reject_old_flag` in `aligner/config.rs`).
@@ -80,7 +81,7 @@ Each tool runs as `bismark <subcommand>` or under its classic name (`run_legacy_
 
 | Subcommand | Classic name | What it does | Wiki page |
 |---|---|---|---|
-| `align` (default) | `bismark` | Aligns reads, writes BAM + alignment report | [usage/align-reads.md](usage/align-reads.md), [usage/align-5-base-reads.md](usage/align-5-base-reads.md) |
+| `align` (default) | `bismark` | Aligns reads, writes BAM + alignment report | [usage/align-reads.md](usage/align-reads.md), [usage/align-5-base-reads.md](usage/align-5-base-reads.md), [usage/align-taps-reads.md](usage/align-taps-reads.md) |
 | `prepare` | `bismark_genome_preparation` | Builds the C→T and G→A genome indexes | [usage/prepare-a-genome.md](usage/prepare-a-genome.md) |
 | `dedup` | `deduplicate_bismark` | Removes PCR duplicate alignments | [usage/deduplicate-alignments.md](usage/deduplicate-alignments.md) |
 | `extract` | `bismark_methylation_extractor` | Writes per-cytosine calls and M-bias | [usage/extract-methylation-calls.md](usage/extract-methylation-calls.md) |

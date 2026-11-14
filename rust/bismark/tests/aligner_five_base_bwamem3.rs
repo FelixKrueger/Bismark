@@ -229,10 +229,16 @@ impl Setup {
 
     /// Run `bismark --illumina_5base --bwamem3` and return the output folder.
     fn run(&self, r1: &Path, r2: &Path, extra: &[&str]) -> TempDir {
+        self.run_mode(&["--illumina_5base", "--bwamem3"], r1, r2, extra)
+    }
+
+    /// Run `bismark <mode>` (a 5-Base-path mode) and return the output folder.
+    fn run_mode(&self, mode: &[&str], r1: &Path, r2: &Path, extra: &[&str]) -> TempDir {
         let out = TempDir::new().unwrap();
         Command::cargo_bin("bismark")
             .unwrap()
-            .args(["--illumina_5base", "--bwamem3", "-p", "4"])
+            .args(mode)
+            .args(["-p", "4"])
             .arg("--five_base_index")
             .arg(self.index_dir.path().join("genome.fa"))
             .arg("--genome")
@@ -310,6 +316,19 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
         eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (bwa-mem3 5-Base gate)");
         return;
     }
+    dense_twins_gate(&["--illumina_5base", "--bwamem3"]);
+}
+
+#[test]
+fn taps_dense_methylated_reads_align_like_their_unmethylated_twins() {
+    if !bwamem3_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (bwa-mem3 TAPS gate)");
+        return;
+    }
+    dense_twins_gate(&["--taps"]);
+}
+
+fn dense_twins_gate(mode: &[&str]) {
     let mut rng = Lcg(0xB3A3_5BA5_E000_1105);
     let (reference, islands) = make_reference(&mut rng);
     let setup = Setup::new(&reference);
@@ -325,7 +344,7 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
         .collect();
     let (r1, r2) = write_pairs(reads.path(), "twins", &pairs);
     let t = Instant::now();
-    let out = setup.run(&r1, &r2, &[]);
+    let out = setup.run_mode(mode, &r1, &r2, &[]);
     eprintln!("bwa-mem3 5-Base run: {:.1} s", t.elapsed().as_secs_f64());
 
     let bam = read_bam(out.path(), "twins");
@@ -415,7 +434,7 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
     );
 
     // --upto stops early without hanging.
-    let upto = setup.run(&r1, &r2, &["--upto", "100"]);
+    let upto = setup.run_mode(mode, &r1, &r2, &["--upto", "100"]);
     assert!(
         report(upto.path(), "twins").contains("Sequence pairs analysed in total:\t100\n"),
         "{}",
@@ -424,7 +443,7 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
 
     // Empty input.
     let (e1, e2) = write_pairs(reads.path(), "empty", &[]);
-    let empty = setup.run(&e1, &e2, &[]);
+    let empty = setup.run_mode(mode, &e1, &e2, &[]);
     assert!(report(empty.path(), "empty").contains("Sequence pairs analysed in total:\t0\n"));
 }
 

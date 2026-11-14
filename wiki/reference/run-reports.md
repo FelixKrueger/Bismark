@@ -5,23 +5,23 @@ description: The lines of the alignment report, the deduplication report and the
 tags: [report, mapping-efficiency, deduplication, qc]
 page_id: run-reports
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-14
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/logging.rs
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Run reports
@@ -60,7 +60,7 @@ Each main step writes a plain-text report. The alignment report gives the mappin
 
 The report ends with `Bismark completed in <d>d <h>h <m>m <s>s`.
 
-A 5-Base report adds 2 lines before that one (`run_pe_five_base` in `aligner/mod.rs`): `Proper pairs rejected (same strand, other contig, pointing apart, or R2 not proper)`, which are also counted under `no alignments under any condition`, and `Dovetail overhang bases not called`. A `--bwamem3` report also has `bwa-mem3 version: <version>` after the header.
+A 5-Base report adds 2 lines before that one (`run_pe_five_base` in `aligner/mod.rs`): `Proper pairs rejected (same strand, other contig, pointing apart, or R2 not proper)`, which are also counted under `no alignments under any condition`, and `Dovetail overhang bases not called`. A `--bwamem3` report also has `bwa-mem3 version: <version>` after the header. A `--taps` report adds `Library chemistry: TAPS (mC->T)` after that line; nothing else in the report changes (`run_pe_five_base` in `aligner/mod.rs`).
 
 ## Deduplication report
 

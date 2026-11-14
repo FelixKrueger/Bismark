@@ -19,6 +19,15 @@ fn write_exec(path: &Path, content: &str) {
     use std::os::unix::fs::PermissionsExt;
     fs::write(path, content).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    // A test thread forking while the script was open for writing makes exec fail briefly.
+    for _ in 0..100 {
+        match std::process::Command::new(path).arg("version").output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => break,
+        }
+    }
 }
 
 /// A genome folder with one contig, `chr1` = `ACGTACGT`.
@@ -650,4 +659,240 @@ fn bwamem3_other_version_warns_and_runs() {
             "Warning: detected bwa-mem3 0.17.0; Bismark's 5-Base engine is validated against 0.16.0.",
         ))
         .stderr(predicate::str::contains("byte-identity").not());
+}
+
+/// `bismark --taps` for `run`, before any extra arguments.
+#[cfg(unix)]
+fn taps_cmd(run: &FakeRun) -> Command {
+    let mut c = bin();
+    c.arg("--taps")
+        .arg("--five_base_index")
+        .arg(&run.index)
+        .arg("--path_to_bwamem3")
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(run.out.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2);
+    c
+}
+
+#[test]
+fn taps_flag_is_in_help_and_marker_is_not() {
+    let out = bin().args(["align", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("--taps"), "{help}");
+    assert!(help.contains("TAPS (mC->T)"), "{help}");
+    assert!(!help.contains("taps_expanded"), "{help}");
+    bin()
+        .args(["align", "--taps_expanded"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unexpected argument '--taps_expanded'",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_report_has_chemistry_line_after_version() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    taps_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            ">>> Writing TAPS mapping results to ",
+        ));
+    let rep = report(&run);
+    assert!(
+        rep.contains("bwa-mem3 version: 0.16.0\nLibrary chemistry: TAPS (mC->T)\n\n"),
+        "{rep}"
+    );
+    assert!(
+        rep.contains("Bismark was run with bwa-mem3 against the unconverted genome"),
+        "{rep}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_passes_meth_taps_and_pg_records_it() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let argv = run.out.path().join("argv.txt");
+    taps_cmd(&run)
+        .env("FAKE_ARGV_DUMP", &argv)
+        .assert()
+        .success();
+    let a = fs::read_to_string(&argv).unwrap();
+    assert!(a.starts_with("mem --meth=taps "), "{a}");
+    let text = header_text(&read_bam_header(
+        &run.out.path().join("r_1_bismark_bwamem3_pe.bam"),
+    ));
+    let bwa = text
+        .lines()
+        .find(|l| l.starts_with("@PG\tID:bwa-mem3\t"))
+        .unwrap_or_else(|| panic!("no bwa-mem3 @PG:\n{text}"));
+    assert!(bwa.contains("\tCL:bwa-mem3 mem --meth=taps "), "{bwa}");
+    let bis = text
+        .lines()
+        .find(|l| l.starts_with("@PG\tID:Bismark\t"))
+        .unwrap_or_else(|| panic!("no Bismark @PG:\n{text}"));
+    assert!(bis.contains("--taps"), "{bis}");
+    assert!(
+        run.out
+            .path()
+            .join("r_1_bismark_bwamem3_PE_report.txt")
+            .is_file()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_records_equal_the_five_base_run() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    taps_cmd(&run).assert().success();
+    let taps: Vec<_> = bam_records(&run)
+        .iter()
+        .map(|r| format!("{:?}", r.inner()))
+        .collect();
+    let twin = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&twin).assert().success();
+    let five: Vec<_> = bam_records(&twin)
+        .iter()
+        .map(|r| format!("{:?}", r.inner()))
+        .collect();
+    assert_eq!(taps.len(), 2);
+    assert_eq!(taps, five);
+    let rep5 = report(&twin);
+    assert!(!rep5.contains("Library chemistry"), "{rep5}");
+    assert!(rep5.contains("bwa-mem3 version: 0.16.0\n\n"), "{rep5}");
+    assert!(rep5.contains("mem --meth=5base "), "{rep5}");
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_notice_and_summary_say_taps() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    taps_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Note: --taps is the TAPS (mC->T) mode",
+        ))
+        .stderr(predicate::str::contains("TAPS index:"))
+        .stderr(predicate::str::contains("--illumina_5base").not())
+        .stderr(predicate::str::contains("5-Base").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_rejections_spawn_nothing_and_write_nothing() {
+    for (extra, why) in [
+        (
+            &["--minimap2"][..],
+            "--taps aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--five_base_consensus_from_bam", "x.bam"][..],
+            "--five_base_consensus_from_bam is validated for Illumina 5-Base only, not TAPS.",
+        ),
+    ] {
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let argv = run.bins.path().join("argv.txt");
+        let out_dir = run.out.path().join("never");
+        let mut c = bin();
+        c.arg("--taps")
+            .args(extra)
+            .arg("--five_base_index")
+            .arg(&run.index)
+            .arg("--path_to_bwamem3")
+            .arg(run.bins.path())
+            .arg("--genome")
+            .arg(run.genome.path())
+            .arg("--output_dir")
+            .arg(&out_dir)
+            .arg("-1")
+            .arg(&run.r1)
+            .arg("-2")
+            .arg(&run.r2)
+            .env("FAKE_ARGV_DUMP", &argv);
+        c.assert().failure().stderr(predicate::str::contains(why));
+        assert!(!argv.exists(), "{extra:?}: the engine was spawned");
+        assert!(!out_dir.exists(), "{extra:?}: output dir created");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn taps_version_warning_names_taps() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let fake = run.bins.path().join("bwa-mem3");
+    let script = fs::read_to_string(&fake)
+        .unwrap()
+        .replace("echo 0.16.0", "echo 0.17.0");
+    write_exec(&fake, &script);
+    taps_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Warning: detected bwa-mem3 0.17.0; Bismark's TAPS engine is validated against 0.16.0.",
+        ));
+}
+
+/// bismark2report renders a TAPS report exactly like its 5-Base twin.
+#[cfg(unix)]
+#[test]
+fn taps_report_html_matches_five_base_twin() {
+    let html = |run: &FakeRun| {
+        Command::cargo_bin("bismark2report")
+            .unwrap()
+            .current_dir(run.out.path())
+            .args([
+                "--alignment_report",
+                "r_1_bismark_bwamem3_PE_report.txt",
+                "--__test_timestamp",
+                "0",
+            ])
+            .assert()
+            .success();
+        fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.html")).unwrap()
+    };
+    let norm = |s: String, run: &FakeRun| {
+        s.replace(&run.out.path().display().to_string(), "OUT")
+            .replace(&run.genome.path().display().to_string(), "G")
+            .replace("--meth=taps", "--meth=5base")
+    };
+    let taps = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    taps_cmd(&taps).assert().success();
+    let five = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&five).assert().success();
+    let (t, f) = (norm(html(&taps), &taps), norm(html(&five), &five));
+    assert!(t.len() > 1000, "empty HTML");
+    assert_eq!(t, f);
+}
+
+/// `--five_base_baseq` reaches the TAPS call: a low-quality T at the CpG C is not called.
+#[cfg(unix)]
+#[test]
+fn taps_five_base_baseq_masks_low_quality_calls() {
+    let r1 = |recs: &[bismark::io::BismarkRecord]| {
+        recs.iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1")
+            .xm()
+            .to_vec()
+    };
+    let unmasked = fake_run("@p\nATGTAC\n+\nI#IIII\n", &[("chr1", 8)], SQ_OK);
+    taps_cmd(&unmasked).assert().success();
+    assert_eq!(r1(&bam_records(&unmasked)), b".Z...z");
+    let masked = fake_run("@p\nATGTAC\n+\nI#IIII\n", &[("chr1", 8)], SQ_OK);
+    taps_cmd(&masked)
+        .args(["--five_base_baseq", "30"])
+        .assert()
+        .success();
+    assert_eq!(r1(&bam_records(&masked)), b".....z");
 }

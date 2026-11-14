@@ -12,3 +12,4 @@
 ## [2026-11-09] update | bismark @ 3a88185, #1161 5-Base limitation in CpG-dense methylated regions: overview.md, troubleshooting.md, ENTRY.md, index.md
 ## [2026-11-12] update | bismark @ 0882360, --bwamem3 5-Base engine and shared 5-Base fixes: new usage/align-5-base-reads.md (5-Base section moved out of usage/align-reads.md, which was at 148 lines), usage/align-reads.md, usage/install.md, usage/prepare-a-genome.md, reference/aligner-cli.md, reference/bam-output.md, reference/run-reports.md, overview.md, troubleshooting.md, ENTRY.md, index.md
 ## [2026-11-14] update | bismark @ c4f286d, #1214 bam2nuc -s/--single and -p/--paired: reference/bam-output.md
+## [2026-11-14] update | bismark @ d1dd2e8, #1225 --taps TAPS mode: new usage/align-taps-reads.md, usage/align-5-base-reads.md, reference/aligner-cli.md, reference/run-reports.md, reference/bam-output.md, usage/install.md, overview.md, troubleshooting.md, ENTRY.md, index.md

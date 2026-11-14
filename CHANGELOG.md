@@ -9,6 +9,7 @@
 - **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end; this applies to the core calls (`XM`), not yet to `--five_base_duplex`, `--five_base_consensus` or `--five_base_deconvolution` ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
+- **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem3 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)

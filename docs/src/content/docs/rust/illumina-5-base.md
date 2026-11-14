@@ -12,6 +12,9 @@ read `T` at a genomic `C` is methylated (`Z`), a read `C` is unmethylated (`z`).
 The mode is opt-in behind `--illumina_5base` and is **paired-end only** (the 5-Base
 library is paired-end and directional; single-end input is rejected at startup).
 
+For TAPS libraries, which also convert methylated C to T, use [`--taps`](/Bismark/rust/taps/):
+the same calling path with bwa-mem3 in its TAPS mode.
+
 ## Stability contract
 
 5-Base is **not byte-identical** to anything: Perl Bismark has no 5-Base path, so there is
