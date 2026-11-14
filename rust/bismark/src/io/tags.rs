@@ -16,6 +16,7 @@ const TAG_XG: [u8; 2] = *b"XG";
 const TAG_MD: [u8; 2] = *b"MD";
 const TAG_NM: [u8; 2] = *b"NM";
 const TAG_RX: [u8; 2] = *b"RX";
+const TAG_MK: [u8; 2] = *b"mk";
 
 /// Extract the `XM:Z:` methylation-call string from a record's data.
 pub fn xm(data: &Data) -> Result<&[u8], BismarkIoError> {
@@ -66,6 +67,23 @@ pub fn nm(data: &Data) -> Result<Option<u32>, BismarkIoError> {
 /// when `--five_base_umi_len > 0`). Returns `Ok(None)` if absent.
 pub fn rx(data: &Data) -> Result<Option<&[u8]>, BismarkIoError> {
     optional_string_tag(data, &TAG_RX, "RX")
+}
+
+/// Extract the optional 5-Base `mk:B:I` tag (#1211) as `(5' bases, 3' bases)` masked in read
+/// orientation. Returns `Ok(None)` if absent.
+pub fn mk(data: &Data) -> Result<Option<(usize, usize)>, BismarkIoError> {
+    use noodles_sam::alignment::record_buf::data::field::value::Array;
+    let tag = noodles_sam::alignment::record::data::field::Tag::from(TAG_MK);
+    match data.get(&tag) {
+        None => Ok(None),
+        Some(Value::Array(Array::UInt32(v))) if v.len() == 2 => {
+            Ok(Some((v[0] as usize, v[1] as usize)))
+        }
+        Some(other) => Err(BismarkIoError::MalformedTag {
+            tag: "mk",
+            reason: format!("expected B:I with 2 values, got {other:?}"),
+        }),
+    }
 }
 
 fn string_tag<'a>(
