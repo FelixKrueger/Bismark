@@ -5,26 +5,26 @@ description: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem
 tags: [alignment, 5-base, minimap2, bowtie2, hisat2, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-14
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Align 5-Base reads
@@ -93,6 +93,7 @@ Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolut
 ## Links
 
 - [usage/align-reads.md](align-reads.md): the bisulfite aligner, output names and threads.
+- [usage/align-taps-reads.md](align-taps-reads.md): `--taps`, which runs TAPS libraries on this path with bwa-mem3.
 - [reference/aligner-cli.md](../reference/aligner-cli.md): every 5-Base option and the combinations that stop the run.
 - [reference/bam-output.md](../reference/bam-output.md): the `@PG` lines and the records in the BAM.
 - [troubleshooting.md](../troubleshooting.md): low 5-Base coverage at methylated CpG islands, and bwa-mem3 errors.
