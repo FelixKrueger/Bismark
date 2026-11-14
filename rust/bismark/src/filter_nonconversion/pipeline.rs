@@ -115,7 +115,7 @@ fn filter_records<I>(
     infile: &Path,
     infile_str: String,
     header: &Header,
-    mut records: I,
+    records: I,
     check_empty: bool,
     mode: FilterMode,
     explicit_mode: Option<bool>,
@@ -124,9 +124,14 @@ where
     I: Iterator<Item = std::io::Result<RecordBuf>>,
 {
     // 4.4 SE/PE determination.
+    let mut records = records.peekable();
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.flags());
     let is_paired = match explicit_mode {
         Some(p) => p,
-        None => crate::io::detect_paired_from_header(header).ok_or_else(|| {
+        None => crate::io::detect_paired(header, first_flags).ok_or_else(|| {
             BismarkFilterError::CannotAutoDetectMode {
                 input: infile.to_path_buf(),
             }

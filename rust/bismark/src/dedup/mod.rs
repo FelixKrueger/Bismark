@@ -450,8 +450,12 @@ fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, Bi
     // the pipeline itself to share the reader. Users who care can pass
     // `-s`/`-p` explicitly to skip auto-detect.
     // No sort check here: it applies to PE only, and the mode is not known yet.
-    let reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
-    match pipeline::detect_paired_from_header(reader.header()) {
+    let mut reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
+    let first_flags = match reader.records().next() {
+        Some(r) => Some(r?.inner().flags()),
+        None => None,
+    };
+    match crate::io::detect_paired(reader.header(), first_flags) {
         Some(is_paired) => {
             eprintln!(
                 "Auto-detected library type from @PG line: {}",

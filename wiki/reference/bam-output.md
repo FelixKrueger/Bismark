@@ -40,7 +40,7 @@ From `generate_sam_header` in `aligner/output.rs`:
 | `@SQ` | One per chromosome, in genome order, with `LN` |
 | `@PG` | `ID:Bismark VN:<version> CL:"bismark <arguments>"` |
 
-`bismark dedup` and `bismark extract` read the `@PG ID:Bismark` line to tell single-end from paired-end.
+`bismark dedup`, `extract`, `bam2nuc`, `filter` and `consistency` read the `@PG ID:Bismark` line to tell single-end from paired-end. A paired first record (FLAG `0x1`) overrides it: a run on a positional paired uBAM, BINSEQ or CRAM file has no `-1`/`-2` on that line (`detect_paired` in `io/read.rs`).
 
 A `--bwamem3` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>` (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection reads only the Bismark line.
 

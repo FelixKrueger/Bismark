@@ -177,8 +177,13 @@ where
     I: Iterator<Item = std::io::Result<RecordBuf>>,
 {
     let chr_names = build_chr_name_table(header)?;
+    let mut records = records.peekable();
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.flags());
     let paired = paired
-        .or_else(|| crate::io::detect_paired_from_header(header))
+        .or_else(|| crate::io::detect_paired(header, first_flags))
         .ok_or(BismarkBam2nucError::SePeUndetermined)?;
     count_records(records, paired, &chr_names, genome)
 }
