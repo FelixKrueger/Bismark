@@ -157,23 +157,16 @@ pub struct DuplexSummary {
 
 impl DuplexFamilies {
     /// Record one read's CpG observations. `molecule_is_ot` selects the duplex-pair
-    /// bucket (top-strand pair vs bottom-strand pair) for pairing. `coverage_forward` is
-    /// the read's genomic coverage-strand (forward reads cover `+`, reverse cover `-`);
-    /// each site's own/opposite flag is `coverage_forward == site.plus`. In SE these two
-    /// coincide (OT reads are forward); in PE they differ (R2 covers the opposite strand
-    /// from its R1). Counts as one read on the molecule strand regardless of CpG count.
-    pub fn add_read(
-        &mut self,
-        key: DuplexKey,
-        molecule_is_ot: bool,
-        coverage_forward: bool,
-        obs: Vec<SiteObs>,
-    ) {
+    /// bucket (top-strand pair vs bottom-strand pair) and each site's own/opposite flag
+    /// (`molecule_is_ot == site.plus`). In PE, R2 reads the copy of its R1's strand, so it
+    /// shows that strand's bases although it maps the other way (#1222), as in the core
+    /// `XM` and the consensus pass. Counts as one read regardless of CpG count.
+    pub fn add_read(&mut self, key: DuplexKey, molecule_is_ot: bool, obs: Vec<SiteObs>) {
         let fam = self.fams.entry(key).or_default();
         let owned = obs.into_iter().map(|o| OwnedObs {
             pos0: o.pos0,
             plus: o.plus,
-            own: coverage_forward == o.plus,
+            own: molecule_is_ot == o.plus,
             t_equivalent: o.t_equivalent,
         });
         if molecule_is_ot {
@@ -480,7 +473,6 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![
                 SiteObs {
                     pos0: 110,
@@ -497,7 +489,6 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
-            false, // SE: coverage-strand == molecule strand
             vec![
                 SiteObs {
                     pos0: 110,
@@ -535,7 +526,6 @@ mod tests {
         d.add_read(
             key(b"AAAAA"),
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -545,7 +535,6 @@ mod tests {
         d.add_read(
             key(b"GGGGG"),
             false,
-            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -576,7 +565,6 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -586,7 +574,6 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
-            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 200,
                 plus: true,
@@ -615,7 +602,6 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
-            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 140,
                 plus: false,
@@ -625,7 +611,6 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 140,
                 plus: false,
@@ -734,7 +719,6 @@ mod tests {
         d.add_read(
             k.clone(),
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -744,7 +728,6 @@ mod tests {
         d.add_read(
             k.clone(),
             false,
-            false, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 110,
                 plus: true,
@@ -760,7 +743,6 @@ mod tests {
                 canon_umi: b"TTTTT".to_vec(),
             },
             true,
-            true, // SE: coverage-strand == molecule strand
             vec![SiteObs {
                 pos0: 310,
                 plus: true,
