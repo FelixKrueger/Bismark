@@ -201,8 +201,10 @@ no alignment.
 
 With `--five_base_umi_len N`, the first N bases of each mate are never called, for every engine,
 including bases the engine aligned rather than soft-clipped. The UMI and overhang masks apply to
-the core calls (`XM`, and everything the extractor reads); `--five_base_duplex`,
-`--five_base_consensus` and `--five_base_deconvolution` do not apply them yet.
+the core calls (`XM`, and everything the extractor reads) and to `--five_base_duplex`,
+`--five_base_consensus` and `--five_base_deconvolution`, which find the masked read ends in the
+`mk:B:I` tag (bases masked at the 5' and 3' end of the read). A BAM written by an earlier
+version has no `mk` tag, so `--five_base_consensus_from_bam` still counts those bases in it.
 
 Before Bismark validates a newer bwa-mem3, the per-CpG comparison with the validated version is
 re-run on 1M read pairs; until then, other versions run with the warning above.
