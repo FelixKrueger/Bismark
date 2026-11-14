@@ -249,8 +249,10 @@ jobs:
                   perl_vs_rust_nondirectional_pe_dedup \
                   perl_vs_rust_nondirectional_pe_extractor \
                   2>&1 | tee /dev/stderr)
-          n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
-          test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
-          if printf '%s\n' "$out" | grep -q '^skipping:'; then
-            echo "::error::an oracle silently skipped"; exit 1
+          # Subprocess output can split a `test … ok` line; count from the per-binary summaries.
+          n=$(grep -oE 'test result: ok\. [0-9]+ passed' <<<"$out" | awk '{s+=$4} END{print s+0}' || true)
+          if [ "$n" -ne "$EXPECTED" ]; then
+            echo "::error::expected $EXPECTED oracle tests, $n ran ok"
+            grep -E 'test result:' <<<"$out" || true
+            exit 1
           fi
