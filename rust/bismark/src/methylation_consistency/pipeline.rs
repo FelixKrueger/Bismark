@@ -126,7 +126,11 @@ fn process_file(
         return Ok(());
     }
 
-    let is_paired = resolve_mode(config.mode, &header, logger);
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.inner().flags());
+    let is_paired = resolve_mode(config.mode, &header, first_flags, logger);
     if is_paired && is_coordinate_sorted(&header) {
         return Err(MethConsError::CoordinateSorted {
             input: path.to_path_buf(),
@@ -257,12 +261,17 @@ fn route(
 
 /// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line; a missing
 /// Bismark `@PG` (`None`) falls through to **single-end** (Perl, SPEC §2.3).
-fn resolve_mode(mode: LibraryMode, header: &Header, logger: &Logger) -> bool {
+fn resolve_mode(
+    mode: LibraryMode,
+    header: &Header,
+    first_flags: Option<noodles_sam::alignment::record::Flags>,
+    logger: &Logger,
+) -> bool {
     match mode {
         LibraryMode::Single => false,
         LibraryMode::Paired => true,
         LibraryMode::Auto => {
-            let is_paired = crate::io::detect_paired_from_header(header).unwrap_or(false);
+            let is_paired = crate::io::detect_paired(header, first_flags).unwrap_or(false);
             logger.info(&format!(
                 "{} mode selected (auto-detected)\n",
                 if is_paired {

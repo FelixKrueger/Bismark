@@ -32,7 +32,8 @@ pub use genome::{Genome, GenomeError};
 pub use pair::BismarkPair;
 pub use read::{
     AlignmentKind, AnyReader, BamReader, CramReader, RecordFilter, SamReader, SkipCounts,
-    ThreadedBamReader, detect_paired_from_header, open_reader, open_reader_without_sort_check,
+    ThreadedBamReader, detect_paired, detect_paired_from_header, open_reader,
+    open_reader_without_sort_check,
 };
 pub use record::{AlignedXmCall, BismarkRecord, ReadIdentity, Umi};
 pub use strand::BismarkStrand;

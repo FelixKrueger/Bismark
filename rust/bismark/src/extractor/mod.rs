@@ -96,7 +96,7 @@ pub use pipeline::{extract_pe, extract_se};
 
 use std::path::Path;
 
-use crate::io::{detect_paired_from_header, open_reader_without_sort_check};
+use crate::io::{detect_paired, open_reader_without_sort_check};
 
 /// One-line `--version` string for the binary (suite-wide shape via
 /// [`crate::meta::version_line`]):
@@ -186,8 +186,12 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
             // coordinate-sort check (detection must work on a coord-sorted
             // SE file). The probe is dropped before extract_*_parallel
             // re-opens the file — OS caches the header bytes.
-            let probe = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
-            let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
+            let mut probe = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
+            let first_flags = match probe.records().next() {
+                Some(r) => Some(r?.inner().flags()),
+                None => None,
+            };
+            let is_paired = detect_paired(probe.header(), first_flags).ok_or_else(|| {
                 BismarkExtractorError::AutoDetectFailed {
                     message: format!(
                         "no `@PG` line with `ID:Bismark*` found in {}'s header; \

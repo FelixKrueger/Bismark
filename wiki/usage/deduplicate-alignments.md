@@ -50,7 +50,7 @@ For 5-Base runs the aligner can also remove duplicates by UMI during alignment, 
    bismark dedup --parallel 4 sample_R1_bismark_bt2_pe.bam
    ```
 
-   The tool reads single-end or paired-end from the `@PG` line of the BAM header. Force it with `-s` or `-p`.
+   The tool reads single-end or paired-end from the `@PG` line of the BAM header, unless the first record is paired (FLAG `0x1`), which always means paired-end. Force it with `-s` or `-p`.
 3. Check the removed share in `<name>.deduplication_report.txt`: [reference/run-reports.md](../reference/run-reports.md).
 4. Extract methylation from the `.deduplicated.bam`: [usage/extract-methylation-calls.md](extract-methylation-calls.md).
 

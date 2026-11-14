@@ -344,3 +344,51 @@ fn se_sorted_stats_byte_identical() {
         "sorted == unsorted SE stats"
     );
 }
+
+#[test]
+fn pe_bam_without_mate_files_on_pg_line_is_counted_as_pe() {
+    // A run on a positional paired uBAM/BINSEQ/CRAM has no `-1`/`-2` in its `@PG` line
+    // (#1214): rewrite pe.bam's line that way; the paired records must still win.
+    use noodles_sam::alignment::io::Write as _;
+    let tmp = copy_genome("genome_acgtn");
+    let bam = tmp.path().join("pairs.bam");
+    let mut reader =
+        noodles_bam::io::Reader::new(std::fs::File::open(data_dir().join("pe.bam")).unwrap());
+    let header = reader.read_header().unwrap();
+    let mut text = Vec::new();
+    noodles_sam::io::Writer::new(&mut text)
+        .write_header(&header)
+        .unwrap();
+    let text = String::from_utf8(text).unwrap();
+    assert!(text.contains(" -1 R1.fq.gz -2 R2.fq.gz"));
+    let se_header: noodles_sam::Header = text
+        .replace(" -1 R1.fq.gz -2 R2.fq.gz", " pairs.bam")
+        .parse()
+        .unwrap();
+    let mut writer = noodles_bam::io::Writer::new(std::fs::File::create(&bam).unwrap());
+    writer.write_header(&se_header).unwrap();
+    for rec in reader.record_bufs(&header) {
+        writer
+            .write_alignment_record(&se_header, &rec.unwrap())
+            .unwrap();
+    }
+    writer.finish(&se_header).unwrap();
+    drop(writer);
+
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    bin()
+        .arg("-g")
+        .arg(tmp.path().join("genome"))
+        .arg("--dir")
+        .arg(format!("{}/", out.display()))
+        .arg(&bam)
+        .assert()
+        .success();
+    let stats = std::fs::read(out.join("pairs.nucleotide_stats.txt")).unwrap();
+    assert_bytes_eq(
+        &stats,
+        &golden("pe_stats.golden"),
+        "pe_stats via positional PG",
+    );
+}

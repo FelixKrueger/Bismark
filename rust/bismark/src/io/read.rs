@@ -1020,6 +1020,20 @@ pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
     result
 }
 
+/// [`detect_paired_from_header`], except that a paired first record (FLAG `0x1`) means
+/// paired-end: a run on a positional paired uBAM, BINSEQ or CRAM input has no `-1`/`-2`
+/// in its `@PG` line but writes pairs (#1214).
+#[must_use]
+pub fn detect_paired(
+    header: &Header,
+    first_record_flags: Option<noodles_sam::alignment::record::Flags>,
+) -> Option<bool> {
+    if first_record_flags.is_some_and(|f| f.is_segmented()) {
+        return Some(true);
+    }
+    detect_paired_from_header(header)
+}
+
 /// True if `arg` appears as a standalone token in `text`, delimited by
 /// whitespace or tab on **both** sides.
 ///
@@ -1626,6 +1640,22 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
     fn detect_paired_from_header_returns_none_when_no_bismark_pg() {
         let header = header_with_pg("bowtie2", Some("bowtie2 -x index -U reads.fq.gz"));
         assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_trusts_a_paired_first_record_over_the_pg_line() {
+        use noodles_sam::alignment::record::Flags;
+        // A positional paired uBAM/BINSEQ/CRAM run: no -1/-2 in CL, paired records (#1214).
+        let se_pg = header_with_pg("Bismark", Some("bismark --genome /g pairs.bam"));
+        let pe_flags = Some(Flags::SEGMENTED | Flags::FIRST_SEGMENT);
+        assert_eq!(detect_paired(&se_pg, pe_flags), Some(true));
+        assert_eq!(detect_paired(&se_pg, Some(Flags::empty())), Some(false));
+        assert_eq!(detect_paired(&se_pg, None), Some(false));
+        assert_eq!(detect_paired(&Header::default(), pe_flags), Some(true));
+        assert_eq!(
+            detect_paired(&Header::default(), Some(Flags::empty())),
+            None
+        );
     }
 
     #[test]
