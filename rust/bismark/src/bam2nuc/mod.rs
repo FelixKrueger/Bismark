@@ -82,8 +82,14 @@ pub fn run_with_genome(
         let genomic =
             freqs::get_genomic_frequencies(genome, &config.genome_folder, &config.output_dir)?;
 
-        let (sample, stats) =
-            count::count_reads_in_file(genome, infile, config.cram_ref.as_deref(), config.paired)?;
+        let (sample, stats) = count::count_reads_in_file(
+            genome,
+            infile,
+            config.cram_ref.as_deref(),
+            config.paired,
+            config.paired_forced_by_user,
+        )
+        .inspect_err(|_| eprintln!("Failed on input {}", infile.display()))?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped
