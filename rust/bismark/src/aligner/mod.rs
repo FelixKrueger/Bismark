@@ -3190,11 +3190,9 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
 /// sequences each molecule as TWO read-pairs (top-strand + bottom-strand) with swapped
 /// UMIs; both map to the SAME fragment, so families key on the FRAGMENT outer span
 /// (POS + mate-pos + TLEN) plus the canonical dual UMI, and the two pairs land in one
-/// family without explicit R1/R2 pairing. Two strand concepts (cf. SE, where they
-/// coincide): the MOLECULE strand (which duplex pair: `R1-forward == OT`) drives family
-/// pairing; the COVERAGE strand (the record's FLAG orientation) drives per-CpG
-/// own/opposite reconciliation — R2 covers the opposite genomic strand from its R1, so
-/// strand is taken from the FLAG, never from R2's `CTOT`/`CTOB` tag.
+/// family without explicit R1/R2 pairing. The MOLECULE strand (which duplex pair:
+/// `R1-forward == OT`) drives both family pairing and per-CpG own/opposite: R2 maps the
+/// other way but reads the copy of its R1's strand, so its bases are that strand's (#1222).
 fn run_five_base_duplex_pe(
     genome: &Genome,
     bam_path: &Path,
@@ -3240,12 +3238,9 @@ fn run_five_base_duplex_pe(
         let frag_start = pos0.min(mate0) as u32;
         let frag_end = frag_start + tlen.unsigned_abs();
 
-        // Coverage strand (forward reads cover `+`), and molecule strand (which duplex
-        // pair): R1-forward / R2-reverse ⇒ top-strand pair (OT); R1-reverse / R2-forward
-        // ⇒ bottom-strand pair (OB).
-        let coverage_forward = flag & 0x10 == 0;
-        let is_r1 = flag & 0x40 != 0;
-        let molecule_is_ot = is_r1 == coverage_forward;
+        // Molecule strand (which duplex pair): R1-forward / R2-reverse ⇒ top-strand pair
+        // (OT); R1-reverse / R2-forward ⇒ bottom-strand pair (OB).
+        let molecule_is_ot = (flag & 0x40 != 0) == (flag & 0x10 == 0);
 
         let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match crate::io::tags::rx(inner.data()) {
@@ -3301,7 +3296,7 @@ fn run_five_base_duplex_pe(
             end: frag_end,
             canon_umi,
         };
-        fams.add_read(key, molecule_is_ot, coverage_forward, obs);
+        fams.add_read(key, molecule_is_ot, obs);
     }
 
     if umi_swap.is_none() || missing_umi {
@@ -8848,6 +8843,70 @@ mod tests {
             "the fragment CpG's 2 cytosines"
         );
         assert_eq!(family(4), (fam, 0), "the UMI covers them");
+    }
+
+    /// #1222: in a PE duplex family, R2 counts on its molecule's strand. One molecule over
+    /// `TTTTTTTTTTTTTTTT CG TTTTTTTT`, the top-strand C at 16 methylated, as a top-strand pair
+    /// (R1 forward on [2,12), R2 reverse on [12,22)) and a bottom-strand pair (R1 reverse on
+    /// [12,22), R2 forward on [2,12)). The CpG is read only by the top pair's R2 and the
+    /// bottom pair's R1, both reverse.
+    #[test]
+    fn five_base_duplex_pe_counts_r2_on_its_molecule_strand() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", b"TTTTTTTTTTTTTTTTCGTTTTTTTT");
+        let refid = build_refid(&genome);
+        let bam = dir.path().join("pe.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (left, top, bottom) = ("TTTTTTTTTT", "TTTTTGTTTT", "TTTTCGTTTT");
+        for (q, f1, p1, s1, f2, p2, s2, t) in [
+            ("top", 99, 3, left, 147, 13, top, 20),
+            ("bot", 83, 13, bottom, 163, 3, left, -20),
+        ] {
+            let line = |flag: u16, pos: u32, mpos: u32, seq: &str, tlen: i32| {
+                sam(&format!(
+                    "{q}\t{flag}\tchr1\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0"
+                ))
+            };
+            let (r1, r2) = (line(f1, p1, p2, s1, t), line(f2, p2, p1, s2, -t));
+            let read = |rec: &SamRecord| {
+                let s = rec.seq.as_bytes();
+                if rec.flag & 0x10 != 0 {
+                    crate::aligner::output::revcomp(s)
+                } else {
+                    s.to_vec()
+                }
+            };
+            let (o1, o2) = five_base_emit_pe_record(
+                &r1,
+                &r2,
+                q,
+                &read(&r1),
+                b"IIIIIIIIII",
+                &read(&r2),
+                b"IIIIIIIIII",
+                &genome,
+                &refid,
+                false,
+                true,
+                false,
+                0,
+                0,
+                &mut Counters::default(),
+            )
+            .unwrap()
+            .expect("proper pair");
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+
+        let report = dir.path().join("duplex.txt");
+        staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        // Both cytosines of the CpG see their own strand and the opposite one: no variant,
+        // two methylation-class sites (the `+` one methylated, the `-` one not).
+        assert_eq!(family, "chr1\t2\t22\tNA\t2+2\t0\t2\t0", "{text}");
     }
 
     /// #1211: the duplex consensus calls no CpG from a dovetail overhang or an inline UMI.
