@@ -18,5 +18,5 @@
 import os
 import sys
 
-script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "merge_coverage_files_ARGV.py")
+script = os.path.join(os.path.dirname(os.path.realpath(__file__)), "merge_coverage_files_ARGV.py")
 os.execv(sys.executable, [sys.executable, script, *sys.argv[1:]])

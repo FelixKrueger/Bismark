@@ -110,13 +110,18 @@ fn revcomp(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// SAM FLAG bit 0x1: the template has multiple segments (paired-end).
+const FLAG_PAIRED: u16 = 0x1;
+
 /// Single-end strand correction (Perl `calc_single_end` `:237-252`): flag 0 →
 /// as-is, flag 16 → reverse-complement, anything else → **reachable error**
-/// (Perl `die "failed to detect valid Bismark FLAG tag"`).
+/// (Perl `die "failed to detect valid Bismark FLAG tag"`); a paired flag gets
+/// the `-p/--paired` hint.
 fn correct_se(span: Vec<u8>, flag: u16) -> Result<Vec<u8>, BismarkBam2nucError> {
     match flag {
         0 => Ok(span),
         16 => Ok(revcomp(&span)),
+        f if f & FLAG_PAIRED != 0 => Err(BismarkBam2nucError::PairedFlagInSeMode { flag: f }),
         f => Err(BismarkBam2nucError::InvalidSeFlag { flag: f }),
     }
 }
@@ -142,12 +147,14 @@ fn correct_pe(span: Vec<u8>, flag: u16) -> Vec<u8> {
 /// unmapped filter, no coordinate-sort check). CRAM (`cram_ref` required) goes
 /// through the shared [`crate::io::open_reader_without_sort_check`]. Then
 /// detects SE/PE from the `@PG` header (unless `paired` sets it) and tallies
-/// each clean-CIGAR read's strand-corrected genomic span.
+/// each clean-CIGAR read's strand-corrected genomic span. `paired_forced_by_user`
+/// (CLI `-p`) makes a record without the paired bit an error.
 pub fn count_reads_in_file(
     genome: &Genome,
     path: &Path,
     cram_ref: Option<&Path>,
     paired: Option<bool>,
+    paired_forced_by_user: bool,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError> {
     if crate::io::AlignmentKind::from_path(path)? == crate::io::AlignmentKind::Cram {
         // shortcut: the shared reader drops unmapped records and needs XR/XG/XM,
@@ -159,11 +166,17 @@ pub fn count_reads_in_file(
             r.map(|rec| rec.inner().clone())
                 .map_err(std::io::Error::other)
         });
-        return count_with_header(&header, records, genome, paired);
+        return count_with_header(&header, records, genome, paired, paired_forced_by_user);
     }
     let mut reader = noodles_bam::io::Reader::new(BufReader::new(File::open(path)?));
     let header = reader.read_header()?;
-    count_with_header(&header, reader.record_bufs(&header), genome, paired)
+    count_with_header(
+        &header,
+        reader.record_bufs(&header),
+        genome,
+        paired,
+        paired_forced_by_user,
+    )
 }
 
 /// Resolve the chromosome table and SE/PE mode from `header`, then count.
@@ -172,6 +185,7 @@ fn count_with_header<I>(
     records: I,
     genome: &Genome,
     paired: Option<bool>,
+    paired_forced_by_user: bool,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError>
 where
     I: Iterator<Item = std::io::Result<RecordBuf>>,
@@ -180,7 +194,7 @@ where
     let paired = paired
         .or_else(|| crate::io::detect_paired_from_header(header))
         .ok_or(BismarkBam2nucError::SePeUndetermined)?;
-    count_records(records, paired, &chr_names, genome)
+    count_records(records, paired, paired_forced_by_user, &chr_names, genome)
 }
 
 /// The per-record loop, factored out of [`count_reads_in_file`] so it can be
@@ -188,6 +202,7 @@ where
 fn count_records<I>(
     records: I,
     paired: bool,
+    paired_forced_by_user: bool,
     chr_names: &[Vec<u8>],
     genome: &Genome,
 ) -> Result<(NucCounts, ReadStats), BismarkBam2nucError>
@@ -200,6 +215,11 @@ where
     for result in records {
         let record = result?;
         stats.total += 1;
+
+        let flag = flag_of(&record);
+        if paired_forced_by_user && flag & FLAG_PAIRED == 0 {
+            return Err(BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag });
+        }
 
         // CIGAR I/D/S/N → skip (Perl `:126-130`).
         if cigar_has_indel(record.cigar()) {
@@ -221,9 +241,9 @@ where
 
         let span = extract_span(genome, chr, pos1, read_len);
         let corrected = if paired {
-            correct_pe(span, flag_of(&record))
+            correct_pe(span, flag)
         } else {
-            correct_se(span, flag_of(&record))?
+            correct_se(span, flag)?
         };
         freqs::process_sequence(&corrected, &mut counts);
     }
@@ -315,6 +335,13 @@ mod tests {
             correct_se(b"ACGT".to_vec(), 256).unwrap_err(),
             BismarkBam2nucError::InvalidSeFlag { flag: 256 }
         ));
+        // A paired flag adds the -p/--paired hint.
+        for flag in [99, 83, 147, 163, 65] {
+            assert!(matches!(
+                correct_se(b"ACGT".to_vec(), flag).unwrap_err(),
+                BismarkBam2nucError::PairedFlagInSeMode { flag: f } if f == flag
+            ));
+        }
     }
 
     #[test]
@@ -404,7 +431,8 @@ mod tests {
             Ok(rec(0, Some(0), 1, &[(Kind::Match, 4)], b"ACGT")),
             Ok(rec(16, Some(0), 1, &[(Kind::Match, 4)], b"ACGT")),
         ];
-        let (counts, stats) = count_records(recs.into_iter(), false, &chr_names, &g).unwrap();
+        let (counts, stats) =
+            count_records(recs.into_iter(), false, false, &chr_names, &g).unwrap();
         assert_eq!(stats.total, 2);
         assert_eq!(stats.skipped, 0);
         // forward "ACGT": A,C,G,T each 1. reverse-of-ACGT: rev=TGCA→tr→ACGT, so
@@ -428,7 +456,8 @@ mod tests {
             )),
             Ok(rec(0, Some(0), 1, &[(Kind::Match, 4)], b"ACGT")),
         ];
-        let (counts, stats) = count_records(recs.into_iter(), false, &chr_names, &g).unwrap();
+        let (counts, stats) =
+            count_records(recs.into_iter(), false, false, &chr_names, &g).unwrap();
         assert_eq!(stats.total, 2);
         assert_eq!(stats.skipped, 1);
         // Only the 2nd (clean) read counted → A=1.
@@ -445,7 +474,8 @@ mod tests {
             Ok(rec(99, Some(0), 5, &[(Kind::Match, 4)], b"ACGT")),
             Ok(rec(83, Some(0), 5, &[(Kind::Match, 4)], b"ACGT")),
         ];
-        let (counts, _stats) = count_records(recs.into_iter(), true, &chr_names, &g).unwrap();
+        let (counts, _stats) =
+            count_records(recs.into_iter(), true, false, &chr_names, &g).unwrap();
         for b in [b'A', b'C', b'G', b'T'] {
             assert_eq!(counts.mono(b), 2, "mono {}", b as char);
         }
@@ -458,7 +488,7 @@ mod tests {
         let chr_names = vec![b"chr1".to_vec(), b"chrMissing".to_vec()];
         // PE flag 83 (revcomp path) on the missing chr → empty span → no counts.
         let recs = vec![Ok(rec(83, Some(1), 1, &[(Kind::Match, 4)], b"ACGT"))];
-        let (counts, stats) = count_records(recs.into_iter(), true, &chr_names, &g).unwrap();
+        let (counts, stats) = count_records(recs.into_iter(), true, false, &chr_names, &g).unwrap();
         assert_eq!(stats.total, 1);
         for b in [b'A', b'C', b'G', b'T'] {
             assert_eq!(counts.mono(b), 0);
@@ -472,7 +502,7 @@ mod tests {
         let (_t, g) = genome_chr1_acgtacgt();
         let chr_names = vec![b"chr1".to_vec()];
         let recs = vec![Ok(rec(4, Some(0), 1, &[(Kind::Match, 4)], b"ACGT"))];
-        let err = count_records(recs.into_iter(), false, &chr_names, &g).unwrap_err();
+        let err = count_records(recs.into_iter(), false, false, &chr_names, &g).unwrap_err();
         assert!(matches!(
             err,
             BismarkBam2nucError::InvalidSeFlag { flag: 4 }
@@ -489,10 +519,54 @@ mod tests {
         let (_t, g) = genome_chr1_acgtacgt();
         let chr_names = vec![b"chr1".to_vec()];
         let recs = vec![Ok(rec(83, Some(0), 0, &[(Kind::Match, 4)], b"ACGT"))];
-        let (counts, stats) = count_records(recs.into_iter(), true, &chr_names, &g).unwrap();
+        let (counts, stats) = count_records(recs.into_iter(), true, false, &chr_names, &g).unwrap();
         assert_eq!(stats.total, 1);
         for b in [b'A', b'C', b'G', b'T'] {
             assert_eq!(counts.mono(b), 0, "POS=0 record must contribute nothing");
         }
+    }
+
+    #[test]
+    fn count_records_forced_paired_rejects_unpaired_flag() {
+        let (_t, g) = genome_chr1_acgtacgt();
+        let chr_names = vec![b"chr1".to_vec()];
+        let recs = vec![
+            Ok(rec(99, Some(0), 1, &[(Kind::Match, 4)], b"ACGT")),
+            Ok(rec(0, Some(0), 1, &[(Kind::Match, 4)], b"ACGT")),
+        ];
+        let err = count_records(recs.into_iter(), true, true, &chr_names, &g).unwrap_err();
+        assert!(matches!(
+            err,
+            BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag: 0 }
+        ));
+    }
+
+    #[test]
+    fn count_records_forced_paired_checks_indel_reads_too() {
+        let (_t, g) = genome_chr1_acgtacgt();
+        let chr_names = vec![b"chr1".to_vec()];
+        let recs = vec![Ok(rec(
+            16,
+            Some(0),
+            1,
+            &[(Kind::Match, 2), (Kind::Insertion, 1), (Kind::Match, 1)],
+            b"ACGT",
+        ))];
+        let err = count_records(recs.into_iter(), true, true, &chr_names, &g).unwrap_err();
+        assert!(matches!(
+            err,
+            BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag: 16 }
+        ));
+    }
+
+    #[test]
+    fn count_records_unforced_paired_never_errors_on_unpaired_flag() {
+        // Header-detected PE and the aligner's Some(true) keep Perl's never-erroring path.
+        let (_t, g) = genome_chr1_acgtacgt();
+        let chr_names = vec![b"chr1".to_vec()];
+        let recs = vec![Ok(rec(0, Some(0), 1, &[(Kind::Match, 4)], b"AACG"))];
+        let (counts, stats) = count_records(recs.into_iter(), true, false, &chr_names, &g).unwrap();
+        assert_eq!(stats.total, 1);
+        assert_eq!(counts.mono(b'A'), 1);
     }
 }

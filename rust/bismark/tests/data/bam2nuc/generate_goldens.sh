@@ -134,6 +134,12 @@ make_bam "$WORK/se.sam" "$DATA/se.bam"
 } > "$WORK/pe.sam"
 make_bam "$WORK/pe.sam" "$DATA/pe.bam"
 
+# PE records under a Bismark @PG without -1/-2; Rust `-p` reproduces pe_stats.golden.
+sed "s|CL:bismark --genome /g -1 R1.fq.gz -2 R2.fq.gz|CL:bismark --genome /g R1.fq.gz R2.fq.gz|" \
+  "$WORK/pe.sam" > "$WORK/pe_positional.sam"
+grep -q 'CL:bismark --genome /g R1.fq.gz R2.fq.gz' "$WORK/pe_positional.sam" || { echo "pe_positional: @PG rewrite failed" >&2; exit 1; }
+make_bam "$WORK/pe_positional.sam" "$DATA/pe_positional.bam"
+
 # PE BAM with a NON-CANONICAL flag (65 = paired+first, forward). Perl's
 # `elsif ($flag == 83 or 163)` is always-true → flag 65 is revcomp'd (NOT
 # treated as forward); this cell proves the Rust port replicates that bug.

@@ -43,6 +43,7 @@ use crate::aligner::genome::{Genome, read_genome_into_memory};
 use crate::aligner::merge::Counters;
 use crate::aligner::output::{build_refid, generate_sam_header};
 use crate::aligner::report::{self, ReportHeader};
+use crate::aligner::staging;
 use crate::aligner::{PeSinks, Sinks};
 
 /// One SE chunk's outputs: the per-chunk temp BAM (+ optional ambig BAM) and the
@@ -565,9 +566,10 @@ fn pe_chunk_job(
 /// nothing here needs the Bismark classification. noodles record-stream copy =
 /// byte-identical *decompressed* content to single-core (PLAN §3.4.1/Q3).
 fn merge_bams(final_path: &Path, header: &Header, parts: &[PathBuf]) -> Result<()> {
-    let mut writer = BamWriter::from_path(final_path, header.clone()).map_err(|e| {
-        AlignerError::Validation(format!("failed to open merged BAM {final_path:?}: {e}"))
-    })?;
+    let mut writer =
+        BamWriter::from_path(&staging::stage(final_path)?, header.clone()).map_err(|e| {
+            AlignerError::Validation(format!("failed to open merged BAM {final_path:?}: {e}"))
+        })?;
     for part in parts {
         let file = File::open(part)?;
         let mut reader = noodles_bam::io::Reader::new(BufReader::new(file));
@@ -590,14 +592,14 @@ fn merge_bams(final_path: &Path, header: &Header, parts: &[PathBuf]) -> Result<(
 /// single-member gz stream raw-identical to `--parallel 1` (PLAN §3.5).
 fn merge_aux_gz(final_path: &Path, plain_parts: &[PathBuf]) -> Result<()> {
     let mut enc = GzEncoder::new(
-        BufWriter::new(File::create(final_path)?),
+        BufWriter::new(staging::create(final_path)?),
         Compression::default(),
     );
     for part in plain_parts {
         let mut f = File::open(part)?;
         io::copy(&mut f, &mut enc)?;
     }
-    enc.finish()?;
+    enc.finish()?.flush()?;
     Ok(())
 }
 
@@ -791,7 +793,7 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -808,6 +810,7 @@ pub(crate) fn run_se_multicore(config: &RunConfig, reads: &[String], n: u32) -> 
         report.flush()?;
 
         cleanup_se(&outcomes);
+        staging::commit()?;
         eprintln!("{}", crate::aligner::counters_summary(read_file, &total));
     }
     Ok(())
@@ -967,7 +970,7 @@ pub(crate) fn run_pe_multicore(
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -984,6 +987,7 @@ pub(crate) fn run_pe_multicore(
         report.flush()?;
 
         cleanup_pe(&outcomes);
+        staging::commit()?;
         eprintln!(
             "{}",
             crate::aligner::counters_summary_pe(read_1, read_2, &total)
@@ -1209,7 +1213,7 @@ mod tests {
         write(&a, b"@r1\nACGT\n+\nIIII\n");
         write(&b, b"@r2\nTTTT\n+\nIIII\n");
         let out = dir.path().join("out.gz");
-        merge_aux_gz(&out, &[a, b]).unwrap();
+        staging::scope(|| merge_aux_gz(&out, &[a, b])).unwrap();
         let mut s = String::new();
         GzDecoder::new(File::open(&out).unwrap())
             .read_to_string(&mut s)
