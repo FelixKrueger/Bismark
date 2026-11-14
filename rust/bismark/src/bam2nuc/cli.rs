@@ -64,6 +64,15 @@ pub struct Cli {
     #[arg(long = "cram_ref")]
     pub cram_ref: Option<PathBuf>,
 
+    /// Treat every input as single-end (default: detected from the Bismark `@PG` line).
+    #[arg(short = 's', long = "single", conflicts_with = "paired")]
+    pub single: bool,
+
+    /// Treat every input as paired-end (default: detected from the Bismark `@PG`
+    /// line), e.g. for a BAM from a positional paired uBAM, BINSEQ or CRAM run.
+    #[arg(short = 'p', long = "paired")]
+    pub paired: bool,
+
     /// Only calculate + write the genomic composition table
     /// (`genomic_nucleotide_frequencies.txt`) and exit; no input files needed.
     #[arg(long = "genomic_composition_only")]
@@ -92,6 +101,9 @@ pub struct ResolvedConfig {
     pub cram_ref: Option<PathBuf>,
     /// SE/PE mode set by the caller; `None` detects it from the `@PG` header.
     pub paired: Option<bool>,
+    /// `-p/--paired` came from the command line: a record without the paired bit
+    /// is an error instead of being counted as paired-end.
+    pub paired_forced_by_user: bool,
 }
 
 impl Cli {
@@ -115,6 +127,13 @@ impl Cli {
 
         // self.samtools_path is intentionally dropped (accepted-but-ignored).
 
+        let (paired, paired_forced_by_user) = match (self.single, self.paired) {
+            (true, true) => unreachable!("clap conflicts_with rejects -s with -p"),
+            (true, false) => (Some(false), false),
+            (false, true) => (Some(true), true),
+            (false, false) => (None, false),
+        };
+
         Ok(ResolvedConfig {
             inputs: self.inputs,
             genome_folder,
@@ -122,7 +141,8 @@ impl Cli {
             parent_dir,
             genomic_composition_only: self.genomic_composition_only,
             cram_ref: self.cram_ref,
-            paired: None,
+            paired,
+            paired_forced_by_user,
         })
     }
 }
@@ -262,5 +282,35 @@ mod tests {
             .unwrap();
         // ResolvedConfig has no samtools field — the value is simply gone.
         assert_eq!(c.inputs.len(), 1);
+    }
+
+    fn layout(args: &[&str]) -> (Option<bool>, bool) {
+        let mut full = vec!["-g", "gdir"];
+        full.extend(args.iter().copied());
+        let c = cli(&full).validate().unwrap();
+        (c.paired, c.paired_forced_by_user)
+    }
+
+    #[test]
+    fn layout_flags_resolve() {
+        assert_eq!(layout(&["x.bam"]), (None, false));
+        assert_eq!(layout(&["-p", "x.bam"]), (Some(true), true));
+        assert_eq!(layout(&["--paired", "x.bam"]), (Some(true), true));
+        assert_eq!(layout(&["-s", "x.bam"]), (Some(false), false));
+        assert_eq!(layout(&["--single", "x.bam"]), (Some(false), false));
+    }
+
+    #[test]
+    fn single_and_paired_conflict() {
+        let err = parse(&["-g", "gdir", "-s", "-p", "x.bam"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn layout_flag_with_genomic_composition_only_validates() {
+        assert_eq!(
+            layout(&["--genomic_composition_only", "-p"]),
+            (Some(true), true)
+        );
     }
 }

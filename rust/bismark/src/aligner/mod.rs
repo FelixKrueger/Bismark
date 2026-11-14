@@ -379,6 +379,7 @@ fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
             genomic_composition_only: false,
             cram_ref: None,
             paired: Some(paired),
+            paired_forced_by_user: false,
         };
         if let Err(e) = crate::bam2nuc::run_with_genome(&bam2nuc, &genome) {
             remove_stats_file(&output_dir, &bam);
