@@ -229,6 +229,19 @@ impl BismarkRecord {
             .insert(Tag::from(*b"RX"), Value::String(umi.to_vec().into()));
     }
 
+    /// Write the 5-Base masked-read-ends `mk:B:I,<5' bases>,<3' bases>` aux tag (#1211):
+    /// the read bases, counted in read orientation, that `XM` leaves uncalled (inline UMI,
+    /// dovetail overhang), so the passes that re-read SEQ can skip them too.
+    pub fn set_mk(&mut self, five_prime: usize, three_prime: usize) {
+        use noodles_sam::alignment::record::data::field::Tag;
+        use noodles_sam::alignment::record_buf::data::field::Value;
+        use noodles_sam::alignment::record_buf::data::field::value::Array;
+        let ends = vec![five_prime as u32, three_prime as u32];
+        self.inner
+            .data_mut()
+            .insert(Tag::from(*b"mk"), Value::Array(Array::UInt32(ends)));
+    }
+
     /// Write the consensus-multiplicity `mx:i` aux tag (#1104: 2 = duplex,
     /// 1 = simplex; lowercase = SAM local space, unrelated to `XM`).
     /// Overwrites any existing `mx`.

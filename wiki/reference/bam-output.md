@@ -101,6 +101,8 @@ From `methylation_call` in `aligner/methylation.rs`. Upper case is methylated, l
 
 For reverse-strand records `SEQ` is reverse-complemented and `XM` is reversed, so both read in genome order. In 5-Base mode the same characters are used with inverted chemistry: a read `T` at a genomic C is methylated. A 5-Base read base that is not called is `.`, also at a cytosine: low-quality bases, inline UMI bases and dovetail overhangs ([usage/align-5-base-reads.md](../usage/align-5-base-reads.md)).
 
+A 5-Base record with UMI or overhang bases masked carries `mk:B:I,<5' bases>,<3' bases>`, counted in read orientation (`five_base_emit_pe_record` in `aligner/mod.rs`). The duplex, consensus and deconvolution passes skip those bases.
+
 ## 5-Base consensus BAMs
 
 `<out>.5base_consensus.bam` and `<out>.5base_simplex.bam` carry `mx:i` (2 = duplex, 1 = simplex) when `--five_base_emit_multiplicity` is `simplex` or `both` (`--five_base_emit_multiplicity` in `aligner/cli.rs`).
