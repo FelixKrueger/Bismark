@@ -10,11 +10,11 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.41.3",
-    "@fontsource/bricolage-grotesque": "^5.2.10",
-    "@fontsource/inter": "^5.2.8",
-    "@fontsource/jetbrains-mono": "^5.2.8",
-    "astro": "^7.3.8",
+    "@astrojs/starlight": "^0.42.9",
+    "@fontsource/bricolage-grotesque": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "astro": "^7.4.7",
     "sharp": "^0.35.5"
   }
 }
