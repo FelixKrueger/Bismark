@@ -110,6 +110,9 @@ fn revcomp(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// SAM FLAG bit 0x1: the template has multiple segments (paired-end).
+const FLAG_PAIRED: u16 = 0x1;
+
 /// Single-end strand correction (Perl `calc_single_end` `:237-252`): flag 0 →
 /// as-is, flag 16 → reverse-complement, anything else → **reachable error**
 /// (Perl `die "failed to detect valid Bismark FLAG tag"`); a paired flag gets
@@ -122,9 +125,6 @@ fn correct_se(span: Vec<u8>, flag: u16) -> Result<Vec<u8>, BismarkBam2nucError> 
         f => Err(BismarkBam2nucError::InvalidSeFlag { flag: f }),
     }
 }
-
-/// SAM FLAG bit 0x1: the template has multiple segments (paired-end).
-const FLAG_PAIRED: u16 = 0x1;
 
 /// Paired-end strand correction (Perl `calc_paired_end` `:219-235`): flag 99 or
 /// 147 → as-is, **ALL ELSE → reverse-complement**.
@@ -216,10 +216,9 @@ where
         let record = result?;
         stats.total += 1;
 
-        if paired_forced_by_user && flag_of(&record) & FLAG_PAIRED == 0 {
-            return Err(BismarkBam2nucError::UnpairedFlagWithForcedPaired {
-                flag: flag_of(&record),
-            });
+        let flag = flag_of(&record);
+        if paired_forced_by_user && flag & FLAG_PAIRED == 0 {
+            return Err(BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag });
         }
 
         // CIGAR I/D/S/N → skip (Perl `:126-130`).
@@ -242,9 +241,9 @@ where
 
         let span = extract_span(genome, chr, pos1, read_len);
         let corrected = if paired {
-            correct_pe(span, flag_of(&record))
+            correct_pe(span, flag)
         } else {
-            correct_se(span, flag_of(&record))?
+            correct_se(span, flag)?
         };
         freqs::process_sequence(&corrected, &mut counts);
     }

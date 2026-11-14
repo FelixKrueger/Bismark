@@ -69,7 +69,7 @@ pub struct Cli {
     pub single: bool,
 
     /// Treat every input as paired-end (default: detected from the Bismark `@PG`
-    /// line), e.g. for a BAM from a positional paired uBAM, BINSEQ or CRAM run.
+    /// line), e.g. for output of a positional paired uBAM, BINSEQ or unaligned CRAM run.
     #[arg(short = 'p', long = "paired")]
     pub paired: bool,
 

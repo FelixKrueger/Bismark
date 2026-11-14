@@ -40,7 +40,7 @@ Treat every input as single-end instead of reading the layout from the Bismark `
 
 - `-p/--paired`
 
-Treat every input as paired-end instead of reading the layout from the Bismark `@PG` line. Use it for a BAM from a positional paired uBAM, BINSEQ or CRAM run, whose `@PG` line has no `-1`/`-2`. A record without the paired FLAG bit stops the run.
+Treat every input as paired-end instead of reading the layout from the Bismark `@PG` line. Use it for output of a run with a positional paired uBAM, BINSEQ or unaligned CRAM input, whose `@PG` line has no `-1`/`-2`. A record without the paired FLAG bit stops the run.
 
 - `--genome_folder <path>`
 

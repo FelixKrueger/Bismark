@@ -371,7 +371,9 @@ fn positional_pe_without_flag_fails_with_paired_hint() {
         .failure()
         .code(1)
         .stderr(predicates::str::contains("FLAG tag: 99"))
-        .stderr(predicates::str::contains("looks paired-end"));
+        .stderr(predicates::str::contains("looks paired-end"))
+        .stderr(predicates::str::contains("Failed on input"))
+        .stderr(predicates::str::contains("pe_positional.bam"));
     assert!(!out.join("pe_positional.nucleotide_stats.txt").exists());
 }
 

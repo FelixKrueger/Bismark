@@ -88,7 +88,8 @@ pub fn run_with_genome(
             config.cram_ref.as_deref(),
             config.paired,
             config.paired_forced_by_user,
-        )?;
+        )
+        .inspect_err(|_| eprintln!("Failed on input {}", infile.display()))?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped

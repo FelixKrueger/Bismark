@@ -134,11 +134,10 @@ make_bam "$WORK/se.sam" "$DATA/se.bam"
 } > "$WORK/pe.sam"
 make_bam "$WORK/pe.sam" "$DATA/pe.bam"
 
-# PE BAM from a positional paired uBAM/BINSEQ/CRAM run: the Bismark @PG has no
-# -1/-2, so it is detected as SE (#1214). No Perl golden (Perl dies at FLAG 99);
-# Rust `-p` must reproduce pe_stats.golden.
+# PE records under a Bismark @PG without -1/-2; Rust `-p` reproduces pe_stats.golden.
 sed "s|CL:bismark --genome /g -1 R1.fq.gz -2 R2.fq.gz|CL:bismark --genome /g R1.fq.gz R2.fq.gz|" \
   "$WORK/pe.sam" > "$WORK/pe_positional.sam"
+grep -q 'CL:bismark --genome /g R1.fq.gz R2.fq.gz' "$WORK/pe_positional.sam" || { echo "pe_positional: @PG rewrite failed" >&2; exit 1; }
 make_bam "$WORK/pe_positional.sam" "$DATA/pe_positional.bam"
 
 # PE BAM with a NON-CANONICAL flag (65 = paired+first, forward). Perl's
