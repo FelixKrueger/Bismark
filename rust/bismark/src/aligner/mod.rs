@@ -176,7 +176,7 @@ fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String
             "Note: --taps is the TAPS (mC->T) mode: reads are aligned with {} to the \
              UNCONVERTED genome and methylation is called with inverted polarity (a read T at a \
              genomic C = methylated). Directional, paired-end only. NOT byte-identical (Perl \
-             Bismark has no TAPS oracle).",
+             Bismark has no TAPS oracle); validated on public TAPS data (see the TAPS guide).",
             aligner.name()
         ),
     }
@@ -9264,7 +9264,13 @@ mod tests {
             n.contains("aligned with bwa-mem3 to the UNCONVERTED genome"),
             "{n}"
         );
-        assert!(n.contains("Perl Bismark has no TAPS oracle"), "{n}");
+        assert!(
+            n.ends_with(
+                "NOT byte-identical (Perl Bismark has no TAPS oracle); validated on public TAPS \
+                 data (see the TAPS guide)."
+            ),
+            "{n}"
+        );
         assert!(
             !n.contains("5-Base") && !n.contains("DRAGEN") && !n.contains("rastair"),
             "{n}"

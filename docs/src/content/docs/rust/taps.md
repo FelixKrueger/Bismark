@@ -91,3 +91,29 @@ bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark
   Untrimmed, `--taps` calls lambda CpGs 96.6% methylated on both strands and the unmodified control
   0.3–0.4%, with non-CpG contexts below 0.3%. The CI gate (`aligner_taps_bwamem3`) runs on amd64
   and arm64 and also checks the exact report and call counts.
+- **Full public library.** The whole TAPS library of the same study, GSM3454335 (SRR8145389–92,
+  455.5 million read pairs, PE 80 bp), aligned with `--taps --five_base_baseq 30` to UCSC mm9 plus
+  the two controls, then deduplicated and kept at MAPQ ≥ 20. 96.8% of pairs aligned uniquely, and
+  90.9% were left after deduplication. Compared with the authors' own per-strand CpG calls
+  (`GSM3454335_TAPS_mm9_CpG_blk.bed.gz`) at coverage ≥ 10:
+  - 99.8% of their 20.1 million CpGs are in Bismark's output. Shifting Bismark's positions by one
+    base drops that to below 0.01%.
+  - Pearson r of the per-CpG methylation is 0.993 on each strand (9.0 million CpGs per strand).
+    Bismark reads 0.8 points higher on average.
+  - Untrimmed, lambda CpGs are 96.5% methylated on both strands and the unmodified control 0.33%.
+    Trimmed by the M-bias rule below (`--ignore 2 --ignore_r2 5`), lambda is 98.0–98.1% and the
+    control 0.33%, as in the study.
+
+  The trims came from Bismark's own M-bias report by a fixed rule, set before the run: trim each
+  read end up to the last position whose CpG methylation differs by more than 2 points from the
+  median of the read's central half. Read 2's first two bases (end repair) are the main bias here.
+
+```sh
+bwa-mem3 index --meth mm9_taps_spikes.fa       # mm9 chr*.fa + the two controls from genome_taps.fa
+bismark --taps --five_base_index mm9_taps_spikes.fa --genome mm9_taps/ --five_base_baseq 30 \
+        -1 TAPS_R1.fq.gz -2 TAPS_R2.fq.gz
+deduplicate_bismark -p --bam TAPS_R1_bismark_bwamem3_pe.bam
+samtools view -b -q 20 -o TAPS_q20.bam TAPS_R1_bismark_bwamem3_pe.deduplicated.bam
+bismark_methylation_extractor -p --bedGraph --gzip TAPS_q20.bam
+bismark_methylation_extractor -p --ignore 2 --ignore_r2 5 --bedGraph --gzip TAPS_q20.bam
+```
