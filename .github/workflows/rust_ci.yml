@@ -138,8 +138,8 @@ jobs:
 
   bwamem4:
     name: bwa-mem4 5-Base gate (${{ matrix.runner }})
-    # bwa-mem4 is not in apt; it comes from bioconda in an env of its own, and only its
-    # binary goes on PATH so no other conda tool shadows the apt ones.
+    # bwa-mem4 is not in apt; it is built from crates.io with current stable Rust (its MSRV
+    # is above this workspace's 1.89 pin) into ~/.cargo/bin, which rust-cache keeps.
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -157,19 +157,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Install bwa-mem4 4.5.0 (bioconda)
-        uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3.2.1
-        with:
-          environment-name: bwm4
-          create-args: -c conda-forge -c bioconda bwa-mem4=4.5.0
-          cache-environment: true
-          cache-environment-key: bwm4-4.5.0-${{ runner.arch }}
-          init-shell: none
-      - name: Put only bwa-mem4 on PATH
+      - name: Install bwa-mem4 4.5.0 (crates.io)
         run: |
-          mkdir -p "$HOME/bwm4bin"
-          ln -sf "$MAMBA_ROOT_PREFIX/envs/bwm4/bin/bwa-mem4" "$HOME/bwm4bin/bwa-mem4"
-          echo "$HOME/bwm4bin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal
+          cargo +stable install bwa-mem4 --version 4.5.0 --locked
       - name: bwa-mem4 version
         run: bwa-mem4 version
       - name: cargo test (bwa-mem4 gates)
