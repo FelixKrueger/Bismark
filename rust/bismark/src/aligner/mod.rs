@@ -703,6 +703,17 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     Ok(temp_dirs)
 }
 
+/// Whether the first mapped record of `bam` carries the 5-Base `mk` tag.
+fn first_record_has_mk(bam: &Path) -> Result<bool> {
+    let mut reader = crate::io::BamReader::from_path_without_sort_check(bam)
+        .map_err(|e| AlignerError::Validation(format!("consensus: open {}: {e}", bam.display())))?;
+    let first =
+        reader.records().next().transpose().map_err(|e| {
+            AlignerError::Validation(format!("consensus: read {}: {e}", bam.display()))
+        })?;
+    Ok(first.is_some_and(|r| matches!(crate::io::tags::mk(r.inner().data()), Ok(Some(_)))))
+}
+
 /// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
 /// re-alignment. Loads the genome, infers PE/SE from the first BAM's first record, and runs
 /// [`run_five_base_consensus`] over ALL the BAMs at once — families pair ACROSS files, so
@@ -744,6 +755,18 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
              5-Base is a paired-end library.",
             bams[0].display()
         )));
+    }
+
+    if cli.five_base_umi_len > 0 {
+        for bam in bams {
+            if !first_record_has_mk(bam)? {
+                eprintln!(
+                    "Warning: {} has no mk tag, so its inline UMI and dovetail-overhang bases are \
+                     counted by the consensus; re-align it with this version to mask them.",
+                    bam.display()
+                );
+            }
+        }
     }
 
     let umi_swap = if cli.five_base_umi_qname {
@@ -8811,6 +8834,86 @@ mod tests {
         }
         w.finish().unwrap();
         (genome, refid, path)
+    }
+
+    /// One OT pair over `TTCGTTCGTTCGTTCG…`, R1 on [0,8) and R2 on [8,16): no dovetail overhang.
+    fn five_base_plain_pair_bam(dir: &Path, umi_len: usize) -> (Genome, PathBuf) {
+        let genome = five_base_genome("chr1", b"TTCGTTCGTTCGTTCGTTTTTTTT");
+        let refid = build_refid(&genome);
+        let path = dir.join(format!("plain{umi_len}.bam"));
+        let mut w = BamWriter::from_path(&path, generate_sam_header(&genome, "test")).unwrap();
+        let line = |flag: u16, pos: u32, mpos: u32, tlen: i32| {
+            sam(&format!(
+                "pp\t{flag}\tchr1\t{pos}\t60\t8M\t=\t{mpos}\t{tlen}\tTTCGTTCG\tIIIIIIII\tAS:i:0"
+            ))
+        };
+        let (r1, r2) = (line(99, 1, 9, 16), line(147, 9, 1, -16));
+        let mut c = Counters::default();
+        let (o1, o2) = five_base_emit_pe_record(
+            &r1,
+            &r2,
+            "pp",
+            b"TTCGTTCG",
+            b"IIIIIIII",
+            &crate::aligner::output::revcomp(b"TTCGTTCG"),
+            b"IIIIIIII",
+            &genome,
+            &refid,
+            false,
+            true,
+            false,
+            0,
+            umi_len,
+            &mut c,
+        )
+        .unwrap()
+        .expect("proper pair");
+        write_record(&mut w, &o1).unwrap();
+        write_record(&mut w, &o2).unwrap();
+        w.finish().unwrap();
+        (genome, path)
+    }
+
+    /// `mk` is written only where bases are masked; an inline UMI marks both mates' 5' ends.
+    #[test]
+    fn five_base_mk_marks_inline_umi_on_a_pair_without_overhang() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mks = |umi_len: usize| {
+            let (_, bam) = five_base_plain_pair_bam(dir.path(), umi_len);
+            let mut reader = crate::io::BamReader::from_path_without_sort_check(&bam).unwrap();
+            reader
+                .records()
+                .map(|r| crate::io::tags::mk(r.unwrap().inner().data()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(mks(0), vec![None, None]);
+        assert_eq!(mks(2), vec![Some((2, 0)), Some((2, 0))]);
+    }
+
+    /// Deconvolution drops exactly the sites under the inline UMI on a pair without overhang.
+    #[test]
+    fn five_base_deconvolution_skips_inline_umi_bases_only() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites = |umi_len: usize| {
+            let (genome, bam) = five_base_plain_pair_bam(dir.path(), umi_len);
+            let report = dir.path().join(format!("plain_deconv{umi_len}.txt"));
+            staging::scope(|| run_five_base_deconvolution(&genome, &bam, &report)).unwrap();
+            std::fs::read_to_string(&report)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.split('\t').nth(1).unwrap().parse::<u32>().unwrap())
+                .collect::<std::collections::BTreeSet<u32>>()
+        };
+        let (all, masked) = (sites(0), sites(2));
+        let dropped: Vec<u32> = all.difference(&masked).copied().collect();
+        assert!(!dropped.is_empty(), "the UMI covers a CpG");
+        // 1-based reference positions under R1's first 2 bases and R2's last 2.
+        assert!(
+            dropped.iter().all(|p| [1, 2, 15, 16].contains(p)),
+            "{dropped:?}"
+        );
+        assert!(masked.is_subset(&all));
     }
 
     /// #1211: deconvolution counts no CpG from a dovetail overhang or an inline UMI.

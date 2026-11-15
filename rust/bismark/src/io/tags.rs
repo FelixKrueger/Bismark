@@ -74,14 +74,24 @@ pub fn rx(data: &Data) -> Result<Option<&[u8]>, BismarkIoError> {
 pub fn mk(data: &Data) -> Result<Option<(usize, usize)>, BismarkIoError> {
     use noodles_sam::alignment::record_buf::data::field::value::Array;
     let tag = noodles_sam::alignment::record::data::field::Tag::from(TAG_MK);
-    match data.get(&tag) {
-        None => Ok(None),
-        Some(Value::Array(Array::UInt32(v))) if v.len() == 2 => {
-            Ok(Some((v[0] as usize, v[1] as usize)))
-        }
-        Some(other) => Err(BismarkIoError::MalformedTag {
+    let value = match data.get(&tag) {
+        None => return Ok(None),
+        Some(v) => v,
+    };
+    let ends: Option<Vec<i64>> = match value {
+        Value::Array(Array::Int8(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt8(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::Int16(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt16(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::Int32(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt32(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        _ => None,
+    };
+    match ends.as_deref() {
+        Some(&[a, b]) if a >= 0 && b >= 0 => Ok(Some((a as usize, b as usize))),
+        _ => Err(BismarkIoError::MalformedTag {
             tag: "mk",
-            reason: format!("expected B:I with 2 values, got {other:?}"),
+            reason: format!("expected B with 2 non-negative integers, got {value:?}"),
         }),
     }
 }
@@ -220,5 +230,39 @@ mod tests {
             err,
             BismarkIoError::MalformedTag { tag: "XR", .. }
         ));
+    }
+
+    #[test]
+    fn mk_reads_any_integer_array_subtype() {
+        use noodles_sam::alignment::record_buf::data::field::value::Array;
+        for value in [
+            Array::UInt32(vec![3, 5]),
+            Array::UInt8(vec![3, 5]),
+            Array::Int16(vec![3, 5]),
+            Array::Int32(vec![3, 5]),
+        ] {
+            let mut data = make_data();
+            data.insert(Tag::from(TAG_MK), Value::Array(value));
+            assert_eq!(mk(&data).unwrap(), Some((3, 5)));
+        }
+        assert_eq!(mk(&make_data()).unwrap(), None);
+    }
+
+    #[test]
+    fn mk_rejects_wrong_length_negative_and_non_integer_values() {
+        use noodles_sam::alignment::record_buf::data::field::value::Array;
+        for value in [
+            Value::Array(Array::UInt32(vec![3])),
+            Value::Array(Array::Int32(vec![-1, 2])),
+            Value::Array(Array::Float(vec![1.0, 2.0])),
+            Value::String(BString::from("3,5")),
+        ] {
+            let mut data = make_data();
+            data.insert(Tag::from(TAG_MK), value);
+            assert!(matches!(
+                mk(&data).unwrap_err(),
+                BismarkIoError::MalformedTag { tag: "mk", .. }
+            ));
+        }
     }
 }
