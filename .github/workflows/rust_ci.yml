@@ -229,6 +229,7 @@ jobs:
           samtools --version >/dev/null
       - name: Run live-Perl byte-identity oracles (fail-loud + prove all 13 ran)
         env:
+          # Makes a skipped oracle panic.
           BISMARK_REQUIRE_PERL: "1"
         run: |
           set -euo pipefail
@@ -249,8 +250,10 @@ jobs:
                   perl_vs_rust_nondirectional_pe_dedup \
                   perl_vs_rust_nondirectional_pe_extractor \
                   2>&1 | tee /dev/stderr)
-          n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
-          test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
-          if printf '%s\n' "$out" | grep -q '^skipping:'; then
-            echo "::error::an oracle silently skipped"; exit 1
+          # Subprocess output can split a `test … ok` line; count from the per-binary summaries.
+          n=$({ grep -aoE 'test result: ok\. [0-9]+ passed' <<<"$out" || true; } | awk '{s+=$4} END{print s+0}')
+          if [ "$n" != "$EXPECTED" ]; then
+            echo "::error::expected $EXPECTED oracle tests, $n ran ok"
+            grep -aE 'test result:' <<<"$out" || true
+            exit 1
           fi

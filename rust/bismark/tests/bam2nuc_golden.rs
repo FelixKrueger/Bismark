@@ -345,50 +345,78 @@ fn se_sorted_stats_byte_identical() {
     );
 }
 
-#[test]
-fn pe_bam_without_mate_files_on_pg_line_is_counted_as_pe() {
-    // A run on a positional paired uBAM/BINSEQ/CRAM has no `-1`/`-2` in its `@PG` line
-    // (#1214): rewrite pe.bam's line that way; the paired records must still win.
-    use noodles_sam::alignment::io::Write as _;
-    let tmp = copy_genome("genome_acgtn");
-    let bam = tmp.path().join("pairs.bam");
-    let mut reader =
-        noodles_bam::io::Reader::new(std::fs::File::open(data_dir().join("pe.bam")).unwrap());
-    let header = reader.read_header().unwrap();
-    let mut text = Vec::new();
-    noodles_sam::io::Writer::new(&mut text)
-        .write_header(&header)
-        .unwrap();
-    let text = String::from_utf8(text).unwrap();
-    assert!(text.contains(" -1 R1.fq.gz -2 R2.fq.gz"));
-    let se_header: noodles_sam::Header = text
-        .replace(" -1 R1.fq.gz -2 R2.fq.gz", " pairs.bam")
-        .parse()
-        .unwrap();
-    let mut writer = noodles_bam::io::Writer::new(std::fs::File::create(&bam).unwrap());
-    writer.write_header(&se_header).unwrap();
-    for rec in reader.record_bufs(&header) {
-        writer
-            .write_alignment_record(&se_header, &rec.unwrap())
-            .unwrap();
-    }
-    writer.finish(&se_header).unwrap();
-    drop(writer);
+// ── -s/--single and -p/--paired (#1214) ──
 
+/// Run one BAM with extra flags; return (tempdir, out dir, assert).
+fn run_with_flags(bam: &str, flags: &[&str]) -> (TempDir, PathBuf, assert_cmd::assert::Assert) {
+    let tmp = copy_genome("genome_acgtn");
+    let genome = tmp.path().join("genome");
     let out = tmp.path().join("out");
     std::fs::create_dir_all(&out).unwrap();
-    bin()
+    let assert = bin()
         .arg("-g")
-        .arg(tmp.path().join("genome"))
+        .arg(&genome)
         .arg("--dir")
         .arg(format!("{}/", out.display()))
-        .arg(&bam)
-        .assert()
-        .success();
-    let stats = std::fs::read(out.join("pairs.nucleotide_stats.txt")).unwrap();
-    assert_bytes_eq(
-        &stats,
-        &golden("pe_stats.golden"),
-        "pe_stats via positional PG",
+        .args(flags)
+        .arg(data_dir().join(bam))
+        .assert();
+    (tmp, out, assert)
+}
+
+#[test]
+fn positional_pe_without_flag_matches_pe_golden() {
+    let (_t, out, assert) = run_with_flags("pe_positional.bam", &[]);
+    assert.success();
+    let stats = std::fs::read(out.join("pe_positional.nucleotide_stats.txt")).unwrap();
+    assert_bytes_eq(&stats, &golden("pe_stats.golden"), "auto");
+}
+
+#[test]
+fn positional_pe_with_paired_matches_pe_golden() {
+    for flag in ["-p", "--paired"] {
+        let (_t, out, assert) = run_with_flags("pe_positional.bam", &[flag]);
+        assert.success();
+        let stats = std::fs::read(out.join("pe_positional.nucleotide_stats.txt")).unwrap();
+        assert_bytes_eq(&stats, &golden("pe_stats.golden"), flag);
+    }
+}
+
+#[test]
+fn pe_with_single_fails_with_paired_hint() {
+    let (_t, out, assert) = run_with_flags("pe.bam", &["-s"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("looks paired-end"))
+        .stderr(predicates::str::contains("Failed on input"))
+        .stderr(predicates::str::contains("pe.bam"));
+    assert!(!out.join("pe.nucleotide_stats.txt").exists());
+}
+
+#[test]
+fn se_with_paired_fails_without_stats() {
+    let (_t, out, assert) = run_with_flags("se.bam", &["-p"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("drop -p/--paired"));
+    assert!(!out.join("se.nucleotide_stats.txt").exists());
+}
+
+#[test]
+fn no_bismark_pg_with_single_succeeds() {
+    let (_t, out, assert) = run_with_flags("no_bismark_pg.bam", &["--single"]);
+    assert.success();
+    let stats = std::fs::read(out.join("no_bismark_pg.nucleotide_stats.txt")).unwrap();
+    assert!(
+        stats.starts_with(b"(di-)nucleotide\t"),
+        "unexpected stats header"
     );
+}
+
+#[test]
+fn single_and_paired_together_are_rejected() {
+    let (_t, _out, assert) = run_with_flags("se.bam", &["-s", "-p"]);
+    assert.failure().code(2);
 }
