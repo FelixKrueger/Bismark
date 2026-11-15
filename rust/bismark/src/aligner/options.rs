@@ -270,16 +270,16 @@ fn common_aligner_options(
     Ok((opts, gp))
 }
 
-/// The bwa-mem3 5-Base option string. Every default that has changed between releases is pinned;
+/// The bwa-mem4 5-Base option string. Every default that has changed between releases is pinned;
 /// `-t` is appended at spawn time.
-pub(crate) fn bwamem3_options() -> String {
+pub(crate) fn bwamem4_options() -> String {
     "mem --meth=5base --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
      --meth-tags none -K 100000000"
         .into()
 }
 
-/// Bowtie 2 / minimap2 tuning that has no bwa-mem3 equivalent.
-fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
+/// Bowtie 2 / minimap2 tuning that has no bwa-mem4 equivalent.
+fn reject_bwamem4_tuning(cli: &Cli) -> Result<()> {
     let set: [(bool, &str); 15] = [
         (cli.local, "--local"),
         (cli.score_min.is_some(), "--score_min"),
@@ -302,7 +302,7 @@ fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
     ];
     match set.iter().find(|(on, _)| *on) {
         Some((_, flag)) => Err(AlignerError::Validation(format!(
-            "{flag} is not supported with --bwamem3: bwa-mem3 uses its own scoring and infers \
+            "{flag} is not supported with --bwamem4: bwa-mem4 uses its own scoring and infers \
              insert sizes itself."
         ))),
         None => Ok(()),
@@ -315,8 +315,8 @@ pub(crate) fn build_five_base_aligner_options(
     aligner: Aligner,
     format: ReadFormat,
 ) -> Result<(String, GapPenalties)> {
-    if aligner == Aligner::BwaMem3 {
-        reject_bwamem3_tuning(cli)?;
+    if aligner == Aligner::BwaMem4 {
+        reject_bwamem4_tuning(cli)?;
         if cli.bowtie_threads.is_some_and(|p| p < 2) {
             return Err(AlignerError::Validation(
                 "Please select a value for -p of 2 or more!".into(),
@@ -328,7 +328,7 @@ pub(crate) fn build_five_base_aligner_options(
             insertion_open: 5,
             insertion_extend: 3,
         };
-        return Ok((bwamem3_options(), gp));
+        return Ok((bwamem4_options(), gp));
     }
     let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
     if cli.bowtie_threads.is_some_and(|p| p < 2) {
@@ -835,17 +835,17 @@ mod tests {
     fn bwm3(args: &[&str]) -> Result<String> {
         let mut v = vec![
             "--illumina_5base",
-            "--bwamem3",
+            "--bwamem4",
             "--five_base_index",
             "/x/g.fa",
         ];
         v.extend_from_slice(args);
-        build_five_base_aligner_options(&cli_from(&v), Aligner::BwaMem3, ReadFormat::FastQ)
+        build_five_base_aligner_options(&cli_from(&v), Aligner::BwaMem4, ReadFormat::FastQ)
             .map(|r| r.0)
     }
 
     #[test]
-    fn bwamem3_option_string_is_fixed_and_explicit() {
+    fn bwamem4_option_string_is_fixed_and_explicit() {
         assert_eq!(
             bwm3(&[]).unwrap(),
             "mem --meth=5base --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
@@ -856,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn bwamem3_rejects_bowtie2_and_minimap2_tuning() {
+    fn bwamem4_rejects_bowtie2_and_minimap2_tuning() {
         for args in [
             &["--local"][..],
             &["--score_min", "L,0,-0.6"],
@@ -875,7 +875,7 @@ mod tests {
             &["--most_valid_alignments", "2"],
         ] {
             let e = bwm3(args).unwrap_err().to_string();
-            assert!(e.contains("--bwamem3"), "{args:?}: {e}");
+            assert!(e.contains("--bwamem4"), "{args:?}: {e}");
         }
         for p in ["0", "1"] {
             let e = bwm3(&["-p", p]).unwrap_err().to_string();

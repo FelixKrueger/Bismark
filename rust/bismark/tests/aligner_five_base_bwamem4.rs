@@ -1,5 +1,5 @@
-//! `--illumina_5base --bwamem3` through the REAL bwa-mem3 on a synthetic genome with CpG islands.
-//! Runs only with `BISMARK_TEST_BWAMEM3=1`; then a missing `bwa-mem3` fails the test.
+//! `--illumina_5base --bwamem4` through the REAL bwa-mem4 on a synthetic genome with CpG islands.
+//! Runs only with `BISMARK_TEST_BWAMEM4=1`; then a missing `bwa-mem4` fails the test.
 
 use std::collections::HashMap;
 use std::fs;
@@ -10,18 +10,18 @@ use std::time::{Duration, Instant};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-fn bwamem3_enabled() -> bool {
-    if std::env::var_os("BISMARK_TEST_BWAMEM3").is_none() {
+fn bwamem4_enabled() -> bool {
+    if std::env::var_os("BISMARK_TEST_BWAMEM4").is_none() {
         return false;
     }
-    let ok = StdCommand::new("bwa-mem3")
+    let ok = StdCommand::new("bwa-mem4")
         .arg("version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
     assert!(
         ok,
-        "BISMARK_TEST_BWAMEM3 is set but `bwa-mem3 version` does not run"
+        "BISMARK_TEST_BWAMEM4 is set but `bwa-mem4 version` does not run"
     );
     true
 }
@@ -192,7 +192,7 @@ fn write_pairs(dir: &Path, stem: &str, pairs: &[(String, Vec<u8>, Vec<u8>)]) -> 
     (p1, p2)
 }
 
-/// The genome folder and a bwa-mem3 meth index of the same FASTA, kept in separate folders.
+/// The genome folder and a bwa-mem4 meth index of the same FASTA, kept in separate folders.
 struct Setup {
     genome: TempDir,
     index_dir: TempDir,
@@ -210,14 +210,14 @@ impl Setup {
         let index_dir = TempDir::new().unwrap();
         fs::write(index_dir.path().join("genome.fa"), &fa).unwrap();
         let t = Instant::now();
-        let st = StdCommand::new("bwa-mem3")
+        let st = StdCommand::new("bwa-mem4")
             .args(["index", "--meth"])
             .arg(index_dir.path().join("genome.fa"))
             .output()
             .unwrap();
         assert!(
             st.status.success(),
-            "bwa-mem3 index --meth failed: {}",
+            "bwa-mem4 index --meth failed: {}",
             String::from_utf8_lossy(&st.stderr)
         );
         assert!(
@@ -227,12 +227,12 @@ impl Setup {
         Self { genome, index_dir }
     }
 
-    /// Run `bismark --illumina_5base --bwamem3` and return the output folder.
+    /// Run `bismark --illumina_5base --bwamem4` and return the output folder.
     fn run(&self, r1: &Path, r2: &Path, extra: &[&str]) -> TempDir {
         let out = TempDir::new().unwrap();
         Command::cargo_bin("bismark")
             .unwrap()
-            .args(["--illumina_5base", "--bwamem3", "-p", "4"])
+            .args(["--illumina_5base", "--bwamem4", "-p", "4"])
             .arg("--five_base_index")
             .arg(self.index_dir.path().join("genome.fa"))
             .arg("--genome")
@@ -252,7 +252,7 @@ impl Setup {
 }
 
 fn report(out: &Path, stem: &str) -> String {
-    fs::read_to_string(out.join(format!("{stem}_1_bismark_bwamem3_PE_report.txt"))).unwrap()
+    fs::read_to_string(out.join(format!("{stem}_1_bismark_bwamem4_PE_report.txt"))).unwrap()
 }
 
 /// One BAM record: flag, 0-based aligned span, and the XM call at each aligned genomic position.
@@ -266,7 +266,7 @@ struct Mate {
 /// The BAM's mates in file order, grouped by read name.
 fn read_bam(out: &Path, stem: &str) -> Vec<(String, Vec<Mate>)> {
     use noodles_sam::alignment::record::cigar::op::Kind::*;
-    let bam = out.join(format!("{stem}_1_bismark_bwamem3_pe.bam"));
+    let bam = out.join(format!("{stem}_1_bismark_bwamem4_pe.bam"));
     let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
     let mut pairs: Vec<(String, Vec<Mate>)> = Vec::new();
     for rec in reader.records() {
@@ -305,9 +305,9 @@ fn read_bam(out: &Path, stem: &str) -> Vec<(String, Vec<Mate>)> {
 }
 
 #[test]
-fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
-    if !bwamem3_enabled() {
-        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (bwa-mem3 5-Base gate)");
+fn bwamem4_dense_methylated_reads_align_like_their_unmethylated_twins() {
+    if !bwamem4_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM4 unset (bwa-mem4 5-Base gate)");
         return;
     }
     let mut rng = Lcg(0xB3A3_5BA5_E000_1105);
@@ -326,7 +326,7 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
     let (r1, r2) = write_pairs(reads.path(), "twins", &pairs);
     let t = Instant::now();
     let out = setup.run(&r1, &r2, &[]);
-    eprintln!("bwa-mem3 5-Base run: {:.1} s", t.elapsed().as_secs_f64());
+    eprintln!("bwa-mem4 5-Base run: {:.1} s", t.elapsed().as_secs_f64());
 
     let bam = read_bam(out.path(), "twins");
     let names: Vec<&str> = bam.iter().map(|(n, _)| n.as_str()).collect();
@@ -431,9 +431,9 @@ fn bwamem3_dense_methylated_reads_align_like_their_unmethylated_twins() {
 /// An inline UMI made of the genome's own flanking bases, C->T, aligns for free under neutral
 /// scoring; `--five_base_umi_len` must still keep it out of the calls.
 #[test]
-fn bwamem3_inline_umi_is_never_called() {
-    if !bwamem3_enabled() {
-        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (bwa-mem3 UMI gate)");
+fn bwamem4_inline_umi_is_never_called() {
+    if !bwamem4_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM4 unset (bwa-mem4 UMI gate)");
         return;
     }
     let mut rng = Lcg(0xB3A3_0000_0000_0005);
@@ -480,7 +480,7 @@ fn bwamem3_inline_umi_is_never_called() {
     eprintln!("mates with UMI calls, unmasked: {unmasked}");
     assert!(
         unmasked > 0,
-        "bwa-mem3 soft-clipped every UMI: the test is vacuous"
+        "bwa-mem4 soft-clipped every UMI: the test is vacuous"
     );
     assert_eq!(called_umis(&["--five_base_umi_len", "5"]), 0);
 }

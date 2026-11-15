@@ -94,6 +94,14 @@ For everything else, the combined index is the faster choice.
 ## Illumina 5-Base libraries
 
 5-Base reads align to the unconverted genome, so none of the modes above apply. minimap2 is the
-default engine; `--illumina_5base --bwamem3` is the choice when methylated CpG islands matter, at the
-cost of a 23 GB index and about 28 GiB of memory. See
-[Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
+default engine; `--illumina_5base --bwamem4` is the choice when methylated CpG islands matter, at the
+cost of a 23 GB index and about 28 GiB of memory. bwa-mem4 is a Rust port of bwa-mem2 whose `--meth`
+mode gives the same alignments as bwa-mem3 0.16.0 with less CPU time and memory; it reads an index
+built by `bwa-mem4 index --meth` or `bwa-mem3 index --meth`:
+
+```sh
+bismark --illumina_5base --bwamem4 --five_base_index /path/to/bwm4/genome.fa \
+        --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
+```
+
+See [Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
