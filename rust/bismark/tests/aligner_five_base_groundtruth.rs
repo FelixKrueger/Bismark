@@ -147,7 +147,7 @@ fn make_methylated_reads(reference: &[u8], read_len: usize, n_reads: usize) -> (
 /// pairs of a molecule must collapse into ONE duplex-paired family (keyed by fragment
 /// span + canonical dual UMI), and the per-molecule reconciliation must separate the 5mC
 /// molecule (methylation) from the homozygous C>T molecule (variant) — proving the PE
-/// strand handling (molecule-strand for pairing, FLAG coverage-strand for reconciliation).
+/// strand handling (molecule strand for pairing and reconciliation).
 #[test]
 fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
     if !have_minimap2() {
@@ -194,14 +194,30 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
             reference[s..s + frag].to_vec()
         };
         let g_minus_rc = revcomp(&minus_src);
-        let fwd_left = &g_plus[0..rl]; // covers [s, s+rl)
-        let rev_right = &g_minus_rc[0..rl]; // revcomp of [s+frag-rl, s+frag)
+        // Both mates of a pair carry their molecule strand's bases.
+        let g_plus_rc = revcomp(&g_plus);
         // Top-strand pair (molecule OT): R1 forward-left, R2 reverse-right. UMI A+B.
-        emit(&mut fq1, &format!("top_{s}:{umi_a}+{umi_b}"), fwd_left);
-        emit(&mut fq2, &format!("top_{s}:{umi_a}+{umi_b}"), rev_right);
+        emit(
+            &mut fq1,
+            &format!("top_{s}:{umi_a}+{umi_b}"),
+            &g_plus[0..rl],
+        );
+        emit(
+            &mut fq2,
+            &format!("top_{s}:{umi_a}+{umi_b}"),
+            &g_plus_rc[0..rl],
+        );
         // Bottom-strand pair (molecule OB): R1 reverse-right, R2 forward-left. UMI B+A.
-        emit(&mut fq1, &format!("bot_{s}:{umi_b}+{umi_a}"), rev_right);
-        emit(&mut fq2, &format!("bot_{s}:{umi_b}+{umi_a}"), fwd_left);
+        emit(
+            &mut fq1,
+            &format!("bot_{s}:{umi_b}+{umi_a}"),
+            &g_minus_rc[0..rl],
+        );
+        emit(
+            &mut fq2,
+            &format!("bot_{s}:{umi_b}+{umi_a}"),
+            &minus_src[0..rl],
+        );
     };
     molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
     molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
@@ -263,6 +279,12 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
     assert_eq!(
         fams_with_variant, 1,
         "PE: only the variant molecule should flag a variant\nreport:\n{report}"
+    );
+    assert!(
+        paired
+            .iter()
+            .any(|f| f[5] == "0" && f[6].parse::<u32>().unwrap() >= 1),
+        "PE: the 5mC molecule flags no variant and a methylation site\nreport:\n{report}"
     );
 }
 

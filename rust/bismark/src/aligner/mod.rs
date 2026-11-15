@@ -3405,11 +3405,10 @@ enum EmitPaths<'a> {
 /// they are skipped exactly as before.
 ///
 /// Families are keyed like the duplex pass on the FRAGMENT outer span (POS + mate-pos +
-/// TLEN; 5-Base is paired-end). The MOLECULE strand
-/// (which duplex pair) gates pairing; the COVERAGE strand (FLAG orientation) buckets reads
-/// for reconciliation. At each reference position the forward-covering reads and the
-/// reverse-covering reads are each reduced to their highest-quality base, then combined by
-/// [`consensus_base`] (own = forward at a `+` CpG / reverse at a `-` CpG).
+/// TLEN; 5-Base is paired-end). The MOLECULE strand (which duplex pair) gates pairing and
+/// buckets reads for reconciliation: at each reference position the OT-molecule reads and
+/// the OB-molecule reads are each reduced to their highest-quality base, then combined by
+/// [`consensus_base`] (own = OT at a `+` CpG / OB at a `-` CpG).
 #[allow(clippy::too_many_arguments)]
 fn run_five_base_consensus(
     genome: &Genome,
