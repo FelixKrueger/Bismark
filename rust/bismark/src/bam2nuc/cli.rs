@@ -68,8 +68,8 @@ pub struct Cli {
     #[arg(short = 's', long = "single", conflicts_with = "paired")]
     pub single: bool,
 
-    /// Treat every input as paired-end (default: detected from the Bismark `@PG`
-    /// line), e.g. for output of a positional paired uBAM, BINSEQ or unaligned CRAM run.
+    /// Treat every input as paired-end (default: detected from the Bismark `@PG` line and
+    /// first record).
     #[arg(short = 'p', long = "paired")]
     pub paired: bool,
 

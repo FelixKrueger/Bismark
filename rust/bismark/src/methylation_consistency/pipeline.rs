@@ -259,8 +259,8 @@ fn route(
     Ok(())
 }
 
-/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line; a missing
-/// Bismark `@PG` (`None`) falls through to **single-end** (Perl, SPEC §2.3).
+/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line and, when that says
+/// single-end, the first record; a missing Bismark `@PG` falls through to **single-end** (Perl).
 fn resolve_mode(
     mode: LibraryMode,
     header: &Header,
@@ -271,7 +271,7 @@ fn resolve_mode(
         LibraryMode::Single => false,
         LibraryMode::Paired => true,
         LibraryMode::Auto => {
-            let is_paired = crate::io::detect_paired(header, first_flags).unwrap_or(false);
+            let is_paired = crate::io::detect_paired(header, first_flags).is_some_and(|(p, _)| p);
             logger.info(&format!(
                 "{} mode selected (auto-detected)\n",
                 if is_paired {

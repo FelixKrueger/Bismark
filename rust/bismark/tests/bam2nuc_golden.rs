@@ -420,3 +420,14 @@ fn single_and_paired_together_are_rejected() {
     let (_t, _out, assert) = run_with_flags("se.bam", &["-s", "-p"]);
     assert.failure().code(2);
 }
+
+#[test]
+fn positional_pe_with_single_fails_with_paired_hint() {
+    let (_t, out, assert) = run_with_flags("pe_positional.bam", &["-s"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("FLAG tag: 99"))
+        .stderr(predicates::str::contains("looks paired-end"));
+    assert!(!out.join("pe_positional.nucleotide_stats.txt").exists());
+}

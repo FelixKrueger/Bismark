@@ -2438,3 +2438,80 @@ fn perl_vs_rust_nondirectional_pe_dedup() {
         "non-directional PE dedup records differ between Perl and Rust (#1030)"
     );
 }
+
+/// A positional-paired BAM: Bismark `@PG` without `-1`/`-2`, paired records.
+fn write_positional_pe_bam(path: &Path, records: &[RecordBuf]) {
+    use noodles_sam::header::record::value::map::Program;
+    use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+    let mut header = synth_header();
+    let mut prog = Map::<Program>::default();
+    prog.other_fields_mut()
+        .insert(COMMAND_LINE, BString::from("bismark --genome /g pairs.bam"));
+    header
+        .programs_mut()
+        .add(BString::from("Bismark"), prog)
+        .unwrap();
+    let mut writer = BamWriter::from_path(path, header).unwrap();
+    for record in records {
+        writer
+            .write_record(&BismarkRecord::from_noodles_record(record.clone()).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// Dedup `input` with `args` into `out`; returns (output records, report text, stderr).
+fn dedup_run(input: &Path, out: &Path, args: &[&str]) -> (usize, String, String) {
+    std::fs::create_dir_all(out).unwrap();
+    let output = Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .args(args)
+        .arg("--output_dir")
+        .arg(out)
+        .arg(input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{stderr}");
+    let n = read_records(&out.join("input.deduplicated.bam")).len();
+    let report = std::fs::read_to_string(out.join("input.deduplication_report.txt")).unwrap();
+    (n, report, stderr)
+}
+
+#[test]
+fn positional_pe_auto_detects_paired_end_and_matches_explicit_paired() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    let mut records = Vec::new();
+    records.extend(ot_pair("a", 1000, 1100));
+    records.extend(ot_pair("b_dup_of_a", 1000, 1100));
+    records.extend(ot_pair("c_same_r1", 1000, 1200));
+    write_positional_pe_bam(&input, &records);
+
+    let auto = dedup_run(&input, &dir.path().join("auto"), &[]);
+    let paired = dedup_run(&input, &dir.path().join("paired"), &["-p"]);
+    let single = dedup_run(&input, &dir.path().join("single"), &["-s"]);
+    assert_eq!(auto.0, 4, "pairs a and c are kept");
+    assert_eq!((auto.0, &auto.1), (paired.0, &paired.1));
+    assert_ne!(auto.0, single.0, "-s dedups each mate on its own");
+    assert!(
+        auto.2
+            .contains("Auto-detected library type from the first record's FLAG: paired-end"),
+        "{}",
+        auto.2
+    );
+}
+
+#[test]
+fn no_bismark_pg_with_paired_records_still_needs_a_mode() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &ot_pair("a", 1000, 1100));
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure();
+}

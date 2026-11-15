@@ -131,11 +131,11 @@ where
         .map(|r| r.flags());
     let is_paired = match explicit_mode {
         Some(p) => p,
-        None => crate::io::detect_paired(header, first_flags).ok_or_else(|| {
-            BismarkFilterError::CannotAutoDetectMode {
+        None => crate::io::detect_paired(header, first_flags)
+            .map(|(p, _)| p)
+            .ok_or_else(|| BismarkFilterError::CannotAutoDetectMode {
                 input: infile.to_path_buf(),
-            }
-        })?,
+            })?,
     };
 
     // 4.5 PE positional-sort: reject coordinate-sorted input BEFORE opening

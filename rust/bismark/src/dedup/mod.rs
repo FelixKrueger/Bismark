@@ -437,12 +437,12 @@ fn parse_bclconvert_groups(qname: &str) -> Option<(&str, &str)> {
 }
 
 /// Resolve the SE/PE mode: explicit flag wins, else auto-detect from the
-/// input's `@PG ID:Bismark` header line.
+/// input's `@PG ID:Bismark` header line and, when that says single-end, its first record.
 fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, BismarkDedupError> {
     if let Some(mode) = config.explicit_mode {
         return Ok(mode);
     }
-    // Auto-detect: open the reader briefly to inspect the header. The
+    // Auto-detect: open the reader briefly to inspect the header and first record. The
     // file will be opened again by the pipeline; the redundant open is
     // cheap for BAM/SAM (microseconds) but **non-trivial for CRAM**
     // (must build the FASTA reference repository twice). For v1.0,
@@ -451,14 +451,23 @@ fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, Bi
     // `-s`/`-p` explicitly to skip auto-detect.
     // No sort check here: it applies to PE only, and the mode is not known yet.
     let mut reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
-    let first_flags = match reader.records().next() {
-        Some(r) => Some(r?.inner().flags()),
-        None => None,
+    let first_flags = if crate::io::detect_paired_from_header(reader.header()) == Some(false) {
+        reader
+            .records()
+            .next()
+            .and_then(Result::ok)
+            .map(|r| r.inner().flags())
+    } else {
+        None
     };
     match crate::io::detect_paired(reader.header(), first_flags) {
-        Some(is_paired) => {
+        Some((is_paired, source)) => {
             eprintln!(
-                "Auto-detected library type from @PG line: {}",
+                "Auto-detected library type from {}: {}",
+                match source {
+                    crate::io::LayoutSource::Pg => "@PG line",
+                    crate::io::LayoutSource::Flag => "the first record's FLAG",
+                },
                 if is_paired {
                     "paired-end"
                 } else {
