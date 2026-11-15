@@ -1,0 +1,6 @@
+bwa-mem3 rep1 wall 6.65 cpu 16.78 rss 1.71611 
+bwa-mem4 rep1 wall 6.45 cpu 10.29 rss 2.61995 
+bwa-mem3 rep2 wall 6.58 cpu 18.16 rss 1.63086 
+bwa-mem4 rep2 wall 6.21 cpu 9.74 rss 2.62044 
+bwa-mem3 rep3 wall 6.52 cpu 18.14 rss 1.61895 
+bwa-mem4 rep3 wall 6.39 cpu 9.95 rss 2.6182 

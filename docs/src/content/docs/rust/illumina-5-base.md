@@ -170,9 +170,10 @@ reads; Bismark makes the methylation calls, exactly as for the other engines.
 bwa-mem4 is a Rust reimplementation of bwa-mem2 that ports the `--meth` mode of
 [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0. With the options Bismark passes, its SAM
 output is identical to bwa-mem3 0.16.0's and it reads the same index, so the DRAGEN comparison
-above, made with bwa-mem3, holds for it. On 200,000 simulated chr21 pairs (Apple M4 Max, `-p 8`),
-the whole Bismark run used 30% less CPU time and 20% less peak memory than with bwa-mem3, and
-gave the same BAM records; wall time was 13% lower, because Bismark's own steps take part of it.
+above, made with bwa-mem3, holds for it. On GRCh38 with 1M simulated pairs (Apple M4 Max, `-p 8`),
+the whole Bismark run used 25% less CPU time than with bwa-mem3, the engine peaked at 17 GB
+instead of 24 GB, and the BAM records were the same. Wall time was 15% lower, because Bismark's
+own steps take part of it.
 
 It is opt-in because it is expensive (measured with bwa-mem3 0.16.0 on GRCh38):
 

@@ -1,0 +1,41 @@
+[bwa_index] --max-memory = 139.0 GiB (user-specified)
+[bwa_index] -t = 16 (auto: detected cores, cgroup-aware)
+[bwa_index:--meth] building original index for genome.fa ...
+[bwa_index] Pack FASTA... 5.73 sec
+* Entering FMI_search
+[libsais_build] N=6199501436 threads=16 (user-requested=16)
+[libsais_build] estimate ~69.3 GiB (budget 139.0 GiB)
+[libsais_build] phase 0 (doubled-pac + count) 2.96s
+[libsais_build] phase 1 (unpack 6199501437 bases) 0.33s
+[libsais_build] phase 2 (libsais_gsa) 55.39s
+[libsais_build] phase 3 (streaming FM-index write) 17.27s, sentinel_index=2637190516; total 75.95s
+[bwa_index:--meth] writing seed FASTA genome.fa.meth.fa ...
+[bwa_index:--meth] emitted 194 seqs, 3099750718 bp (doubled to 6199501436 bp of seed text)
+[bwa_index:--meth] building seed index genome.fa.meth.* ...
+[bwa_index] Pack FASTA... 10.88 sec
+* Entering FMI_search
+[libsais_build] N=12399002872 threads=16 (user-requested=16)
+[libsais_build] estimate ~138.6 GiB (budget 139.0 GiB)
+[libsais_build] phase 0 (doubled-pac + count) 4.74s
+[libsais_build] phase 1 (unpack 12399002873 bases) 0.72s
+[libsais_build] phase 2 (libsais_gsa) 164.38s
+[libsais_build] phase 3 (streaming FM-index write) 51.48s, sentinel_index=5734868204; total 221.33s
+Total time taken: 327.5843
+      327.60 real      1205.15 user       775.11 sys
+        103427768320  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+            46643598  page reclaims
+                   3  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+               40526  voluntary context switches
+            37918686  involuntary context switches
+       7595250593474  instructions retired
+       7192647599950  cycles elapsed
+        111937635880  peak memory footprint
