@@ -16,7 +16,7 @@ bismark bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
 ### Arguments
 
-Aligned Bismark files. `bismark bam2nuc` handles both Bismark single-end and paired-end files (determined automatically from the `@PG` line; see `-s/--single` and `-p/--paired`).
+Aligned Bismark files. `bismark bam2nuc` handles both Bismark single-end and paired-end files (determined automatically from the `@PG` line, or from the first record's paired FLAG when that line has no `-1`/`-2`, as after a positional paired uBAM, BINSEQ or unaligned CRAM run; see `-s/--single` and `-p/--paired`).
 
 :::note
 
@@ -36,11 +36,11 @@ The reference FASTA the CRAM input was compressed against. Required for CRAM inp
 
 - `-s/--single`
 
-Treat every input as single-end instead of reading the layout from the Bismark `@PG` line.
+Treat every input as single-end instead of detecting the layout.
 
 - `-p/--paired`
 
-Treat every input as paired-end instead of reading the layout from the Bismark `@PG` line. Use it for output of a run with a positional paired uBAM, BINSEQ or unaligned CRAM input, whose `@PG` line has no `-1`/`-2`. A record without the paired FLAG bit stops the run.
+Treat every input as paired-end instead of detecting the layout. A record without the paired FLAG bit stops the run.
 
 - `--genome_folder <path>`
 

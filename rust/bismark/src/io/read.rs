@@ -1020,6 +1020,29 @@ pub fn detect_paired_from_header(header: &Header) -> Option<bool> {
     result
 }
 
+/// Where [`detect_paired`] took the single-end / paired-end layout from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutSource {
+    /// The Bismark `@PG` line.
+    Pg,
+    /// The first record's FLAG `0x1`, because the `@PG` line has no `-1`/`-2`.
+    Flag,
+}
+
+/// [`detect_paired_from_header`], upgraded to paired-end when that says single-end and the first record has FLAG `0x1`.
+#[must_use]
+pub fn detect_paired(
+    header: &Header,
+    first_record_flags: Option<noodles_sam::alignment::record::Flags>,
+) -> Option<(bool, LayoutSource)> {
+    match detect_paired_from_header(header) {
+        Some(false) if first_record_flags.is_some_and(|f| f.is_segmented()) => {
+            Some((true, LayoutSource::Flag))
+        }
+        other => other.map(|p| (p, LayoutSource::Pg)),
+    }
+}
+
 /// True if `arg` appears as a standalone token in `text`, delimited by
 /// whitespace or tab on **both** sides.
 ///
@@ -1626,6 +1649,35 @@ read1:CTCCTTAG\t0\tchr1\t10\t60\t5M\t*\t0\t0\tACGTC\tIIIII\tXM:Z:.....\tXR:Z:CT\
     fn detect_paired_from_header_returns_none_when_no_bismark_pg() {
         let header = header_with_pg("bowtie2", Some("bowtie2 -x index -U reads.fq.gz"));
         assert_eq!(detect_paired_from_header(&header), None);
+    }
+
+    #[test]
+    fn detect_paired_upgrades_a_single_end_pg_line_with_a_paired_first_record() {
+        use noodles_sam::alignment::record::Flags;
+        let se_pg = header_with_pg("Bismark", Some("bismark --genome /g pairs.bam"));
+        let pe_pg = header_with_pg("Bismark", Some("bismark --genome /g -1 a.fq -2 b.fq"));
+        let pe_flags = Some(Flags::SEGMENTED | Flags::FIRST_SEGMENT);
+        let se_flags = Some(Flags::empty());
+        assert_eq!(
+            detect_paired(&se_pg, pe_flags),
+            Some((true, LayoutSource::Flag))
+        );
+        assert_eq!(
+            detect_paired(&se_pg, se_flags),
+            Some((false, LayoutSource::Pg))
+        );
+        assert_eq!(detect_paired(&se_pg, None), Some((false, LayoutSource::Pg)));
+        assert_eq!(
+            detect_paired(&pe_pg, se_flags),
+            Some((true, LayoutSource::Pg))
+        );
+        assert_eq!(
+            detect_paired(&pe_pg, pe_flags),
+            Some((true, LayoutSource::Pg))
+        );
+        // No Bismark @PG: the FLAG is not consulted.
+        assert_eq!(detect_paired(&Header::default(), pe_flags), None);
+        assert_eq!(detect_paired(&Header::default(), se_flags), None);
     }
 
     #[test]
