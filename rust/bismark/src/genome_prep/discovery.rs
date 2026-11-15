@@ -61,7 +61,11 @@ pub fn find_fasta_files(dir: &Path) -> Result<Vec<PathBuf>, GenomePrepError> {
             .filter(|p| {
                 p.is_file()
                     && p.file_name()
-                        .map(|n| in_group(n.as_encoded_bytes(), ext))
+                        // Perl's `<*.fa>` glob skips dotfiles (e.g. macOS `._chr1.fa`).
+                        .map(|n| {
+                            let n = n.as_encoded_bytes();
+                            !n.starts_with(b".") && in_group(n, ext)
+                        })
                         .unwrap_or(false)
             })
             .collect();
@@ -173,6 +177,15 @@ mod tests {
                 .unwrap()
                 .ends_with("a.fa")
         );
+    }
+
+    #[test]
+    fn glob_skips_dotfiles() {
+        let d = tempdir().unwrap();
+        fs::write(d.path().join("._chr1.fa"), b"\x00\x05\x16\x07garbage").unwrap();
+        fs::write(d.path().join("chr1.fa"), b">chr1\nACGT\n").unwrap();
+        let files = find_fasta_files(d.path()).unwrap();
+        assert_eq!(files, vec![d.path().join("chr1.fa")]);
     }
 
     #[test]

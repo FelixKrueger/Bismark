@@ -210,40 +210,6 @@ impl DuplexFamilies {
         sites
     }
 
-    /// Reconcile every family and roll up the summary (no I/O).
-    pub fn reconcile(&self, min_opp_depth: u32, variant_opp_frac: f64) -> DuplexSummary {
-        let mut s = DuplexSummary::default();
-        for fam in self.fams.values() {
-            s.total_families += 1;
-            if !fam.is_paired() {
-                s.singletons += 1;
-                continue;
-            }
-            s.duplex_paired += 1;
-            for (_pos0, (_plus, pileup)) in Self::family_sites(fam) {
-                // A site with no OWN-strand coverage carries no methylation evidence (the
-                // own strand holds the called cytosine); skip it.
-                if pileup.own_c + pileup.own_t == 0 {
-                    continue;
-                }
-                match pileup.classify(min_opp_depth, variant_opp_frac) {
-                    CytosineVerdict::Variant => s.variant_sites += 1,
-                    CytosineVerdict::Methylation { methylated, total } => {
-                        s.methylation_sites += 1;
-                        s.methylated_calls += methylated as u64;
-                        s.total_calls += total as u64;
-                    }
-                    CytosineVerdict::Undetermined { methylated, total } => {
-                        s.undetermined_sites += 1;
-                        s.methylated_calls += methylated as u64;
-                        s.total_calls += total as u64;
-                    }
-                }
-            }
-        }
-        s
-    }
-
     /// Write a per-family report and return the summary. Columns (paired families):
     /// chromosome, start(0-based), end, canonical-UMI, members, verdict-counts.
     pub fn write_report<W: Write>(
@@ -546,7 +512,13 @@ mod tests {
             ],
         );
 
-        let s = d.reconcile(DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC);
+        let s = d
+            .write_report(
+                &mut std::io::sink(),
+                DUPLEX_MIN_OPP_DEPTH,
+                DEFAULT_VARIANT_OPP_FRAC,
+            )
+            .unwrap();
         assert_eq!(s.total_families, 1);
         assert_eq!(s.duplex_paired, 1);
         assert_eq!(s.singletons, 0);
@@ -580,7 +552,13 @@ mod tests {
                 t_equivalent: false,
             }],
         );
-        let s = d.reconcile(DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC);
+        let s = d
+            .write_report(
+                &mut std::io::sink(),
+                DUPLEX_MIN_OPP_DEPTH,
+                DEFAULT_VARIANT_OPP_FRAC,
+            )
+            .unwrap();
         assert_eq!(s.total_families, 2);
         assert_eq!(s.duplex_paired, 0);
         assert_eq!(s.singletons, 2);
@@ -615,7 +593,13 @@ mod tests {
                 t_equivalent: false,
             }],
         );
-        let s = d.reconcile(DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC);
+        let s = d
+            .write_report(
+                &mut std::io::sink(),
+                DUPLEX_MIN_OPP_DEPTH,
+                DEFAULT_VARIANT_OPP_FRAC,
+            )
+            .unwrap();
         assert_eq!(s.duplex_paired, 1);
         assert_eq!(s.undetermined_sites, 1); // only pos 110 (OT own, no opposite)
         assert_eq!(s.methylation_sites, 0);
@@ -648,7 +632,13 @@ mod tests {
                 t_equivalent: false,
             }],
         );
-        let s = d.reconcile(DUPLEX_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC);
+        let s = d
+            .write_report(
+                &mut std::io::sink(),
+                DUPLEX_MIN_OPP_DEPTH,
+                DEFAULT_VARIANT_OPP_FRAC,
+            )
+            .unwrap();
         assert_eq!(s.methylation_sites, 1);
         assert_eq!(s.methylated_calls, 1);
         assert_eq!(s.variant_sites, 0);

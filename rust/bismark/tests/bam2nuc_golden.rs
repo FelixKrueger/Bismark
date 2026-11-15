@@ -230,14 +230,12 @@ fn sam_input_is_rejected() {
 }
 
 #[test]
-fn cram_input_is_rejected() {
+fn cram_input_without_cram_ref_is_rejected() {
     let tmp = copy_genome("genome_acgtn");
     let genome = tmp.path().join("genome");
     // CRAM magic bytes are enough for the format sniff to classify Cram.
     let cram = tmp.path().join("reads.cram");
     std::fs::write(&cram, b"CRAM\x03\x00\x00\x00").unwrap();
-    // Strengthened (L-2): assert exit code 1 AND the specific CramNotSupported
-    // message ("not yet supported"), not merely any mention of CRAM.
     bin()
         .arg("-g")
         .arg(&genome)
@@ -245,7 +243,7 @@ fn cram_input_is_rejected() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicates::str::contains("not yet supported"));
+        .stderr(predicates::str::contains("CRAM reference required for"));
 }
 
 #[test]
@@ -345,4 +343,91 @@ fn se_sorted_stats_byte_identical() {
         golden("se_stats.golden"),
         "sorted == unsorted SE stats"
     );
+}
+
+// ── -s/--single and -p/--paired (#1214) ──
+
+/// Run one BAM with extra flags; return (tempdir, out dir, assert).
+fn run_with_flags(bam: &str, flags: &[&str]) -> (TempDir, PathBuf, assert_cmd::assert::Assert) {
+    let tmp = copy_genome("genome_acgtn");
+    let genome = tmp.path().join("genome");
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let assert = bin()
+        .arg("-g")
+        .arg(&genome)
+        .arg("--dir")
+        .arg(format!("{}/", out.display()))
+        .args(flags)
+        .arg(data_dir().join(bam))
+        .assert();
+    (tmp, out, assert)
+}
+
+#[test]
+fn positional_pe_without_flag_matches_pe_golden() {
+    let (_t, out, assert) = run_with_flags("pe_positional.bam", &[]);
+    assert.success();
+    let stats = std::fs::read(out.join("pe_positional.nucleotide_stats.txt")).unwrap();
+    assert_bytes_eq(&stats, &golden("pe_stats.golden"), "auto");
+}
+
+#[test]
+fn positional_pe_with_paired_matches_pe_golden() {
+    for flag in ["-p", "--paired"] {
+        let (_t, out, assert) = run_with_flags("pe_positional.bam", &[flag]);
+        assert.success();
+        let stats = std::fs::read(out.join("pe_positional.nucleotide_stats.txt")).unwrap();
+        assert_bytes_eq(&stats, &golden("pe_stats.golden"), flag);
+    }
+}
+
+#[test]
+fn pe_with_single_fails_with_paired_hint() {
+    let (_t, out, assert) = run_with_flags("pe.bam", &["-s"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("looks paired-end"))
+        .stderr(predicates::str::contains("Failed on input"))
+        .stderr(predicates::str::contains("pe.bam"));
+    assert!(!out.join("pe.nucleotide_stats.txt").exists());
+}
+
+#[test]
+fn se_with_paired_fails_without_stats() {
+    let (_t, out, assert) = run_with_flags("se.bam", &["-p"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("drop -p/--paired"));
+    assert!(!out.join("se.nucleotide_stats.txt").exists());
+}
+
+#[test]
+fn no_bismark_pg_with_single_succeeds() {
+    let (_t, out, assert) = run_with_flags("no_bismark_pg.bam", &["--single"]);
+    assert.success();
+    let stats = std::fs::read(out.join("no_bismark_pg.nucleotide_stats.txt")).unwrap();
+    assert!(
+        stats.starts_with(b"(di-)nucleotide\t"),
+        "unexpected stats header"
+    );
+}
+
+#[test]
+fn single_and_paired_together_are_rejected() {
+    let (_t, _out, assert) = run_with_flags("se.bam", &["-s", "-p"]);
+    assert.failure().code(2);
+}
+
+#[test]
+fn positional_pe_with_single_fails_with_paired_hint() {
+    let (_t, out, assert) = run_with_flags("pe_positional.bam", &["-s"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("FLAG tag: 99"))
+        .stderr(predicates::str::contains("looks paired-end"));
+    assert!(!out.join("pe_positional.nucleotide_stats.txt").exists());
 }

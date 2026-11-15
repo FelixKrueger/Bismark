@@ -96,7 +96,7 @@ pub use pipeline::{extract_pe, extract_se};
 
 use std::path::Path;
 
-use crate::io::{detect_paired_from_header, open_reader_without_sort_check};
+use crate::io::{detect_paired, detect_paired_from_header, open_reader_without_sort_check};
 
 /// One-line `--version` string for the binary (suite-wide shape via
 /// [`crate::meta::version_line`]):
@@ -169,7 +169,7 @@ fn run(cli: Cli) -> Result<(), BismarkExtractorError> {
 /// Extract one input file end-to-end. Dispatches on `paired_mode`:
 ///   - `SingleEnd` → `extract_se_parallel` (accepts coordinate-sorted input).
 ///   - `PairedEnd` → `extract_pe_parallel` (rejects coordinate-sorted input).
-///   - `AutoDetect` → probe the `@PG ID:Bismark` header (without the sort
+///   - `AutoDetect` → probe the `@PG ID:Bismark` header and first record (without the sort
 ///     check, so a coordinate-sorted SE file can be inspected), then
 ///     dispatch. The PE branch re-opens WITH the sort check, so a
 ///     coordinate-sorted PE file is still rejected with `UnsortedInput`.
@@ -182,12 +182,27 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
         PairedMode::SingleEnd => extract_se_parallel(input, config),
         PairedMode::PairedEnd => extract_pe_parallel(input, config),
         PairedMode::AutoDetect => {
-            // Open reader once for header inspection, WITHOUT the
+            // Open reader once for header and first-record inspection, WITHOUT the
             // coordinate-sort check (detection must work on a coord-sorted
             // SE file). The probe is dropped before extract_*_parallel
             // re-opens the file — OS caches the header bytes.
-            let probe = open_reader_without_sort_check(input, /*cram_ref=*/ None)?;
-            let is_paired = detect_paired_from_header(probe.header()).ok_or_else(|| {
+            let mut probe = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
+            if config.allow_discordant {
+                probe.set_filter(crate::io::RecordFilter {
+                    drop_secondary: true,
+                    drop_supplementary: true,
+                });
+            }
+            let first_flags = if detect_paired_from_header(probe.header()) == Some(false) {
+                probe
+                    .records()
+                    .next()
+                    .and_then(Result::ok)
+                    .map(|r| r.inner().flags())
+            } else {
+                None
+            };
+            let (is_paired, _) = detect_paired(probe.header(), first_flags).ok_or_else(|| {
                 BismarkExtractorError::AutoDetectFailed {
                     message: format!(
                         "no `@PG` line with `ID:Bismark*` found in {}'s header; \
@@ -197,6 +212,14 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
                 }
             })?;
             drop(probe);
+            // Mode-dependent checks Perl runs after auto-detection (1217, 1334).
+            // Under AutoDetect `no_overlap == !include_overlap`.
+            if !is_paired && !config.no_overlap {
+                return Err(BismarkExtractorError::IncludeOverlapRequiresPairedEnd);
+            }
+            if is_paired && config.output_mode == OutputMode::Yacht {
+                return Err(BismarkExtractorError::YachtRequiresSingleEnd);
+            }
             if is_paired {
                 // PE re-opens with the checking constructor → coordinate-sorted
                 // PE input is rejected here with `UnsortedInput`.

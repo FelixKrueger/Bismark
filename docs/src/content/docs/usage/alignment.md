@@ -194,6 +194,7 @@ Notes:
 - **Paired-end uBAMs must be name-collated** (mates adjacent, as `samtools fastq` requires); a desynchronised pairing fails loudly. Run `samtools collate` first if needed.
 - A paired-end uBAM is passed as **one positional file**, not via `-1`/`-2`; a uBAM supplied through `-1`/`-2` is rejected with guidance.
 - uBAM input is incompatible with `-f`/`--fasta` (BAM carries qualities → FASTQ), and — like FASTQ/FASTA — paired-end is unsupported for the minimap2/rammap backends.
+- An **unaligned CRAM** (3.0 or 3.1, e.g. from `samtools import` or `samtools view -C` of a uBAM) is accepted the same way, with the same rules, and needs no reference. A CRAM whose header lists reference sequences (`@SQ` lines) looks aligned and is rejected: convert it with `samtools fastq --reference <genome.fa>` first.
 
 ## BINSEQ (`.vbq` + `.cbq`) input
 

@@ -971,6 +971,45 @@ exit 1
     }
 }
 
+/// Two inputs that would write the same output name are rejected rather than the second
+/// silently overwriting the first (#1167 finding 22).
+#[cfg(unix)]
+#[test]
+fn inputs_sharing_an_output_name_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let (a, b) = (genome.path().join("a"), genome.path().join("b"));
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    let read = b"@r1\nACGTACGT\n+\nIIIIIIII\n";
+    for p in [a.join("x.fq"), b.join("x.fastq"), a.join("y.fq")] {
+        fs::write(p, read).unwrap();
+    }
+    let cases: [(&[&str], Vec<PathBuf>); 2] = [
+        (&[], vec![a.join("x.fq"), b.join("x.fastq")]),
+        (&["--basename", "foo"], vec![a.join("x.fq"), a.join("y.fq")]),
+    ];
+    for (flags, reads) in cases {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args(flags)
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .args(&reads)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("would both write"));
+        assert_eq!(fs::read_dir(outdir.path()).unwrap().count(), 0);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_index_errors() {
@@ -1016,6 +1055,32 @@ fn sam_output_is_deferred() {
         .failure()
         .code(1)
         .stderr(predicate::str::contains("SAM output is not yet supported"));
+}
+
+/// `--rg_id`/`--rg_sample` alone (without `--rg_tag`) must be rejected too, not
+/// silently ignored.
+#[cfg(unix)]
+#[test]
+fn rg_id_and_rg_sample_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+
+    for flag in ["--rg_id", "--rg_sample"] {
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .args([flag, "S1"])
+            .arg(&read)
+            .assert()
+            .failure()
+            .code(1)
+            .stderr(predicate::str::contains("--rg_tag/--rg_id/--rg_sample"));
+    }
 }
 
 // ---- paired-end layout validation (resolves before discovery; hermetic) ----
@@ -1081,16 +1146,17 @@ fn multicore_zero_errors() {
         ));
 }
 
+/// `--old_flag` is rejected on the alignment path and on both standalone 5-Base paths, and
+/// `--nucleotide_coverage` is rejected on the standalone paths (#1167 finding 23).
 #[cfg(unix)]
 #[test]
-fn deferred_flag_emits_notice() {
+fn old_flag_and_misplaced_nucleotide_coverage_are_rejected() {
     let genome = TempDir::new().unwrap();
     make_genome(genome.path());
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2(bins.path());
     let read = make_read(genome.path());
     let temp = TempDir::new().unwrap();
-
     bin()
         .arg("--genome")
         .arg(genome.path())
@@ -1100,16 +1166,420 @@ fn deferred_flag_emits_notice() {
         .arg(temp.path())
         .arg("--output_dir")
         .arg(temp.path())
-        // --nucleotide_coverage is still deferred (wired in a later phase);
-        // --unmapped/--ambiguous/--ambig_bam are now ACTIVE (Phase 6).
+        .arg("--old_flag")
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("--old_flag").and(predicate::str::contains("not supported")),
+        );
+    for standalone in [
+        "--five_base_consensus_from_bam",
+        "--five_base_bisulfite_bam",
+    ] {
+        for flag in ["--old_flag", "--nucleotide_coverage"] {
+            bin()
+                .args([standalone, "in.bam", flag])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains(flag));
+        }
+    }
+}
+
+/// [`make_genome`] with a chr1 holding every dinucleotide, which bam2nuc needs; the
+/// fake aligners' 6M hit at chr1:1 still reads `ACGTAC`.
+#[cfg(unix)]
+fn make_genome_all_dinucleotides(dir: &Path) {
+    make_genome(dir);
+    fs::write(dir.join("genome.fa"), b">chr1\nACGTACAACAGATCCGCTGGTTA\n").unwrap();
+}
+
+/// Align `args` with `--nucleotide_coverage` (and files, not FIFOs), returning the output dir.
+#[cfg(unix)]
+fn align_with_nucleotide_coverage(
+    genome: &Path,
+    bins: &Path,
+    args: &[&std::ffi::OsStr],
+) -> TempDir {
+    align_with_nucleotide_coverage_stderr(genome, bins, args).0
+}
+
+/// [`align_with_nucleotide_coverage`], also returning stderr.
+#[cfg(unix)]
+fn align_with_nucleotide_coverage_stderr(
+    genome: &Path,
+    bins: &Path,
+    args: &[&std::ffi::OsStr],
+) -> (TempDir, String) {
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let out = bin()
+        .arg("--genome")
+        .arg(genome)
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--nucleotide_coverage")
+        .args(args)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("nucleotide coverage statistics"))
+        .get_output()
+        .stderr
+        .clone();
+    (outdir, String::from_utf8(out).unwrap())
+}
+
+/// The stats file a standalone `bam2nuc` run writes for `bam`.
+#[cfg(unix)]
+fn standalone_bam2nuc_stats(genome: &Path, bam: &Path, stats_name: &str) -> Vec<u8> {
+    let dir = TempDir::new().unwrap();
+    assert_cmd::Command::cargo_bin("bam2nuc")
+        .unwrap()
+        .arg("--genome_folder")
+        .arg(genome)
+        .arg("--dir")
+        .arg(dir.path())
+        .arg(bam)
+        .assert()
+        .success();
+    fs::read(dir.path().join(stats_name)).unwrap()
+}
+
+/// `--nucleotide_coverage` writes the same stats file as a standalone bam2nuc on the
+/// final BAM, single-end and paired-end (#1167 finding 23, Perl 931-946).
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_runs_bam2nuc_on_the_final_bam() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+
+    let se_bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(se_bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let out = align_with_nucleotide_coverage(genome.path(), se_bins.path(), &[read.as_os_str()]);
+    let stats = "reads_bismark_bt2.nucleotide_stats.txt";
+    assert_eq!(
+        fs::read(out.path().join(stats)).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &out.path().join("reads_bismark_bt2.bam"),
+            stats
+        )
+    );
+
+    let pe_bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe(pe_bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let args = ["-1".as_ref(), r1.as_os_str(), "-2".as_ref(), r2.as_os_str()];
+    let out = align_with_nucleotide_coverage(genome.path(), pe_bins.path(), &args);
+    let stats = "reads_1_bismark_bt2_pe.nucleotide_stats.txt";
+    assert_eq!(
+        fs::read(out.path().join(stats)).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &out.path().join("reads_1_bismark_bt2_pe.bam"),
+            stats
+        )
+    );
+}
+
+/// A positional paired uBAM has no `-1`/`-2` on the command line, so bam2nuc must take
+/// the paired-end mode from the run: its stats equal those of a `-1`/`-2` run.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_uses_the_run_layout_for_positional_paired_ubam() {
+    use noodles_sam::alignment::io::Write as _;
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe(bins.path());
+    let input = TempDir::new().unwrap();
+
+    let ubam = input.path().join("pe.bam");
+    let header = noodles_sam::Header::default();
+    let mut w = noodles_bam::io::Writer::new(fs::File::create(&ubam).unwrap());
+    w.write_header(&header).unwrap();
+    for flags in [0x1 | 0x40, 0x1 | 0x80] {
+        let mut r = noodles_sam::alignment::RecordBuf::default();
+        *r.name_mut() = Some(b"r1".into());
+        *r.flags_mut() = (flags as u16).into();
+        *r.sequence_mut() = b"ACGTAC".to_vec().into();
+        *r.quality_scores_mut() = vec![37; 6].into();
+        w.write_alignment_record(&header, &r).unwrap();
+    }
+    w.finish(&header).unwrap();
+    drop(w); // noodles writes the last BGZF block on drop
+    let from_ubam = align_with_nucleotide_coverage(genome.path(), bins.path(), &[ubam.as_os_str()]);
+
+    let r1 = input.path().join("pe_1.fq");
+    let r2 = input.path().join("pe_2.fq");
+    fs::write(&r1, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    fs::write(&r2, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let args = ["-1".as_ref(), r1.as_os_str(), "-2".as_ref(), r2.as_os_str()];
+    let from_fastq = align_with_nucleotide_coverage(genome.path(), bins.path(), &args);
+
+    let stats = "pe_1_bismark_bt2_pe.nucleotide_stats.txt";
+    assert_eq!(
+        fs::read(from_ubam.path().join(stats)).unwrap(),
+        fs::read(from_fastq.path().join(stats)).unwrap()
+    );
+}
+
+/// An input without usable reads gets a warning and no stats file; the next input is
+/// still counted and the run succeeds.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_warns_for_an_input_without_usable_reads() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    // The fake's 6M hit does not fit an 8 bp read, so `a` has no usable reads.
+    let a = input.path().join("a.fq");
+    let b = input.path().join("b.fq");
+    fs::write(&a, b"@r1\nACGTACGT\n+\nFFFFFFFF\n").unwrap();
+    fs::write(&b, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--nucleotide_coverage")
+        .arg(&a)
+        .arg(&b)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Warning: no nucleotide coverage statistics for",
+        ));
+    assert!(
+        !outdir
+            .path()
+            .join("a_bismark_bt2.nucleotide_stats.txt")
+            .exists()
+    );
+    assert!(
+        outdir
+            .path()
+            .join("b_bismark_bt2.nucleotide_stats.txt")
+            .exists()
+    );
+}
+
+/// `--nucleotide_coverage` with `--multicore 2`, with `--basename`, and with two inputs: each
+/// stats file equals a standalone bam2nuc on its BAM, and the genome is loaded once.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_covers_multicore_basename_and_several_inputs() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    let reads: String = (0..4)
+        .map(|i| format!("@r{i}\nACGTAC\n+\nFFFFFF\n"))
+        .collect();
+    let many = input.path().join("many.fq");
+    fs::write(&many, reads).unwrap();
+    let (a, b) = (input.path().join("a.fq"), input.path().join("b.fq"));
+    for f in [&a, &b] {
+        fs::write(f, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    }
+    let same_as_standalone = |out: &Path, stem: &str| {
+        let stats = format!("{stem}.nucleotide_stats.txt");
+        assert_eq!(
+            fs::read(out.join(&stats)).unwrap(),
+            standalone_bam2nuc_stats(genome.path(), &out.join(format!("{stem}.bam")), &stats)
+        );
+    };
+
+    let out = align_with_nucleotide_coverage(
+        genome.path(),
+        bins.path(),
+        &["--multicore".as_ref(), "2".as_ref(), many.as_os_str()],
+    );
+    same_as_standalone(out.path(), "many_bismark_bt2");
+
+    let out = align_with_nucleotide_coverage(
+        genome.path(),
+        bins.path(),
+        &["--basename".as_ref(), "foo".as_ref(), a.as_os_str()],
+    );
+    same_as_standalone(out.path(), "foo");
+
+    let (out, stderr) = align_with_nucleotide_coverage_stderr(
+        genome.path(),
+        bins.path(),
+        &[a.as_os_str(), b.as_os_str()],
+    );
+    same_as_standalone(out.path(), "a_bismark_bt2");
+    same_as_standalone(out.path(), "b_bismark_bt2");
+    assert_eq!(
+        stderr.matches("Stored sequence information").count(),
+        1,
+        "{stderr}"
+    );
+}
+
+/// Stats files from an earlier run are replaced on success and gone after a hard failure,
+/// including for inputs bam2nuc never reached.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_leaves_no_stale_stats_file() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    let (a, b) = (input.path().join("a.fq"), input.path().join("b.fq"));
+    for f in [&a, &b] {
+        fs::write(f, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    }
+    let run = |outdir: &Path| {
+        let temp = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--no_stream_converted")
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir)
+            .arg("--nucleotide_coverage")
+            .arg(&a)
+            .arg(&b)
+            .assert()
+    };
+
+    let ok = TempDir::new().unwrap();
+    let b_stats = ok.path().join("b_bismark_bt2.nucleotide_stats.txt");
+    fs::write(&b_stats, b"stale").unwrap();
+    run(ok.path()).success();
+    assert_eq!(
+        fs::read(&b_stats).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &ok.path().join("b_bismark_bt2.bam"),
+            "b_bismark_bt2.nucleotide_stats.txt"
+        )
+    );
+
+    // A directory at a's stats path stops the loop before b is counted.
+    let failed = TempDir::new().unwrap();
+    fs::create_dir(failed.path().join("a_bismark_bt2.nucleotide_stats.txt")).unwrap();
+    let b_stats = failed.path().join("b_bismark_bt2.nucleotide_stats.txt");
+    fs::write(&b_stats, b"stale").unwrap();
+    run(failed.path()).failure().code(1);
+    assert!(!b_stats.exists());
+}
+
+/// A stale stats symlink is removed before bam2nuc runs, leaving its target alone, and
+/// replaced with a real stats file.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_replaces_a_stale_stats_symlink() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let input = TempDir::new().unwrap();
+    let read = input.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    let target = input.path().join("elsewhere.txt");
+    fs::write(&target, b"stale").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    let stats = outdir.path().join("reads_bismark_bt2.nucleotide_stats.txt");
+    std::os::unix::fs::symlink(&target, &stats).unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
         .arg("--nucleotide_coverage")
         .arg(&read)
         .assert()
-        .success()
-        .stderr(
-            predicate::str::contains("not yet active")
-                .and(predicate::str::contains("--nucleotide_coverage")),
-        );
+        .success();
+    assert!(
+        !fs::symlink_metadata(&stats)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(&stats).unwrap(),
+        standalone_bam2nuc_stats(
+            genome.path(),
+            &outdir.path().join("reads_bismark_bt2.bam"),
+            "reads_bismark_bt2.nucleotide_stats.txt"
+        )
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"stale");
+}
+
+/// A bam2nuc failure after a successful alignment exits non-zero and keeps the BAM.
+#[cfg(unix)]
+#[test]
+fn nucleotide_coverage_failure_fails_the_run_after_alignment() {
+    let genome = TempDir::new().unwrap();
+    make_genome_all_dinucleotides(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_mapped(bins.path());
+    let read = make_read(genome.path());
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    // A directory where the stats file goes makes bam2nuc fail to write it.
+    fs::create_dir(outdir.path().join("reads_bismark_bt2.nucleotide_stats.txt")).unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--nucleotide_coverage")
+        .arg(&read)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed",
+        ));
+    assert!(outdir.path().join("reads_bismark_bt2.bam").exists());
+    assert!(
+        outdir
+            .path()
+            .join("reads_bismark_bt2.nucleotide_stats.txt")
+            .is_dir()
+    );
 }
 
 #[cfg(unix)]
@@ -3295,6 +3765,50 @@ esac
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// A minimap2 run prints no developer text, and the Bowtie 2 effort options `-D` / `-R`,
+/// which minimap2 cannot take, are rejected rather than dropped (#1167 finding 31).
+#[cfg(unix)]
+#[test]
+fn minimap2_summary_is_clean_and_bowtie2_effort_options_are_rejected() {
+    let genome = TempDir::new().unwrap();
+    make_genome_mmi(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_mapped(bins.path());
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, b"@r1\nACGTAC\n+\nIIIIII\n").unwrap();
+    for (extra, ok) in [
+        (&[][..], true),
+        (&["-D", "20"][..], false),
+        (&["-R", "3"][..], false),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--minimap2")
+            .arg("--path_to_minimap2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(temp.path())
+            .args(extra)
+            .arg(&read)
+            .assert();
+        if ok {
+            assert
+                .success()
+                .stderr(predicate::str::contains("unique best alignments:   1"))
+                .stderr(predicate::str::contains("Phase 6").not());
+        } else {
+            assert.failure().code(1).stderr(
+                predicate::str::contains(format!("'{} <int>'", extra[0]))
+                    .and(predicate::str::contains("--minimap2")),
+            );
+        }
+    }
+}
+
 /// Run `bismark --minimap2` on the 6 bp fixture read and return the single record's MAPQ.
 #[cfg(unix)]
 fn minimap2_bam_mapq(genome: &Path, bins: &Path) -> u8 {
@@ -3933,6 +4447,45 @@ fn combined_index_ot_read_end_to_end() {
     let v = |t: [u8; 2]| r.data().get(&Tag::from(t)).cloned();
     assert_eq!(v(*b"XR"), Some(Value::String("CT".into())));
     assert_eq!(v(*b"XG"), Some(Value::String("CT".into())));
+}
+
+/// A combined-index aligner whose read names stop matching the input must fail
+/// loud (as the faithful path does), not turn every later read into a no-alignment.
+#[cfg(unix)]
+#[test]
+fn combined_index_read_name_desync_is_an_error() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Emits every read under a mangled name (`<id>_X`), so no group ever matches.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "_X\t4\t*\t0\t0\t*\t*\t0\t0\tACGTAC\tFFFFFF"; }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let read = write_reads_ids(genome.path(), "reads.fq", &["r_ot", "r_ob"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "returned read names that stop matching the input at read 1",
+        ));
 }
 
 /// THE OB→1 REGRESSION: a combined-index OB read (rev + `_GA_converted`) must map
@@ -6704,6 +7257,96 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
     write_exec(&dir.join("bowtie2"), script);
 }
 
+/// `--upto` must stop the 5-Base engine even when its output outgrows the pipe buffer.
+#[cfg(unix)]
+#[test]
+fn five_base_pe_upto_terminates_with_a_large_engine_output() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base_pe(bins.path());
+    let reads: String = (0..5000)
+        .map(|i| format!("@p{i}\nATGTAC\n+\nIIIIII\n"))
+        .collect();
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &reads).unwrap();
+    fs::write(&r2, &reads).unwrap();
+    let outdir = TempDir::new().unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--upto")
+        .arg("10")
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .success();
+    let report =
+        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
+    assert!(
+        report.contains("Sequence pairs analysed in total:\t10\n"),
+        "{report}"
+    );
+}
+
+/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
+/// of the calls.
+#[cfg(unix)]
+#[test]
+fn five_base_bowtie2_umi_bases_are_not_called() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let idx = TempDir::new().unwrap();
+    make_stub_bowtie2_index(&idx.path().join("puc"));
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_five_base_pe(bins.path());
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
+    let r1_xm = |umi: &str| {
+        let outdir = TempDir::new().unwrap();
+        bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .args(["--illumina_5base", "--bowtie2", "--five_base_umi_len", umi])
+            .arg("--five_base_index")
+            .arg(idx.path().join("puc"))
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(&r1)
+            .arg("-2")
+            .arg(&r2)
+            .assert()
+            .success();
+        let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
+        let r1_rec = recs
+            .iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1");
+        bismark::io::tags::xm(r1_rec.inner().data())
+            .unwrap()
+            .to_vec()
+    };
+    assert_eq!(r1_xm("0"), b".Z...z".to_vec());
+    assert_eq!(r1_xm("2"), b".....z".to_vec());
+}
+
 /// `--illumina_5base` PE end-to-end via minimap2: a read pair `ATGTAC`/`ATGTAC`
 /// vs genome `ACGTACGT`. The genomic C at position 2 (CpG, read as T) is
 /// METHYLATED in 5-Base logic (Z, inverted polarity). The CpG C at position 6
@@ -7826,5 +8469,240 @@ fn five_base_1134_invalid_tuning_fails_before_output_creation() {
         "bowtie2",
         &["-I", "900"],
         "-I/--minins (900) is larger than the maximum insert size (800); raise -X/--maxins",
+    );
+}
+
+/// The sorted file names in `dir`.
+#[cfg(unix)]
+fn dir_names(dir: &Path) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+/// A failed run leaves no output of the input it failed on, finished or partial, and keeps
+/// the outputs of an input that finished; a stale `.partial` from another run is left alone
+/// (#1167 finding 21).
+#[cfg(unix)]
+#[test]
+fn a_failed_run_leaves_no_partial_or_finished_looking_output() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    // Aligns `good.fq` like `make_fake_bowtie2`; reads `bad.fq` to the end, then fails.
+    let script = r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""
+for a in "$@"; do [ "$prev" = "-U" ] && inp="$a"; prev="$a"; done
+case "$inp" in *bad.fq*) cat "$inp" > /dev/null; exit 1;; esac
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }' "$inp"
+"#;
+    write_exec(&bins.path().join("bowtie2"), script);
+    let input = TempDir::new().unwrap();
+    let good = input.path().join("good.fq");
+    let bad = input.path().join("bad.fq");
+    fs::write(&good, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    fs::write(&bad, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    fs::write(
+        outdir.path().join("bad_bismark_bt2.bam.1.partial"),
+        b"stale",
+    )
+    .unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--ambig_bam")
+        .arg("--ambiguous")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&good)
+        .arg(&bad)
+        .timeout(std::time::Duration::from_secs(120))
+        .assert()
+        .failure();
+
+    assert_eq!(
+        dir_names(outdir.path()),
+        [
+            "bad_bismark_bt2.bam.1.partial",
+            "good.fq_ambiguous_reads.fq.gz",
+            "good_bismark_bt2.ambig.bam",
+            "good_bismark_bt2.bam",
+            "good_bismark_bt2_SE_report.txt",
+        ]
+    );
+}
+
+/// A successful `--multicore` run leaves only final names; a failed one leaves nothing.
+#[cfg(unix)]
+#[test]
+fn multicore_outputs_appear_only_when_complete() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let reads: String = (0..4)
+        .map(|i| format!("@r{i}\nACGTACGT\n+\nIIIIIIII\n"))
+        .collect();
+    let input = TempDir::new().unwrap();
+    let read = input.path().join("reads.fq");
+    fs::write(&read, reads).unwrap();
+    for (fails, expected) in [
+        (
+            false,
+            vec!["reads_bismark_bt2.bam", "reads_bismark_bt2_SE_report.txt"],
+        ),
+        (true, vec![]),
+    ] {
+        let bins = TempDir::new().unwrap();
+        if fails {
+            make_fake_bowtie2_align_fails(bins.path());
+        } else {
+            make_fake_bowtie2(bins.path());
+        }
+        let temp = TempDir::new().unwrap();
+        let outdir = TempDir::new().unwrap();
+        let assert = bin()
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--no_stream_converted")
+            .args(["--multicore", "2"])
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg(&read)
+            .timeout(std::time::Duration::from_secs(120))
+            .assert();
+        if fails {
+            assert.failure();
+        } else {
+            assert.success();
+        }
+        assert_eq!(dir_names(outdir.path()), expected);
+    }
+}
+
+/// 5-Base: an input whose engine fails leaves nothing, while the finished input keeps its
+/// BAM, report and post-pass outputs together.
+#[cfg(unix)]
+#[test]
+fn five_base_failed_input_keeps_the_finished_inputs_post_pass_outputs() {
+    let genome = TempDir::new().unwrap();
+    make_genome_fasta_only(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_minimap2_five_base_pe(bins.path());
+    // Wrap the fake engine so it fails on the second input.
+    let real = bins.path().join("minimap2.real");
+    fs::rename(bins.path().join("minimap2"), &real).unwrap();
+    write_exec(
+        &bins.path().join("minimap2"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in *b_1.fq*) exit 1;; esac\nexec {} \"$@\"\n",
+            real.display()
+        ),
+    );
+    let input = TempDir::new().unwrap();
+    for s in ["a", "b"] {
+        for m in ["1", "2"] {
+            fs::write(
+                input.path().join(format!("{s}_{m}.fq")),
+                b"@p1\nATGTAC\n+\nIIIIII\n",
+            )
+            .unwrap();
+        }
+    }
+    let list = |m: &str| {
+        format!(
+            "{},{}",
+            input.path().join(format!("a_{m}.fq")).display(),
+            input.path().join(format!("b_{m}.fq")).display()
+        )
+    };
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .arg("--five_base_deconvolution")
+        .args(["--five_base_duplex", "--five_base_consensus"])
+        .args(["--five_base_emit_multiplicity", "both"])
+        .arg("--path_to_minimap2")
+        .arg(bins.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("-1")
+        .arg(list("1"))
+        .arg("-2")
+        .arg(list("2"))
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .failure();
+    assert_eq!(
+        dir_names(outdir.path()),
+        [
+            "a_1_bismark_mm2_PE_report.txt",
+            "a_1_bismark_mm2_pe.5base_consensus.bam",
+            "a_1_bismark_mm2_pe.5base_deconvolution.txt",
+            "a_1_bismark_mm2_pe.5base_duplex.txt",
+            "a_1_bismark_mm2_pe.5base_simplex.bam",
+            "a_1_bismark_mm2_pe.bam",
+        ]
+    );
+}
+
+/// `--combined_index`: of two inputs the second fails; only the first's outputs remain.
+#[cfg(unix)]
+#[test]
+fn combined_index_failed_input_leaves_only_the_finished_inputs_outputs() {
+    let genome = TempDir::new().unwrap();
+    make_genome_combined(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_combined(bins.path());
+    let real = bins.path().join("bowtie2.real");
+    fs::rename(bins.path().join("bowtie2"), &real).unwrap();
+    write_exec(
+        &bins.path().join("bowtie2"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in *bad.fq*) exit 1;; esac\nexec {} \"$@\"\n",
+            real.display()
+        ),
+    );
+    let input = TempDir::new().unwrap();
+    let good = write_reads_ids(input.path(), "good.fq", &["r_ot"]);
+    let bad = write_reads_ids(input.path(), "bad.fq", &["r_ot"]);
+    let temp = TempDir::new().unwrap();
+    let outdir = TempDir::new().unwrap();
+    bin()
+        .arg("--combined_index")
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--no_stream_converted")
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg(&good)
+        .arg(&bad)
+        .timeout(std::time::Duration::from_secs(60))
+        .assert()
+        .failure();
+    assert_eq!(
+        dir_names(outdir.path()),
+        ["good_bismark_bt2.bam", "good_bismark_bt2_SE_report.txt"]
     );
 }

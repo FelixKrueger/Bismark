@@ -66,6 +66,10 @@ pub struct Cli {
     /// concordance-validated — NOT byte-identical to minimap2.
     #[arg(long = "rammap", visible_alias = "ram")]
     pub rammap: bool,
+    /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware). Needs
+    /// --illumina_5base and a `bwa-mem3 index --meth` index given as --five_base_index.
+    #[arg(long = "bwamem3")]
+    pub bwamem3: bool,
     /// Folder containing the `bowtie2` executable (not the executable itself).
     #[arg(long = "path_to_bowtie2", value_name = "PATH")]
     pub path_to_bowtie2: Option<PathBuf>,
@@ -78,6 +82,9 @@ pub struct Cli {
     /// Folder containing `rammap`.
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
+    /// Folder containing `bwa-mem3`.
+    #[arg(long = "path_to_bwamem3", value_name = "PATH")]
+    pub path_to_bwamem3: Option<PathBuf>,
     /// `[v2/experimental]` Force the SUBPROCESS rammap backend: spawn the external
     /// `rammap` binary on `PATH` (exactly like `--minimap2`). `--rammap` now DEFAULTS to
     /// the compiled-in in-process backend (auto-threaded, lower RAM, faster under
@@ -100,7 +107,8 @@ pub struct Cli {
     /// inverted polarity (a read T at a genomic C = methylated). Paired-end only
     /// (the 5-Base library is paired-end); single-end input is rejected. Aligns with
     /// minimap2 (`-x sr`) against the raw genome FASTA by default; bowtie2/hisat2 via
-    /// `--five_base_index`. NOT byte-identical (Perl Bismark has no 5-Base oracle);
+    /// `--five_base_index`; `--bwamem3` (methylation-aware) via a bwa-mem3 meth index
+    /// given as `--five_base_index`. NOT byte-identical (Perl Bismark has no 5-Base oracle);
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
@@ -118,7 +126,8 @@ pub struct Cli {
     /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
-    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`.
+    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` it is instead the
+    /// FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI

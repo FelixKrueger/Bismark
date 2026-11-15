@@ -1385,3 +1385,38 @@ fn bismark_emitted_dovetail_preserves_extraction_output() {
     ];
     dovetail_parity(&input, work.path(), &trims);
 }
+
+/// Auto-detect skips a leading secondary under `--allow_discordant`, as the pipeline does.
+#[test]
+fn auto_detect_skips_a_leading_secondary_under_allow_discordant() {
+    use noodles_sam::header::record::value::map::Program;
+    use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("sample.bam");
+    let mut header = header_two_chr();
+    let mut prog = Map::<Program>::default();
+    prog.other_fields_mut()
+        .insert(COMMAND_LINE, BString::from("bismark --genome /g pairs.bam"));
+    header
+        .programs_mut()
+        .add(BString::from("Bismark"), prog)
+        .unwrap();
+    write_bam(
+        &bam,
+        header,
+        vec![
+            Rec::Raw(raw_secondary(b"P", 500, 0)),
+            Rec::Bism(synth(b"P", b"CT", b"CT", b"Z.........", 100, 0, 0x1 | 0x40)),
+            Rec::Bism(synth(b"P", b"GA", b"CT", b"Z.........", 200, 0, 0x1 | 0x80)),
+        ],
+    );
+    let out = work.path().join("out");
+    fs::create_dir_all(&out).unwrap();
+    Command::cargo_bin("bismark_methylation_extractor")
+        .unwrap()
+        .arg(&bam)
+        .args(["--allow_discordant", "--comprehensive", "--output_dir"])
+        .arg(&out)
+        .assert()
+        .success();
+}

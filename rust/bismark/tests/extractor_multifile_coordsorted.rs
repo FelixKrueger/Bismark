@@ -257,6 +257,30 @@ fn autodetect_se_coordinate_sorted_processed() {
     assert!(out.join("CpG_OT_auto_se.txt").exists());
 }
 
+#[test]
+fn autodetect_se_include_overlap_rejected() {
+    // #1167 finding 24: the --include_overlap PE requirement is checked after
+    // auto-detection, so an auto-detected SE file still rejects it.
+    let work = tempfile::tempdir().unwrap();
+    let bam = work.path().join("auto_se_overlap.bam");
+    write_bam(
+        &bam,
+        coord_header_with_bismark_pg("bismark reads.fq.gz --genome idx --bowtie2"),
+        &[ot_cpg(b"r1", 100)],
+    );
+
+    extractor()
+        .arg(&bam)
+        .arg("--include_overlap")
+        .arg("--output_dir")
+        .arg(work.path().join("out"))
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "--include_overlap requires --paired-end",
+        ));
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // PE coordinate-sorted rejection (the relaxation must NOT leak to PE)
 // ─────────────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
 
 # Install/update config for the `install-suite*` recipes (bump `suite_tag` on release).
 repo := "https://github.com/FelixKrueger/Bismark"
-suite_tag := "bismark-rust-v2.0.0"
+suite_tag := "bismark-rust-v3.2.0"
 # Post-fold the whole suite is ONE crate — installing `bismark` yields all 12 binaries.
 suite_crates := "bismark"
 

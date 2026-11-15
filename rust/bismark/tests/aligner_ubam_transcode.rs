@@ -223,3 +223,62 @@ fn is_paired_classifies_from_first_primary_record() {
         "header-only → not paired"
     );
 }
+
+#[test]
+fn unaligned_cram_transcodes_like_ubam() {
+    let dir = tempfile::tempdir().unwrap();
+    let cram = dir.path().join("pe.cram");
+    let header = Header::default();
+    // Unmapped (0x4) mates, as `samtools import` writes them; no reference needed.
+    let records = [
+        record("p1", 0x1 | 0x4 | 0x8 | 0x40, b"ACGT", vec![40, 40, 40, 40]),
+        record("p1", 0x1 | 0x4 | 0x8 | 0x80, b"TTGG", vec![2, 4, 6, 8]),
+    ];
+    let mut w = noodles_cram::io::writer::Builder::default()
+        .build_from_path(&cram)
+        .unwrap();
+    w.write_header(&header).unwrap();
+    for rec in &records {
+        w.write_alignment_record(&header, rec).unwrap();
+    }
+    w.finish(&header).unwrap();
+
+    assert!(
+        ubam::is_bam_input(&cram),
+        "a CRAM goes through the uBAM transcode"
+    );
+    assert!(ubam::is_paired(&cram).unwrap());
+    let (r1, r2) = ubam::transcode_ubam_to_fastq_pe(&cram, dir.path()).unwrap();
+    assert_eq!(r1.file_name().unwrap().to_str().unwrap(), "pe_1.fastq");
+    assert_eq!(read_to_string(&r1), "@p1\nACGT\n+\nIIII\n");
+    assert_eq!(read_to_string(&r2), "@p1\nTTGG\n+\n#%')\n");
+}
+
+#[test]
+fn cram_with_reference_sequences_is_rejected_not_decoded() {
+    use std::num::NonZero;
+    let dir = tempfile::tempdir().unwrap();
+    let cram = dir.path().join("aligned.cram");
+    let header = Header::builder()
+        .add_reference_sequence(
+            "chr1",
+            sam::header::record::value::Map::<sam::header::record::value::map::ReferenceSequence>::new(
+                NonZero::new(100).unwrap(),
+            ),
+        )
+        .build();
+    // The writer needs the reference to put its M5 into the header.
+    let reference = noodles_fasta::Repository::new(vec![noodles_fasta::Record::new(
+        noodles_fasta::record::Definition::new("chr1", None),
+        noodles_fasta::record::Sequence::from(vec![b'A'; 100]),
+    )]);
+    let mut w = noodles_cram::io::writer::Builder::default()
+        .set_reference_sequence_repository(reference)
+        .build_from_path(&cram)
+        .unwrap();
+    w.write_header(&header).unwrap();
+    w.finish(&header).unwrap();
+
+    let err = ubam::is_paired(&cram).unwrap_err().to_string();
+    assert!(err.contains("only an unaligned CRAM is accepted"), "{err}");
+}

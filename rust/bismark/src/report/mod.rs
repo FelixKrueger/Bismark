@@ -18,7 +18,6 @@ pub mod assets;
 pub mod cli;
 pub mod discovery;
 pub mod error;
-pub mod logging;
 pub mod reports;
 pub mod template;
 pub mod timestamp;
@@ -81,7 +80,7 @@ where
 /// Top-level: resolve the output dir, the alignment report(s) and their
 /// companions, then build + write one HTML per alignment report.
 pub fn run(cli: &cli::Cli) -> Result<(), ReportError> {
-    let log = logging::Logger::new(cli.verbose);
+    let log = crate::genome_prep::logging::Logger::new(cli.verbose);
 
     // Output dir: trailing '/' appended unless empty (Perl 1093-1102).
     let output_dir = match &cli.dir {

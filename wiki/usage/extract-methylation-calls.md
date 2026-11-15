@@ -54,7 +54,7 @@ sources:
    bismark extract --gzip sample_R1_bismark_bt2_pe.deduplicated.bam
    ```
 
-   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if there is none, the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each with its own outputs.
+   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end (`detect_paired` in `io/read.rs`); with no Bismark `@PG` line the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each with its own outputs.
 3. Open `<name>.M-bias.txt` and look for read positions where the methylation level departs from the flat middle of the read.
 4. If the ends are biased, run again with the trimming that removes them, for example `--ignore 2 --ignore_r2 2`.
 5. For bedGraph, coverage and cytosine reports in the same run, add `--bedGraph` or `--cytosine_report --genome_folder <dir>`: [usage/make-coverage-and-cytosine-reports.md](make-coverage-and-cytosine-reports.md).

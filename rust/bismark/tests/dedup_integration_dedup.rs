@@ -102,7 +102,8 @@ fn write_bam(path: &Path, records: &[RecordBuf]) {
 /// the qname); for SE input, each record contributes one. Deduplication
 /// via HashSet ensures the caller sees the *set* of retained reads/pairs.
 fn read_qnames(path: &Path) -> Vec<String> {
-    let mut reader = bismark::io::open_reader(path, None).unwrap();
+    // Unchecked: outputs of coordinate-sorted SE input keep `SO:coordinate`.
+    let mut reader = bismark::io::open_reader_without_sort_check(path, None).unwrap();
     let qnames: HashSet<String> = reader
         .records()
         .map(|r| {
@@ -413,6 +414,82 @@ fn se_dedup_retains_first_occurrence_and_removes_subsequent_duplicates() {
     ];
     expected.sort();
     assert_eq!(retained, expected);
+}
+
+/// Regression: coordinate-sorted SE input used to be rejected. Perl runs
+/// `test_positional_sorting` only for paired-end input, so SE must succeed
+/// (serial and `--parallel`) while PE still errors.
+#[test]
+fn coordinate_sorted_input_accepted_for_se_rejected_for_pe() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("sorted.bam");
+    let header: Header = "@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:1000000\n"
+        .parse()
+        .unwrap();
+    let mut writer = BamWriter::from_path(&input, header).unwrap();
+    for record in [se_ot("r0", 1000), se_ot("r1", 2000), se_ot("r1_dup", 2000)] {
+        writer
+            .write_record(&BismarkRecord::from_noodles_record(record).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+
+    for parallel in ["1", "2"] {
+        let out_dir = dir.path().join(format!("se_p{parallel}"));
+        std::fs::create_dir_all(&out_dir).unwrap();
+        Command::cargo_bin("deduplicate_bismark")
+            .unwrap()
+            .arg("--single")
+            .arg("--parallel")
+            .arg(parallel)
+            .arg("--output_dir")
+            .arg(&out_dir)
+            .arg(&input)
+            .assert()
+            .success();
+        assert_eq!(
+            read_qnames(&out_dir.join("sorted.deduplicated.bam")),
+            vec!["r0".to_string(), "r1".to_string()]
+        );
+    }
+
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--paired")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("coordinate-sorted"));
+}
+
+/// Regression: `--sam --parallel N` on BAM input used to route to the threaded
+/// BGZF writer and write compressed bytes into `*.deduplicated.sam`.
+#[test]
+fn sam_output_with_parallel_writes_text_sam() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &[se_ot("r0", 1000), se_ot("r1", 2000)]);
+
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--single")
+        .arg("--sam")
+        .arg("--parallel")
+        .arg("2")
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .success();
+
+    let out = std::fs::read(dir.path().join("input.deduplicated.sam")).unwrap();
+    assert!(
+        out.starts_with(b"@"),
+        "--sam output must be text SAM, got leading bytes {:02x?}",
+        &out[..out.len().min(4)]
+    );
 }
 
 /// Non-directional library: a CTOT pair (R1 XR=GA XG=CT → CTOT pair-strand)
@@ -857,6 +934,48 @@ fn all_unmapped_input_is_graceful() {
 
     assert_header_only_output(&dir.path().join("unmapped.deduplicated.bam"));
     assert_zero_count_report(&dir.path().join("unmapped.deduplication_report.txt"));
+}
+
+/// Regression: a mid-stream error on the non-UMI paths (here a PE BAM with
+/// an odd record count) used to leave a complete-looking partial BAM (Drop
+/// wrote the EOF block). The output must be removed on error, for the
+/// serial, `--parallel`, and `--multiple` variants alike.
+#[test]
+fn pe_mid_stream_error_leaves_no_partial_output() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("odd.bam");
+    let second = dir.path().join("even.bam");
+    let mut records = ot_pair("p0", 1000, 1100).to_vec();
+    records.push(ot_pair("p1", 2000, 2100)[0].clone());
+    write_bam(&input, &records);
+    write_bam(&second, &ot_pair("p2", 3000, 3100));
+
+    for (extra, out_name) in [
+        (&[][..], "odd.deduplicated.bam"),
+        (&["--parallel", "2"][..], "odd.deduplicated.bam"),
+        (&["--multiple"][..], "odd.multiple.deduplicated.bam"),
+        (
+            &["--multiple", "--parallel", "2"][..],
+            "odd.multiple.deduplicated.bam",
+        ),
+    ] {
+        let mut cmd = Command::cargo_bin("deduplicate_bismark").unwrap();
+        cmd.arg("--paired")
+            .args(extra)
+            .arg("--output_dir")
+            .arg(dir.path())
+            .arg(&input);
+        if extra.contains(&"--multiple") {
+            cmd.arg(&second);
+        }
+        cmd.assert()
+            .failure()
+            .stderr(predicates::str::contains("unpaired R1"));
+        assert!(
+            !dir.path().join(out_name).exists(),
+            "{extra:?}: partial output {out_name} left behind after an error"
+        );
+    }
 }
 
 /// `--multiple` with cross-file `@SQ` mismatch errors at startup before
@@ -1571,12 +1690,9 @@ fn cram_with_parallel_n_logs_warning_and_runs_single_threaded() {
         .count();
     assert_eq!(warning_count, 1, "CRAM warning must appear exactly once");
 
-    // v1.0 output-naming: for CRAM input, the stem keeps the `.cram`
-    // extension (filename.rs:194-195), so the output is BAM-named
-    // `<input>.cram.deduplicated.bam`. CRAM-mirror output is README-
-    // aspirational, not implemented in v1.0; the important contract here
-    // is the dedup correctness on the single-threaded fallback path.
-    let out_path = dir.path().join("input.cram.deduplicated.bam");
+    // For CRAM input the stem drops `.cram` like `.bam`, and the output is
+    // BAM: `<input>.deduplicated.bam`.
+    let out_path = dir.path().join("input.deduplicated.bam");
     assert!(
         out_path.exists(),
         "expected dedup output at {}",
@@ -2321,4 +2437,84 @@ fn perl_vs_rust_nondirectional_pe_dedup() {
         samtools_record_set(&rust_bam),
         "non-directional PE dedup records differ between Perl and Rust (#1030)"
     );
+}
+
+/// A positional-paired BAM: Bismark `@PG` without `-1`/`-2`, paired records.
+fn write_positional_pe_bam(path: &Path, records: &[RecordBuf]) {
+    use noodles_sam::header::record::value::map::Program;
+    use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
+    let mut header = synth_header();
+    let mut prog = Map::<Program>::default();
+    prog.other_fields_mut()
+        .insert(COMMAND_LINE, BString::from("bismark --genome /g pairs.bam"));
+    header
+        .programs_mut()
+        .add(BString::from("Bismark"), prog)
+        .unwrap();
+    let mut writer = BamWriter::from_path(path, header).unwrap();
+    for record in records {
+        writer
+            .write_record(&BismarkRecord::from_noodles_record(record.clone()).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+}
+
+/// Dedup `input` with `args` into `out`; returns (output records, report text, stderr).
+fn dedup_run(input: &Path, out: &Path, args: &[&str]) -> (usize, String, String) {
+    std::fs::create_dir_all(out).unwrap();
+    let output = Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .args(args)
+        .arg("--output_dir")
+        .arg(out)
+        .arg(input)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{stderr}");
+    let n = read_records(&out.join("input.deduplicated.bam")).len();
+    let report = std::fs::read_to_string(out.join("input.deduplication_report.txt")).unwrap();
+    (n, report, stderr)
+}
+
+#[test]
+fn positional_pe_auto_detects_paired_end_and_matches_explicit_paired() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    let mut records = Vec::new();
+    records.extend(ot_pair("a", 1000, 1100));
+    records.extend(ot_pair("b_dup_of_a", 1000, 1100));
+    records.extend(ot_pair("c_same_r1", 1000, 1200));
+    write_positional_pe_bam(&input, &records);
+
+    let auto = dedup_run(&input, &dir.path().join("auto"), &[]);
+    let paired = dedup_run(&input, &dir.path().join("paired"), &["-p"]);
+    let single = dedup_run(&input, &dir.path().join("single"), &["-s"]);
+    assert_eq!(auto.0, 4, "pairs a and c are kept");
+    assert_eq!((auto.0, &auto.1), (paired.0, &paired.1));
+    assert_ne!(auto.0, single.0, "-s dedups each mate on its own");
+    assert!(
+        auto.2
+            .contains("Auto-detected library type from the first record's FLAG: paired-end"),
+        "{}",
+        auto.2
+    );
+}
+
+#[test]
+fn no_bismark_pg_with_paired_records_still_needs_a_mode() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &ot_pair("a", 1000, 1100));
+    Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .arg("--output_dir")
+        .arg(dir.path())
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "cannot auto-detect single-end vs paired-end",
+        ));
 }

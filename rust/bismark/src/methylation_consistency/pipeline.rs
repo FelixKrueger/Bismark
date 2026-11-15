@@ -4,12 +4,12 @@
 //! Mirrors Perl `methylation_consistency`'s `process_file` (lines 138–352).
 //! Per-file flow:
 //!
-//! 1. Open the BAM **no-sort-check** (`BamReader::without_sort_check`) — SE is
+//! 1. Open the BAM/CRAM **no-sort-check** (`open_reader_without_sort_check`) — SE is
 //!    never sort-checked in Perl, so the reader must not reject coordinate
 //!    sort itself; we apply the guard for PE only (SPEC §4.11).
 //! 2. **Empty check** (`bam_isEmpty`): zero records → skip the file, no
 //!    outputs.
-//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired_from_header`; a missing
+//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired`; a missing
 //!    Bismark `@PG` falls through to **single-end**).
 //! 4. PE only: reject `@HD SO:coordinate` (the *correct* guard Perl intended;
 //!    its `/^\@SO/` check is dead code — SPEC §4.6).
@@ -22,11 +22,11 @@
 //!    the summary to STDERR (unless `--quiet`).
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::BufWriter;
 use std::iter::Peekable;
 use std::path::Path;
 
-use crate::io::{BamReader, BamWriter, BismarkIoError, BismarkRecord};
+use crate::io::{BamWriter, BismarkIoError, BismarkRecord};
 use noodles_sam::Header;
 use noodles_sam::header::record::value::map::header::sort_order::COORDINATE;
 use noodles_sam::header::record::value::map::header::tag::SORT_ORDER;
@@ -114,9 +114,9 @@ fn process_file(
     let file_label = path.to_string_lossy().into_owned();
     logger.processing_file(&file_label);
 
-    // v1.0 is BAM-only (Perl is BAM-only in practice). Open no-sort-check so
-    // SE input is accepted regardless of sort order; PE applies its own guard.
-    let mut reader = BamReader::without_sort_check(BufReader::new(File::open(path)?))?;
+    // BAM, SAM or CRAM. Open no-sort-check so SE input is accepted regardless
+    // of sort order; PE applies its own guard.
+    let mut reader = crate::io::open_reader_without_sort_check(path, config.cram_ref.as_deref())?;
     let header = reader.header().clone();
     let mut records = reader.records().peekable();
 
@@ -126,7 +126,11 @@ fn process_file(
         return Ok(());
     }
 
-    let is_paired = resolve_mode(config.mode, &header, logger);
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.inner().flags());
+    let is_paired = resolve_mode(config.mode, &header, first_flags, logger);
     if is_paired && is_coordinate_sorted(&header) {
         return Err(MethConsError::CoordinateSorted {
             input: path.to_path_buf(),
@@ -255,14 +259,19 @@ fn route(
     Ok(())
 }
 
-/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line; a missing
-/// Bismark `@PG` (`None`) falls through to **single-end** (Perl, SPEC §2.3).
-fn resolve_mode(mode: LibraryMode, header: &Header, logger: &Logger) -> bool {
+/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line and, when that says
+/// single-end, the first record; a missing Bismark `@PG` falls through to **single-end** (Perl).
+fn resolve_mode(
+    mode: LibraryMode,
+    header: &Header,
+    first_flags: Option<noodles_sam::alignment::record::Flags>,
+    logger: &Logger,
+) -> bool {
     match mode {
         LibraryMode::Single => false,
         LibraryMode::Paired => true,
         LibraryMode::Auto => {
-            let is_paired = crate::io::detect_paired_from_header(header).unwrap_or(false);
+            let is_paired = crate::io::detect_paired(header, first_flags).is_some_and(|(p, _)| p);
             logger.info(&format!(
                 "{} mode selected (auto-detected)\n",
                 if is_paired {

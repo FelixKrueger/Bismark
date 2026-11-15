@@ -331,6 +331,9 @@ jobs:
           docker run --rm "$IMG" bismark.bin --version
           docker run --rm "$IMG" bismark_methylation_extractor --version
           docker run --rm "$IMG" bowtie2 --version
+          bwm3=$(docker run --rm "$IMG" bwa-mem3 version)
+          echo "$bwm3"
+          grep -qx 0.16.0 <<<"$bwm3"
           # Canonical names (methylseq drop-in) resolve; `bismark --help` also
           # exercises the wrapper's exec of the real `bismark.bin`.
           docker run --rm "$IMG" bismark --help >/dev/null

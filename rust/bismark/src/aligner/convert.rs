@@ -622,12 +622,7 @@ pub fn convert_se_tagged_interleaved(
     let full_path = PathBuf::from(&full);
 
     // ---- reader / writer (gz or plain) — same as the single-kind cores -----
-    let file = File::open(input)?;
-    let mut reader: Box<dyn BufRead> = if input.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader = open_reader(input)?;
     let out = File::create(&full_path)?;
     let mut writer: BufWriter<Box<dyn Write>> = BufWriter::new(if opts.gzip {
         Box::new(GzEncoder::new(out, Compression::default()))
@@ -795,14 +790,6 @@ pub fn convert_pe_tagged_interleaved(
     let (name1, path1) = build_name(input1)?;
     let (name2, path2) = build_name(input2)?;
 
-    let open_reader = |input: &Path| -> Result<Box<dyn BufRead>> {
-        let file = File::open(input)?;
-        Ok(if input.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        })
-    };
     let mut r1 = open_reader(input1)?;
     let mut r2 = open_reader(input2)?;
     let make_writer = |path: &Path| -> Result<BufWriter<Box<dyn Write>>> {

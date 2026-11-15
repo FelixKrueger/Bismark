@@ -43,7 +43,7 @@ if [[ -L "$BAM" ]]; then echo "ERROR: $BAM is a symlink — stage it locally fir
 [[ -f "$BAM" ]] || { echo "ERROR: BAM not found: $BAM" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUST_BIN="${RUST_BIN:-$HOME/Github/Bismark/rust/target/release/bismark-methylation-extractor-rs}"
+RUST_BIN="${RUST_BIN:-$SCRIPT_DIR/../rust/target/release/bismark_methylation_extractor}"
 STATUS="$OUT_DIR/byteid_${DATASET}.status"
 mkdir -p "$OUT_DIR"
 : > "$STATUS"

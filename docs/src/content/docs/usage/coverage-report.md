@@ -1,9 +1,9 @@
 ---
 title: "Nucleotide coverage report"
-description: "bismark bam2nuc reads BAM files and calculates the mono- and di-nucleotide coverage of aligned reads versus the genomic average."
+description: "bismark bam2nuc reads BAM or CRAM files and calculates the mono- and di-nucleotide coverage of aligned reads versus the genomic average."
 ---
 
-`bismark bam2nuc` (classic alias: `bam2nuc`) reads BAM files and calculates the mono- and di-nucleotide coverage of the
+`bismark bam2nuc` (classic alias: `bam2nuc`) reads BAM or CRAM files and calculates the mono- and di-nucleotide coverage of the
 reads (using the genomic sequence rather than the observed sequence in the reads themselves)
 and compares it to the average genomic sequence composition. Reads harbouring InDels are not
 taken into consideration. Mono- or dinucleotides containing Ns are ignored as well.
@@ -16,17 +16,31 @@ bismark bam2nuc [options] --genome_folder <path> [input.(bam|cram)]
 
 ### Arguments
 
-Aligned BAM files. `bismark bam2nuc` handles both Bismark single-end and paired-end files (determined automatically).
+Aligned Bismark files. `bismark bam2nuc` handles both Bismark single-end and paired-end files (determined automatically from the `@PG` line, or from the first record's paired FLAG when that line has no `-1`/`-2`, as after a positional paired uBAM, BINSEQ or unaligned CRAM run; see `-s/--single` and `-p/--paired`).
 
 :::note
 
-Both BAM and CRAM files work as input; the Rust suite reads CRAM via pure-Rust `noodles`, so no Samtools is required.
+BAM and CRAM (versions 3.0 and 3.1) files work as input. A CRAM input needs `--cram_ref <genome.fa>`, with its `.fai`
+index next to it. The Rust suite reads CRAM via pure-Rust `noodles`, so no Samtools is required. SAM input is not accepted.
 :::
 ### Options
 
 - `--dir`
 
 Output directory. Output is written to the current directory if not specified explicitly.
+
+- `--cram_ref <genome.fa>`
+
+The reference FASTA the CRAM input was compressed against. Required for CRAM input, ignored for BAM. The `.fai` index
+(`samtools faidx genome.fa`) must sit next to it.
+
+- `-s/--single`
+
+Treat every input as single-end instead of detecting the layout.
+
+- `-p/--paired`
+
+Treat every input as paired-end instead of detecting the layout. A record without the paired FLAG bit stops the run.
 
 - `--genome_folder <path>`
 

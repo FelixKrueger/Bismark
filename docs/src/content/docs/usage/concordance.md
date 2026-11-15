@@ -27,3 +27,14 @@ Too few CpGs   [min-count 5] -  406212 (84.89%)
 ```
 
 By default, only reads with 5 or more CpGs are taken into consideration (this can be changed via the flag `--min-count`). The thresholds for un-methylated, mixed methylated, and methylated can be set with `--lower_threshold [percentage]` and `--upper_threshold [percentage]`. `bismark consistency` works for both single-end and paired-end Bismark BAM files, which are auto-detected by default. For paired-end files, all CpGs of both R1 and R2 are taken into account. Overlap detection/exclusion can take place afterwards at the methylation extraction stage, if desired.
+
+## Input and output
+
+```
+bismark consistency [options] [Bismark BAM, SAM or CRAM files]
+```
+
+Input can be BAM, SAM or CRAM (versions 3.0 and 3.1). A CRAM input needs `--cram_ref <genome.fa>`: the reference FASTA
+the CRAM was compressed against, with its `.fai` index (`samtools faidx genome.fa`) next to it. The `.bam` or `.cram`
+ending is removed from the output names (`sample_all_meth.bam`, `sample_all_unmeth.bam`, `sample_mixed_meth.bam` and
+`sample_consistency_report.txt`), and the three split files are always BAM.
