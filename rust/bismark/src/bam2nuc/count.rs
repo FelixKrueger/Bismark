@@ -147,8 +147,8 @@ fn correct_pe(span: Vec<u8>, flag: u16) -> Vec<u8> {
 /// unmapped filter, no coordinate-sort check). CRAM (`cram_ref` required) goes
 /// through the shared [`crate::io::open_reader_without_sort_check`]. Then
 /// detects SE/PE from the `@PG` header and first record (unless `paired` sets it) and tallies
-/// each clean-CIGAR read's strand-corrected genomic span. `paired_forced_by_user`
-/// (CLI `-p`) makes a record without the paired bit an error.
+/// each clean-CIGAR read's strand-corrected genomic span. A record without the paired
+/// bit is an error under CLI `-p` or when the first record decided paired-end.
 pub fn count_reads_in_file(
     genome: &Genome,
     path: &Path,

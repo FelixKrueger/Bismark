@@ -64,7 +64,8 @@ pub struct Cli {
     #[arg(long = "cram_ref")]
     pub cram_ref: Option<PathBuf>,
 
-    /// Treat every input as single-end (default: detected from the Bismark `@PG` line).
+    /// Treat every input as single-end (default: detected from the Bismark `@PG` line and
+    /// first record).
     #[arg(short = 's', long = "single", conflicts_with = "paired")]
     pub single: bool,
 
@@ -99,7 +100,7 @@ pub struct ResolvedConfig {
     pub genomic_composition_only: bool,
     /// CRAM reference path, if `--cram_ref` was supplied.
     pub cram_ref: Option<PathBuf>,
-    /// SE/PE mode set by the caller; `None` detects it from the `@PG` header.
+    /// SE/PE mode set by the caller; `None` detects it from the `@PG` header and first record.
     pub paired: Option<bool>,
     /// `-p/--paired` came from the command line: a record without the paired bit
     /// is an error instead of being counted as paired-end.

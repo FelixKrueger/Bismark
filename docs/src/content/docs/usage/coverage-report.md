@@ -36,7 +36,7 @@ The reference FASTA the CRAM input was compressed against. Required for CRAM inp
 
 - `-s/--single`
 
-Treat every input as single-end instead of reading the layout from the Bismark `@PG` line.
+Treat every input as single-end instead of detecting the layout.
 
 - `-p/--paired`
 

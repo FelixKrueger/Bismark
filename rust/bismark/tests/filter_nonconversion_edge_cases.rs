@@ -344,24 +344,25 @@ fn se_missing_xm_is_kept() {
     );
 }
 
-fn filter_report(tmp: &TempDir, args: &[&str], hdr: &Header) -> Option<String> {
+/// Run filter on a pair; the report on success, the stderr on failure.
+fn filter_report(tmp: &TempDir, args: &[&str], hdr: &Header) -> Result<String, String> {
     let input = tmp.path().join("pairs.bam");
     let recs = [
         mapped("p", 99, ".........."),
         mapped("p", 147, ".........."),
     ];
     write_bam(&input, hdr, &recs);
-    let ok = bin()
+    let out = bin()
         .current_dir(tmp.path())
         .args(args)
         .arg("pairs.bam")
         .output()
-        .unwrap()
-        .status
-        .success();
-    ok.then(|| {
-        std::fs::read_to_string(tmp.path().join("pairs.non-conversion_filtering.txt")).unwrap()
-    })
+        .unwrap();
+    if out.status.success() {
+        Ok(std::fs::read_to_string(tmp.path().join("pairs.non-conversion_filtering.txt")).unwrap())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).into_owned())
+    }
 }
 
 #[test]
@@ -397,5 +398,6 @@ fn single_end_flag_beats_a_paired_first_record() {
 #[test]
 fn no_bismark_pg_with_paired_records_still_needs_a_mode() {
     let tmp = TempDir::new().unwrap();
-    assert!(filter_report(&tmp, &[], &header_with_cl(false, None)).is_none());
+    let stderr = filter_report(&tmp, &[], &header_with_cl(false, None)).unwrap_err();
+    assert!(stderr.contains("contains the @PG header line"), "{stderr}");
 }

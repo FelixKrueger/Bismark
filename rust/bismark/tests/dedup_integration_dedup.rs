@@ -2513,5 +2513,8 @@ fn no_bismark_pg_with_paired_records_still_needs_a_mode() {
         .arg(dir.path())
         .arg(&input)
         .assert()
-        .failure();
+        .failure()
+        .stderr(predicates::str::contains(
+            "cannot auto-detect single-end vs paired-end",
+        ));
 }

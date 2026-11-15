@@ -187,6 +187,12 @@ fn process_one_file(input: &Path, config: &ResolvedConfig) -> Result<(), Bismark
             // SE file). The probe is dropped before extract_*_parallel
             // re-opens the file — OS caches the header bytes.
             let mut probe = open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
+            if config.allow_discordant {
+                probe.set_filter(crate::io::RecordFilter {
+                    drop_secondary: true,
+                    drop_supplementary: true,
+                });
+            }
             let first_flags = if detect_paired_from_header(probe.header()) == Some(false) {
                 probe
                     .records()

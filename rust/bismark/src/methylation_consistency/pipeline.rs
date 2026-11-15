@@ -9,7 +9,7 @@
 //!    sort itself; we apply the guard for PE only (SPEC §4.11).
 //! 2. **Empty check** (`bam_isEmpty`): zero records → skip the file, no
 //!    outputs.
-//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired_from_header`; a missing
+//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired`; a missing
 //!    Bismark `@PG` falls through to **single-end**).
 //! 4. PE only: reject `@HD SO:coordinate` (the *correct* guard Perl intended;
 //!    its `/^\@SO/` check is dead code — SPEC §4.6).
