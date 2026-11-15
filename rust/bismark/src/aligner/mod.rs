@@ -9144,6 +9144,37 @@ mod tests {
         );
     }
 
+    /// A pair skipped for a contig missing from the genome still pairs its R2.
+    #[test]
+    fn five_base_deconvolution_pairs_an_r2_whose_pair_is_skipped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut both = five_base_genome("chr1", R2_GENOME);
+        both.chromosomes.insert("chr2".into(), R2_GENOME.to_vec());
+        both.sq_order.push("chr2".into());
+        let line = |n: &str, f: u16, chr: &str, pos: u32, mpos: u32, tlen: i32, seq: &str| {
+            format!("{n}\t{f}\t{chr}\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0")
+        };
+        let (left, right) = ("TTCGTTTCGT", "TCGTTTTCGT");
+        let bam = dir.path().join("skip.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&both, "test")).unwrap();
+        for chr in ["chr2", "chr1"] {
+            let (o1, o2) = emit_test_pair(
+                &both,
+                chr,
+                &line(chr, 99, chr, 3, 9, 16, left),
+                &line(chr, 147, chr, 9, 3, -16, right),
+                0,
+            );
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let mut chr1_only = five_base_genome("chr1", R2_GENOME);
+        chr1_only.sq_order.push("chr2".into());
+        let rows = deconv_rows(&chr1_only, &bam);
+        assert_eq!(rows.len(), 6, "the chr1 pair's sites only");
+    }
+
     /// An R2 that does not directly follow its R1 stops the pass.
     #[test]
     fn five_base_deconvolution_rejects_an_r2_away_from_its_r1() {
