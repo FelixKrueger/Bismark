@@ -838,9 +838,9 @@ fn consensus_from_bam_warns_per_input_without_mk() {
         let out = Command::new(bismark_bin())
             .arg("--illumina_5base")
             .arg("--five_base_consensus_from_bam")
-            .arg(&no_mk)
-            .arg("--five_base_consensus_from_bam")
             .arg(&has_mk)
+            .arg("--five_base_consensus_from_bam")
+            .arg(&no_mk)
             .arg("--genome")
             .arg(tmp.path())
             .arg("--output_dir")
@@ -856,7 +856,7 @@ fn consensus_from_bam_warns_per_input_without_mk() {
     let stderr = run(&["--five_base_umi_len", "3"]);
     let warnings: Vec<&str> = stderr
         .lines()
-        .filter(|l| l.contains("has no mk tag"))
+        .filter(|l| l.contains("has no mk tag masking a 3-base inline UMI"))
         .collect();
     assert_eq!(warnings.len(), 1, "stderr:\n{stderr}");
     assert!(warnings[0].contains("no_mk.bam"), "stderr:\n{stderr}");

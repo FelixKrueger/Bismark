@@ -703,15 +703,17 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     Ok(temp_dirs)
 }
 
-/// Whether the first mapped record of `bam` carries the 5-Base `mk` tag.
-fn first_record_has_mk(bam: &Path) -> Result<bool> {
+/// Whether the first record of `bam` has an `mk` tag masking at least `umi_len` 5' bases.
+fn first_record_masks_umi(bam: &Path, umi_len: usize) -> Result<bool> {
     let mut reader = crate::io::BamReader::from_path_without_sort_check(bam)
         .map_err(|e| AlignerError::Validation(format!("consensus: open {}: {e}", bam.display())))?;
     let first =
         reader.records().next().transpose().map_err(|e| {
             AlignerError::Validation(format!("consensus: read {}: {e}", bam.display()))
         })?;
-    Ok(first.is_some_and(|r| matches!(crate::io::tags::mk(r.inner().data()), Ok(Some(_)))))
+    Ok(first.is_some_and(
+        |r| matches!(crate::io::tags::mk(r.inner().data()), Ok(Some((five, _))) if five >= umi_len),
+    ))
 }
 
 /// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
@@ -759,11 +761,12 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
 
     if cli.five_base_umi_len > 0 {
         for bam in bams {
-            if !first_record_has_mk(bam)? {
+            if !first_record_masks_umi(bam, cli.five_base_umi_len)? {
                 eprintln!(
-                    "Warning: {} has no mk tag, so its inline UMI and dovetail-overhang bases are \
-                     counted by the consensus; re-align it with this version to mask them.",
-                    bam.display()
+                    "Warning: {} has no mk tag masking a {}-base inline UMI, so the consensus counts \
+                     those bases; re-align it with this version to mask them.",
+                    bam.display(),
+                    cli.five_base_umi_len
                 );
             }
         }

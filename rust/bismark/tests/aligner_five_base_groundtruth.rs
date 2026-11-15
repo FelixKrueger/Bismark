@@ -180,14 +180,14 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
         fq.extend_from_slice(&vec![b'I'; bytes.len()]);
         fq.push(b'\n');
     };
-    // Build one molecule's two pairs. `convert_target` puts T at the + target (5mC or
-    // variant on the + strand); `variant` also makes the - strand carry the variant.
+    // Build one molecule's two pairs: T at the + target (5mC or variant on the + strand);
+    // `variant` also makes the - strand carry it.
     let mut molecule = |s: usize, t: usize, variant: bool, umi_a: &str, umi_b: &str| {
-        // + strand as forward reads see it: reference with the target set to T.
+        // Top strand in + orientation, read by the top pair: the target set to T.
         let mut g_plus = reference[s..s + frag].to_vec();
         g_plus[t - s] = b'T';
-        // what reverse reads carry = revcomp of the - strand. For 5mC the - base at the
-        // target is intact (G, from unconverted C); for a variant it is A (from + T).
+        // The - strand in + orientation, as the bottom pair's reads carry it: intact at the
+        // target for 5mC, T (from the + variant) for a variant.
         let minus_src = if variant {
             g_plus.clone()
         } else {
@@ -285,6 +285,11 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
             .iter()
             .any(|f| f[5] == "0" && f[6].parse::<u32>().unwrap() >= 1),
         "PE: the 5mC molecule flags no variant and a methylation site\nreport:\n{report}"
+    );
+    // Every CpG of a fragment is read by both molecules' pairs, so none lacks the other strand.
+    assert!(
+        paired.iter().all(|f| f[7] == "0"),
+        "PE: no CpG should be undetermined\nreport:\n{report}"
     );
 }
 
