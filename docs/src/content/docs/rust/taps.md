@@ -42,7 +42,9 @@ Output names are those of a bwa-mem3 5-Base run (`*_bismark_bwamem3_pe.bam`,
 `*_bismark_bwamem3_PE_report.txt`). The run identifies itself as TAPS: the start-up notice, the
 `@PG` lines (`--taps` in Bismark's, `--meth=taps` in bwa-mem3's) and a
 `Library chemistry: TAPS (mC->T)` line in the report, after the bwa-mem3 version. MultiQC reads
-the report as before and does not show the chemistry.
+the report as before and does not show the chemistry. A read whose dovetail overhang bases are
+not called carries an `mk:B:I` tag (the bases masked at its 5' and 3' end); the extractor
+ignores it.
 
 ### Options
 

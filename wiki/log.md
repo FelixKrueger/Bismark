@@ -14,3 +14,4 @@
 ## [2026-11-14] update | bismark @ c4f286d, #1214 bam2nuc -s/--single and -p/--paired: reference/bam-output.md
 ## [2026-11-14] update | bismark @ d1dd2e8, #1225 --taps TAPS mode: new usage/align-taps-reads.md, usage/align-5-base-reads.md, reference/aligner-cli.md, reference/run-reports.md, reference/bam-output.md, usage/install.md, overview.md, troubleshooting.md, ENTRY.md, index.md
 ## [2026-11-16] update | bismark @ 1dd7112, #1225 review fixes: usage/align-taps-reads.md (bisulfite re-encode function, --nucleotide_coverage row, 5-Base error wording, methylation.rs source), troubleshooting.md, reference/run-reports.md, reference/bam-output.md (after #1218), reference/aligner-cli.md, overview.md
+## [2026-11-16] update | bismark @ 6aec899, #1233 mk:B:I tag on TAPS records with uncalled overhang bases: usage/align-taps-reads.md

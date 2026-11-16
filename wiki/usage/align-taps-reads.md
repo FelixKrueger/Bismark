@@ -18,7 +18,7 @@ sources:
     commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 1dd7112
+    commit: 6aec899
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 1dd7112
@@ -43,7 +43,7 @@ sources:
            --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
    ```
 
-3. Read the report: [reference/run-reports.md](../reference/run-reports.md). The output names are those of a bwa-mem3 5-Base run: `<name>_bismark_bwamem3_pe.bam` and `<name>_bismark_bwamem3_PE_report.txt` (`run_pe_five_base` in `aligner/mod.rs`).
+3. Read the report: [reference/run-reports.md](../reference/run-reports.md). The output names are those of a bwa-mem3 5-Base run: `<name>_bismark_bwamem3_pe.bam` and `<name>_bismark_bwamem3_PE_report.txt` (`run_pe_five_base` in `aligner/mod.rs`). A record whose dovetail overhang bases are not called carries `mk:B:I` (`five_base_emit_pe_record`); the extractor ignores it: [reference/bam-output.md](../reference/bam-output.md).
 4. Trim read ends at extraction, from the M-bias table: [usage/extract-methylation-calls.md](extract-methylation-calls.md). `--taps` does not trim.
 
 ## What `--taps` checks first
