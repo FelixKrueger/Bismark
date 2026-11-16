@@ -91,7 +91,7 @@ pub struct Cli {
 pub struct ResolvedConfig {
     /// Positional input files (each processed independently).
     pub files: Vec<PathBuf>,
-    /// `Some(true)` = PE, `Some(false)` = SE, `None` = auto-detect from @PG.
+    /// `Some(true)` = PE, `Some(false)` = SE, `None` = auto-detect from @PG and first record.
     pub explicit_mode: Option<bool>,
     /// The resolved decision mode + parameters.
     pub mode: FilterMode,

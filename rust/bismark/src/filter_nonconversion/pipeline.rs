@@ -12,7 +12,7 @@
 //! neither is faithful here. So we read/write through noodles directly
 //! (`noodles_bam::io::Reader::record_bufs` + `noodles_bam::io::Writer`). This
 //! mirrors the `bam2nuc` C-1 decision. `bismark_io` is still used for the
-//! `@PG` SE/PE auto-detect (`detect_paired_from_header`).
+//! SE/PE auto-detect (`detect_paired`).
 //!
 //! The noodles `RecordBuf` round-trip is body-byte-identical to Perl's
 //! `samtools view -h | … | samtools view -bS -` pipe — proven by the spike
@@ -45,7 +45,7 @@ type BamWriter = bam::io::Writer<noodles_bgzf::io::Writer<File>>;
 /// caller's STDERR echo + timing-line bookkeeping.
 ///
 /// `explicit_mode`: `Some(true)` = PE, `Some(false)` = SE, `None` = detect
-/// from the `@PG` header. `cram_ref` is required for a CRAM input.
+/// from the `@PG` header and first record. `cram_ref` is required for a CRAM input.
 pub fn filter_one(
     infile: &Path,
     mode: FilterMode,
@@ -115,7 +115,7 @@ fn filter_records<I>(
     infile: &Path,
     infile_str: String,
     header: &Header,
-    mut records: I,
+    records: I,
     check_empty: bool,
     mode: FilterMode,
     explicit_mode: Option<bool>,
@@ -124,13 +124,18 @@ where
     I: Iterator<Item = std::io::Result<RecordBuf>>,
 {
     // 4.4 SE/PE determination.
+    let mut records = records.peekable();
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.flags());
     let is_paired = match explicit_mode {
         Some(p) => p,
-        None => crate::io::detect_paired_from_header(header).ok_or_else(|| {
-            BismarkFilterError::CannotAutoDetectMode {
+        None => crate::io::detect_paired(header, first_flags)
+            .map(|(p, _)| p)
+            .ok_or_else(|| BismarkFilterError::CannotAutoDetectMode {
                 input: infile.to_path_buf(),
-            }
-        })?,
+            })?,
     };
 
     // 4.5 PE positional-sort: reject coordinate-sorted input BEFORE opening

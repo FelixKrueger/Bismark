@@ -9,7 +9,7 @@
 //!    sort itself; we apply the guard for PE only (SPEC §4.11).
 //! 2. **Empty check** (`bam_isEmpty`): zero records → skip the file, no
 //!    outputs.
-//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired_from_header`; a missing
+//! 3. Resolve SE/PE (`-s`/`-p`, else `detect_paired`; a missing
 //!    Bismark `@PG` falls through to **single-end**).
 //! 4. PE only: reject `@HD SO:coordinate` (the *correct* guard Perl intended;
 //!    its `/^\@SO/` check is dead code — SPEC §4.6).
@@ -126,7 +126,11 @@ fn process_file(
         return Ok(());
     }
 
-    let is_paired = resolve_mode(config.mode, &header, logger);
+    let first_flags = records
+        .peek()
+        .and_then(|r| r.as_ref().ok())
+        .map(|r| r.inner().flags());
+    let is_paired = resolve_mode(config.mode, &header, first_flags, logger);
     if is_paired && is_coordinate_sorted(&header) {
         return Err(MethConsError::CoordinateSorted {
             input: path.to_path_buf(),
@@ -255,14 +259,19 @@ fn route(
     Ok(())
 }
 
-/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line; a missing
-/// Bismark `@PG` (`None`) falls through to **single-end** (Perl, SPEC §2.3).
-fn resolve_mode(mode: LibraryMode, header: &Header, logger: &Logger) -> bool {
+/// Resolve the SE/PE mode. Auto-detect via the Bismark `@PG` line and, when that says
+/// single-end, the first record; a missing Bismark `@PG` falls through to **single-end** (Perl).
+fn resolve_mode(
+    mode: LibraryMode,
+    header: &Header,
+    first_flags: Option<noodles_sam::alignment::record::Flags>,
+    logger: &Logger,
+) -> bool {
     match mode {
         LibraryMode::Single => false,
         LibraryMode::Paired => true,
         LibraryMode::Auto => {
-            let is_paired = crate::io::detect_paired_from_header(header).unwrap_or(false);
+            let is_paired = crate::io::detect_paired(header, first_flags).is_some_and(|(p, _)| p);
             logger.info(&format!(
                 "{} mode selected (auto-detected)\n",
                 if is_paired {
