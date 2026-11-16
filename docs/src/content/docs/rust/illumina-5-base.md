@@ -32,7 +32,8 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
   only for UMI/enrichment kits, so there is no WGS consensus-CX to correlate against) by
   per-strand **mean-methylation agreement** with DRAGEN (~47.9% vs ~48%, bias-free). All
   four are additionally held to a reproducible lambda/pUC19 spike-in gate that runs in CI
-  with no proprietary data.
+  with no proprietary data. The deconvolution, duplex and consensus figures predate the
+  fixes for #1211, #1220 and #1222; a lane-1 re-check is in `validation/VALIDATION_REAL_DATA.md`.
 - **Preview:** `--five_base_umi_qname` (duplex UMI taken from the read name). It works and
   is exercised on real data, but is not yet held to the same gated contract.
 - **Unchanged:** the faithful bisulfite / EM-seq suite is **byte-frozen**. Every legacy

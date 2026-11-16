@@ -1,6 +1,6 @@
 #!/bin/sh
 # Fetch the DRAGEN reference outputs needed by concordance.py for a 5-Base sample
-# from the BaseSpace "Illumina 5-Base DNA" demo project (id 471431965).
+# from the BaseSpace "Illumina 5-Base DNA" demo project (id 11420409).
 #
 # Downloads ONLY the small reference files (not the multi-TB BAM/FASTQ):
 #   *.CX_report.txt.gz        per-CpG methylation report  (-> concordance.py methyl --dragen)
@@ -12,14 +12,15 @@
 #
 # HG001 = NA12878, HG002 = NA24385 (same Genome-in-a-Bottle individuals). The two
 # samples to validate (DRAGEN-complete dataset IDs in this project):
-#   NA12878 (HG001): Sample8 100ng = ds.258e74420ab8417a89de572ec1571b55
+#   NA12878 (HG001): Sample8 100ng = ds.a4a909aaec7c41478b90a1ad5c94c452
 #                    (the metrics sample used in VALIDATION_REAL_DATA.md; other lanes
-#                     Sample1-36 are listed by: bs list dataset --project-id 471431965)
-#   HG002 (NA24385): Sample40 50ng = ds.48b7596730dd47ef97699b59ccd3641d
+#                     Sample1-36 are listed by: bs list dataset --project-id 11420409)
+#   HG002 (NA24385): Sample40 50ng = ds.75c97a1bad7345659341a2a1c4beb306
 #                    (NA24385 lanes: Sample37-42)
 #
 # The matching RAW READS are SEPARATE datasets (DataSetType illumina.fastq.v1.8); list
-# them with `bs list dataset --project-id 471431965 | grep fastq` and download with
+# them with `bs list dataset --project-id 11420409 | grep fastq` (Sample8 FASTQ =
+# ds.b6834497fec442568113475fc76fcce1, Sample40 FASTQ = ds.bf318453a0c64f98b61589998b46e879) and download with
 # `bs download dataset --id <fastq_ds> -o <reads_dir>` for the alignment input.
 set -eu
 
