@@ -1430,6 +1430,59 @@ mod auto_detect {
         assert!(report.contains("Processed 1 lines in total"));
     }
 
+    /// A positional-paired BAM (`@PG` without `-1`/`-2`) under `args`; returns the assert.
+    fn run_positional_pe(
+        header: Header,
+        args: &[&str],
+    ) -> (tempfile::TempDir, assert_cmd::assert::Assert) {
+        let work = tempfile::tempdir().unwrap();
+        let bam_path: PathBuf = work.path().join("pos_pe.bam");
+        let mut writer = BamWriter::from_path(&bam_path, header).unwrap();
+        let pair = helpers::ot_pair(b"Z....", 100, b"....z", 130, b"pos_pair");
+        writer.write_record(pair.r1()).unwrap();
+        writer.write_record(pair.r2()).unwrap();
+        writer.finish().unwrap();
+        let mut cmd = Command::cargo_bin("bismark_methylation_extractor").unwrap();
+        let assert = cmd
+            .arg(&bam_path)
+            .args(args)
+            .arg("--output_dir")
+            .arg(work.path().join("out"))
+            .assert();
+        (work, assert)
+    }
+
+    #[test]
+    fn main_auto_detect_routes_positional_pe_bam_to_extract_pe() {
+        let (work, assert) = run_positional_pe(
+            header_with_bismark_pg("bismark --genome /path/genome pairs.bam"),
+            &[],
+        );
+        assert.success();
+        let report =
+            fs::read_to_string(work.path().join("out/pos_pe_splitting_report.txt")).unwrap();
+        assert!(report.contains("Processed 1 lines in total"), "{report}");
+    }
+
+    #[test]
+    fn single_end_flag_beats_a_paired_first_record() {
+        let (_work, assert) = run_positional_pe(
+            header_with_bismark_pg("bismark --genome /path/genome pairs.bam"),
+            &["--single-end"],
+        );
+        assert
+            .failure()
+            .stderr(predicates::str::contains("PAIRED flag set"));
+    }
+
+    #[test]
+    fn no_bismark_pg_with_paired_records_still_fails_auto_detect() {
+        let (_work, assert) = run_positional_pe(header_no_bismark_pg(), &[]);
+        assert.failure().stderr(predicates::str::contains(
+            "no `@PG` line with `ID:Bismark*`",
+        ));
+    }
+
     #[test]
     fn main_auto_detect_routes_se_bam_to_extract_se() {
         let work = tempfile::tempdir().unwrap();

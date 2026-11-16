@@ -41,6 +41,13 @@ use tempfile::TempDir;
 // ───────────────────────────── fixture helpers ─────────────────────────
 
 fn header(coord_sorted: bool, bismark_pg: bool) -> Header {
+    header_with_cl(
+        coord_sorted,
+        bismark_pg.then_some("bismark --genome /g -1 R1.fq.gz -2 R2.fq.gz"),
+    )
+}
+
+fn header_with_cl(coord_sorted: bool, bismark_cl: Option<&str>) -> Header {
     use noodles_sam::header::record::value::map::header::Version;
     let mut hd = Map::<noodles_sam::header::record::value::map::Header>::new(Version::new(1, 6));
     if coord_sorted {
@@ -57,14 +64,12 @@ fn header(coord_sorted: bool, bismark_pg: bool) -> Header {
         BString::from("chr1"),
         Map::<ReferenceSequence>::new(NonZeroUsize::try_from(10_000).unwrap()),
     );
-    if bismark_pg {
+    if let Some(cl) = bismark_cl {
         use noodles_sam::header::record::value::map::Program;
         use noodles_sam::header::record::value::map::program::tag::COMMAND_LINE;
         let mut prog = Map::<Program>::default();
-        prog.other_fields_mut().insert(
-            COMMAND_LINE,
-            BString::from("bismark --genome /g -1 R1.fq.gz -2 R2.fq.gz"),
-        );
+        prog.other_fields_mut()
+            .insert(COMMAND_LINE, BString::from(cl));
         builder = builder.add_program(BString::from("Bismark"), prog);
     }
     builder.build()
@@ -337,4 +342,62 @@ fn se_missing_xm_is_kept() {
         count_records(&tmp.path().join("noxm.nonCG_removed_seqs.bam")),
         0
     );
+}
+
+/// Run filter on a pair; the report on success, the stderr on failure.
+fn filter_report(tmp: &TempDir, args: &[&str], hdr: &Header) -> Result<String, String> {
+    let input = tmp.path().join("pairs.bam");
+    let recs = [
+        mapped("p", 99, ".........."),
+        mapped("p", 147, ".........."),
+    ];
+    write_bam(&input, hdr, &recs);
+    let out = bin()
+        .current_dir(tmp.path())
+        .args(args)
+        .arg("pairs.bam")
+        .output()
+        .unwrap();
+    if out.status.success() {
+        Ok(std::fs::read_to_string(tmp.path().join("pairs.non-conversion_filtering.txt")).unwrap())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).into_owned())
+    }
+}
+
+#[test]
+fn pe_detected_from_first_record_when_pg_has_no_mate_files() {
+    let tmp = TempDir::new().unwrap();
+    let report = filter_report(
+        &tmp,
+        &[],
+        &header_with_cl(false, Some("bismark --genome /g pairs.bam")),
+    )
+    .expect("run succeeds");
+    assert!(
+        report.contains("Analysed read pairs (paired-end) in file >> pairs.bam <<  in total:\t1"),
+        "{report}"
+    );
+}
+
+#[test]
+fn single_end_flag_beats_a_paired_first_record() {
+    let tmp = TempDir::new().unwrap();
+    let report = filter_report(
+        &tmp,
+        &["-s"],
+        &header_with_cl(false, Some("bismark --genome /g pairs.bam")),
+    )
+    .expect("run succeeds");
+    assert!(
+        report.contains("Analysed sequences (single-end) in file >> pairs.bam << in total:\t2"),
+        "{report}"
+    );
+}
+
+#[test]
+fn no_bismark_pg_with_paired_records_still_needs_a_mode() {
+    let tmp = TempDir::new().unwrap();
+    let stderr = filter_report(&tmp, &[], &header_with_cl(false, None)).unwrap_err();
+    assert!(stderr.contains("contains the @PG header line"), "{stderr}");
 }

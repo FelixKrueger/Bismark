@@ -365,16 +365,11 @@ fn run_with_flags(bam: &str, flags: &[&str]) -> (TempDir, PathBuf, assert_cmd::a
 }
 
 #[test]
-fn positional_pe_without_flag_fails_with_paired_hint() {
+fn positional_pe_without_flag_matches_pe_golden() {
     let (_t, out, assert) = run_with_flags("pe_positional.bam", &[]);
-    assert
-        .failure()
-        .code(1)
-        .stderr(predicates::str::contains("FLAG tag: 99"))
-        .stderr(predicates::str::contains("looks paired-end"))
-        .stderr(predicates::str::contains("Failed on input"))
-        .stderr(predicates::str::contains("pe_positional.bam"));
-    assert!(!out.join("pe_positional.nucleotide_stats.txt").exists());
+    assert.success();
+    let stats = std::fs::read(out.join("pe_positional.nucleotide_stats.txt")).unwrap();
+    assert_bytes_eq(&stats, &golden("pe_stats.golden"), "auto");
 }
 
 #[test]
@@ -393,7 +388,9 @@ fn pe_with_single_fails_with_paired_hint() {
     assert
         .failure()
         .code(1)
-        .stderr(predicates::str::contains("looks paired-end"));
+        .stderr(predicates::str::contains("looks paired-end"))
+        .stderr(predicates::str::contains("Failed on input"))
+        .stderr(predicates::str::contains("pe.bam"));
     assert!(!out.join("pe.nucleotide_stats.txt").exists());
 }
 
@@ -422,4 +419,15 @@ fn no_bismark_pg_with_single_succeeds() {
 fn single_and_paired_together_are_rejected() {
     let (_t, _out, assert) = run_with_flags("se.bam", &["-s", "-p"]);
     assert.failure().code(2);
+}
+
+#[test]
+fn positional_pe_with_single_fails_with_paired_hint() {
+    let (_t, out, assert) = run_with_flags("pe_positional.bam", &["-s"]);
+    assert
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains("FLAG tag: 99"))
+        .stderr(predicates::str::contains("looks paired-end"));
+    assert!(!out.join("pe_positional.nucleotide_stats.txt").exists());
 }
