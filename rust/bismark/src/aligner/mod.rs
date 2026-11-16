@@ -3266,6 +3266,7 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
 /// family without explicit R1/R2 pairing. The MOLECULE strand (which duplex pair:
 /// `R1-forward == OT`) drives both family pairing and per-CpG own/opposite: R2 maps the
 /// other way but reads the copy of its R1's strand, so its bases are that strand's (#1222).
+/// R2 adds only the positions its R1 does not cover (#1227).
 fn run_five_base_duplex_pe(
     genome: &Genome,
     bam_path: &Path,
@@ -3279,11 +3280,32 @@ fn run_five_base_duplex_pe(
         .map_err(|e| AlignerError::Validation(format!("duplex-pe: open BAM: {e}")))?;
     let mut fams = DuplexFamilies::default();
     let mut missing_umi = false;
+    let mut r1_span: (Vec<u8>, std::ops::Range<usize>) = (Vec::new(), 0..0);
 
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex-pe: {e}")))?;
         let inner = rec.inner();
         let flag = u16::from(inner.flags());
+        let name: &[u8] = inner.name().map_or(&[], |n| n.as_ref());
+        let mate_covered = if flag & 0x80 != 0 {
+            if r1_span.0 != name {
+                return Err(AlignerError::Validation(format!(
+                    "duplex-pe: R2 '{}' does not follow its R1 in {}",
+                    String::from_utf8_lossy(name),
+                    bam_path.display()
+                )));
+            }
+            r1_span.1.clone()
+        } else {
+            0..0
+        };
+        if flag & 0x40 != 0 {
+            let span = match (inner.alignment_start(), inner.alignment_end()) {
+                (Some(s), Some(e)) => usize::from(s) - 1..usize::from(e),
+                _ => 0..0,
+            };
+            r1_span = (name.to_vec(), span);
+        }
         // Concordant primary pairs only (the 5-Base PE path emits proper pairs).
         if flag & 0x4 != 0 || flag & 0x2 == 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
             continue;
@@ -3338,6 +3360,7 @@ fn run_five_base_duplex_pe(
                 Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
                     for _ in 0..len {
                         if called.contains(&ri)
+                            && !mate_covered.contains(&rp)
                             && let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp))
                         {
                             if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
@@ -9310,6 +9333,48 @@ mod tests {
         // Both cytosines of the CpG see their own strand and the opposite one: no variant,
         // two methylation-class sites (the `+` one methylated, the `-` one not).
         assert_eq!(family, "chr1\t2\t22\tNA\t2+2\t0\t2\t0", "{text}");
+    }
+
+    /// #1227: a CpG read by both mates of one pair counts once in the duplex totals.
+    #[test]
+    fn five_base_duplex_pe_counts_overlap_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("overlap.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        for (name, ot) in [("t", true), ("b", false)] {
+            let (o1, o2) = r2_genome_pair(&genome, name, ot, 0);
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("duplex.txt");
+        let s = staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t6\t0", "{text}");
+        // Six CpG cytosines, one own-strand call each; the overlap [8,12) is not doubled.
+        assert_eq!((s.total_calls, s.methylated_calls), (6, 0));
+    }
+
+    /// An R2 that does not directly follow its R1 stops the PE duplex pass.
+    #[test]
+    fn five_base_duplex_pe_rejects_an_r2_away_from_its_r1() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("interleaved.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (a1, a2) = r2_genome_pair(&genome, "a", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", true, 0);
+        for r in [&a1, &b1, &a2, &b2] {
+            write_record(&mut w, r).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("x.txt");
+        let err = staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("R2 'a' does not follow its R1"), "{err}");
     }
 
     /// #1211: the duplex consensus calls no CpG from a dovetail overhang or an inline UMI.
