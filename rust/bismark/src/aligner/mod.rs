@@ -3271,7 +3271,7 @@ fn run_five_base_duplex_pe(
     bam_path: &Path,
     report_path: &Path,
     umi_swap: Option<crate::aligner::five_base_duplex::UmiSwap>,
-) -> Result<()> {
+) -> Result<crate::aligner::five_base_duplex::DuplexSummary> {
     use crate::aligner::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
     use noodles_sam::alignment::record::cigar::op::Kind;
 
@@ -3385,16 +3385,19 @@ fn run_five_base_duplex_pe(
     w.flush()?;
     eprintln!(
         "5-Base duplex (PE): {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
-         site(s), {} variant site(s), {} undetermined. Report: {}",
+         site(s), {} variant site(s), {} undetermined ({} of {} calls at non-variant sites are \
+         methylated). Report: {}",
         s.total_families,
         s.duplex_paired,
         s.singletons,
         s.methylation_sites,
         s.variant_sites,
         s.undetermined_sites,
+        s.methylated_calls,
+        s.total_calls,
         report_path.display()
     );
-    Ok(())
+    Ok(s)
 }
 
 /// Thin wrapper so the duplex report uses the module's default thresholds.
