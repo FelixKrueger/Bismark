@@ -79,35 +79,90 @@ bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark
 
 ## Validation
 
-`--taps` is concordance-validated, not byte-identical (Perl Bismark has no TAPS mode).
+`--taps` is concordance-validated, not byte-identical (Perl Bismark has no TAPS mode). All numbers
+below come from public data and can be reproduced with the commands at the end of this section.
+
+### What CI checks on every change
 
 - **bwa-mem3 mode.** bwa-mem3 0.16.0 maps `--meth=taps` and `--meth=5base` to the same chemistry
   ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.16.0/src/meth_opts.cpp#L18-L21)),
-  and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem3`. CI checks that
-  on every change.
-- **Spike-in controls (CI).** 6,316 public TAPS read pairs on the CpG-methylated lambda and the
+  and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem3`.
+- **Spike-in controls.** 6,316 public TAPS read pairs on the CpG-methylated lambda and the
   unmodified 2 kb controls, from the mouse ES cell TAPS library of Liu et al. (2019), GEO
   [GSE112520](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE112520), as packaged for
   nf-core/methylseq in [nf-core/test-datasets#2370](https://github.com/nf-core/test-datasets/pull/2370).
   Untrimmed, `--taps` calls lambda CpGs 96.6% methylated on both strands and the unmodified control
-  0.3–0.4%, with non-CpG contexts at most 0.6% (lambda CHG; CHH and the unmodified control below 0.3%). The CI gate (`aligner_taps_bwamem3`) runs on amd64
-  and arm64 and also checks the exact report and call counts.
-- **Full public library.** The whole TAPS library of the same study, GSM3454335 (SRR8145389–92,
-  455.5 million read pairs, PE 80 bp), aligned with `--taps --five_base_baseq 30` to UCSC mm9 plus
-  the two controls, then deduplicated and kept at MAPQ ≥ 20. 96.8% of pairs aligned uniquely, and
-  90.9% were left after deduplication. Compared with the authors' own per-strand CpG calls
-  (`GSM3454335_TAPS_mm9_CpG_blk.bed.gz`) at coverage ≥ 10:
-  - 99.8% of their 20.1 million CpGs are in Bismark's output. Shifting Bismark's positions by one
-    base drops that to below 0.01%.
-  - Pearson r of the per-CpG methylation is 0.993 on each strand (9.0 million CpGs per strand).
-    Bismark reads 0.8 points higher on average.
-  - Untrimmed, lambda CpGs are 96.5% methylated on both strands and the unmodified control 0.33%.
-    Trimmed by the M-bias rule below (`--ignore 2 --ignore_r2 5`), lambda is 98.0–98.1% and the
-    control 0.33%, as in the study.
+  0.3–0.4%, with non-CpG contexts at most 0.6% (lambda CHG; CHH and the unmodified control below
+  0.3%). The gate (`aligner_taps_bwamem3`) runs on amd64 and arm64 and also checks the exact report
+  and call counts.
 
-  The trims came from Bismark's own M-bias report by a fixed rule, set before the run: trim each
-  read end up to the last position whose CpG methylation differs by more than 2 points from the
-  median of the read's central half. Read 2's first two bases (end repair) are the main bias here.
+### The full public TAPS library
+
+The whole TAPS library of the same study, GSM3454335 (SRR8145389–92, 455.5 million read pairs,
+PE 80 bp), was aligned with `--taps --five_base_baseq 30` to UCSC mm9 plus the two controls,
+deduplicated and kept at MAPQ ≥ 20. 96.8% of pairs aligned uniquely and 90.9% were left after
+deduplication. The calls were compared with the authors' per-strand CpG calls
+(`GSM3454335_TAPS_mm9_CpG_blk.bed.gz`), on the 20.1 million CpGs with coverage ≥ 10 in their file.
+
+| Compared with the authors' TAPS calls | Untrimmed | Trimmed (`--ignore 2 --ignore_r2 5`) |
+|---|---|---|
+| Their CpGs found in Bismark's output | 99.8% | 99.8% |
+| … with Bismark coverage ≥ 10 too | 89.6% | 83.5% |
+| Found after shifting Bismark's positions by one base | < 0.01% | < 0.01% |
+| Pearson r of per-CpG methylation, + / − strand (9 million CpGs each) | **0.993 / 0.993** | 0.989 / 0.989 |
+| Mean per-CpG difference, Bismark − authors | +0.8 points | +1.5 points |
+| Genome-wide CpG methylation, Bismark / authors | 61.1% / 59.7% | 62.0% / 59.7% |
+
+| Spike-in controls, + / − strand | Untrimmed | Trimmed |
+|---|---|---|
+| CpG-methylated lambda | 96.5% / 96.5% | 98.0% / 98.1% |
+| Unmodified 2 kb control | 0.33% / 0.33% | 0.33% / 0.33% |
+
+Trimmed, the controls match the study's own figures (about 98% and 0.4%). The trims came from
+Bismark's M-bias report by a fixed rule, set before the run: trim each read end up to the last
+position whose CpG methylation differs by more than 2 points from the median of the read's central
+half. Here the rule removed the first 2 bases of read 1 and the first 5 of read 2; read 2's first
+two bases (2.9% and 26.5% methylated, from end repair) are the main bias. No 3' trim was needed.
+
+Bismark also calls 667,330 CpG positions (302,640 with coverage ≥ 10) that are not in the authors' file.
+
+### The same DNA by bisulfite sequencing
+
+The study also sequenced the same E14 DNA by whole-genome bisulfite sequencing (GSM3071998). Against
+its processed CpG calls (`GSM3071998_WGBS_mm9_CpG_blk.bed.gz`), on the 2.9 million CpGs per strand
+with coverage ≥ 10 in both, the `--taps` calls correlate at r = 0.72 (0.73 trimmed) and read 1–2
+points lower per CpG on average; genome-wide, CpG methylation is 61–62% against 65.8%. This is a comparison across chemistries,
+not a test of Bismark: the bisulfite library is shallow, and TAPS also counts 5hmC.
+
+### Coverage in CpG-dense regions
+
+CpG-dense, heavily methylated regions are hard for aligners that score every methylated CpG as a
+mismatch (see [Illumina 5-Base](/Bismark/rust/illumina-5-base/)). bwa-mem3's methylation-aware mode
+does not. The table compares Bismark's coverage with the authors' calls by CpG density (CpGs in a
+151 bp window), for CpGs at least 80% methylated. Each value is Bismark's coverage relative to its
+genome-wide mean, divided by the same ratio for the authors' calls, so 1.00 means the same coverage
+profile.
+
+| CpGs per 151 bp | 1–2 | 3–5 | 6–9 | 10–14 | ≥ 15 |
+|---|---|---|---|---|---|
+| CpGs in the cell | 5.2 M | 4.1 M | 0.70 M | 33,000 | 575 |
+| Relative coverage, MAPQ ≥ 20 | 1.01 | 1.01 | 0.99 | 0.82 | 0.81 |
+| Relative coverage, no MAPQ filter | 0.99 | 0.99 | 1.00 | 1.03 | 0.99 |
+| Bismark coverage 0, MAPQ ≥ 20 | 0.3% | 0.3% | 1.0% | 7.7% | 10.6% |
+| Bismark coverage 0, no MAPQ filter | 0.0% | 0.0% | 0.01% | 0.07% | 0.5% |
+
+Without a MAPQ filter Bismark covers the densest methylated CpGs as well as the authors' calls do,
+so bwa-mem3 places those reads; the drop at MAPQ ≥ 20 comes from the filter, which removes the
+low-MAPQ reads there. Dropping the filter keeps them but adds some noise from reads that map to
+several places (r 0.993 → 0.992). In these cells, mean methylation agrees with the authors' within
+about 1 point either way.
+
+### Reports
+
+`bismark report` and `bismark summary` run on a `--taps` run's reports unchanged, and MultiQC's
+Bismark section is filled in as for 5-Base. None of them shows the chemistry.
+
+### Reproduce
 
 ```sh
 bwa-mem3 index --meth mm9_taps_spikes.fa       # mm9 chr*.fa + the two controls from genome_taps.fa
@@ -118,3 +173,6 @@ samtools view -b -q 20 -o TAPS_q20.bam TAPS_R1_bismark_bwamem3_pe.deduplicated.b
 bismark_methylation_extractor -p --bedGraph --gzip TAPS_q20.bam
 bismark_methylation_extractor -p --ignore 2 --ignore_r2 5 --bedGraph --gzip TAPS_q20.bam
 ```
+
+The comparisons join Bismark's per-strand `.bismark.cov.gz` with the GEO files on chromosome,
+position (GEO start + 1) and strand.
