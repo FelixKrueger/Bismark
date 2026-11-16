@@ -52,6 +52,7 @@ the report as before and does not show the chemistry.
 | `--five_base_baseq N` | accepted: read bases below Phred N are not called (0, the default, is off); `30` matches common TAPS callers |
 | `--five_base_bisulfite_bam` | accepted: re-encodes a TAPS BAM to bisulfite convention, as for 5-Base |
 | `-p` / `--multicore`, `--path_to_bwamem3`, `--upto`, output options | as for `--illumina_5base --bwamem3` |
+| `--nucleotide_coverage` | accepted: runs bam2nuc on the BAM, which counts the genomic sequence under each alignment, so the chemistry does not matter |
 | `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap` | rejected: TAPS aligns with bwa-mem3 only |
 | `--illumina_5base` | rejected: a different chemistry label for the same path |
 | `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`, `--five_base_umi_qname`, `--five_base_emit_multiplicity`, `--five_base_umi_len`, `--five_base_min_mapq` | rejected: validated for Illumina 5-Base only |
@@ -89,7 +90,7 @@ bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark
   [GSE112520](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE112520), as packaged for
   nf-core/methylseq in [nf-core/test-datasets#2370](https://github.com/nf-core/test-datasets/pull/2370).
   Untrimmed, `--taps` calls lambda CpGs 96.6% methylated on both strands and the unmodified control
-  0.3–0.4%, with non-CpG contexts below 0.3%. The CI gate (`aligner_taps_bwamem3`) runs on amd64
+  0.3–0.4%, with non-CpG contexts at most 0.6% (lambda CHG; CHH and the unmodified control below 0.3%). The CI gate (`aligner_taps_bwamem3`) runs on amd64
   and arm64 and also checks the exact report and call counts.
 - **Full public library.** The whole TAPS library of the same study, GSM3454335 (SRR8145389–92,
   455.5 million read pairs, PE 80 bp), aligned with `--taps --five_base_baseq 30` to UCSC mm9 plus

@@ -5,50 +5,50 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-14
+updated: 2026-11-16
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: d1dd2e8
+    commit: 1dd7112
 ---
 
 # Troubleshooting
@@ -120,7 +120,8 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `<file>.meth.fa in the genome folder is a bwa-mem3 index file` | The bwa-mem3 index sits in the `--genome` folder (`run_pe_five_base` in `aligner/mod.rs`) | Move the index to its own folder |
 | `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.16.0, or pass `--path_to_bwamem3 <dir>` |
 | `--taps aligns with bwa-mem3 only` | `--taps` was given another aligner flag (`expand_taps` in `aligner/config.rs`) | Drop the aligner flag |
-| `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution or the UMI options (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](usage/align-taps-reads.md) |
+| `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution, `--five_base_umi_qname` or `--five_base_emit_multiplicity` (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](usage/align-taps-reads.md) |
+| `--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure …` or `--five_base_min_mapq only filters the duplex/consensus pass …` | `--taps` with a non-zero `--five_base_umi_len` or `--five_base_min_mapq` (`expand_taps`) | Drop the option |
 | `<R2> has fewer reads than <R1>` (or `more`), `<engine> produced more records than read pairs` | In a 5-Base run, R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`) | Check that the two files are mates from one run, and read the engine's own errors |
 | `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
 | `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |

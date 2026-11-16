@@ -5,23 +5,26 @@ description: Run TAPS data with --taps, what it turns on, the options it accepts
 tags: [alignment, taps, bwa-mem3, 5-base]
 page_id: align-taps-reads
 subject_status: current
-updated: 2026-11-14
+updated: 2026-11-16
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d1dd2e8
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: d1dd2e8
+    commit: 1dd7112
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/methylation.rs
+    commit: 1dd7112
 ---
 
 # Align TAPS reads
@@ -63,8 +66,9 @@ After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply,
 |---|---|
 | `--five_base_index <genome.fa>` | Required: the FASTA that the `bwa-mem3 index --meth` index was built from |
 | `--five_base_baseq <n>` | Bases below Phred n are not called (`mask_low_quality` in `aligner/mod.rs`); 0 is off |
-| `--five_base_bisulfite_bam <bam>` | Re-encodes a TAPS BAM to bisulfite convention without re-aligning (`run_pe_five_base`) |
+| `--five_base_bisulfite_bam <bam>` | Re-encodes a TAPS BAM to bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone` in `aligner/mod.rs`) |
 | `-p`, `--multicore`, `--path_to_bwamem3`, output options | As for `--illumina_5base --bwamem3`: [usage/align-5-base-reads.md](align-5-base-reads.md) |
+| `--nucleotide_coverage` | Runs bam2nuc on the final BAM (`run_nucleotide_coverage` in `aligner/mod.rs`); bam2nuc counts the genomic sequence under each alignment, so the chemistry does not change it |
 
 The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 --meth-tags none -K 100000000 -t <n>` (`bwamem3_options` in `aligner/options.rs`). The index files, the contig check, the version check, which pairs are kept, and the overhang bases that are not called are the same as for `--illumina_5base --bwamem3`: see [usage/align-5-base-reads.md](align-5-base-reads.md).
 
@@ -78,7 +82,7 @@ The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-c
 | Alignment report | `Library chemistry: TAPS (mC->T)` after the `bwa-mem3 version:` line (`run_pe_five_base`) |
 | BAM `@PG` | Bismark's line holds the command line with `--taps`; bwa-mem3's holds `--meth=taps` |
 
-Without `--taps`, every 5-Base message and output is unchanged: `FiveBaseChemistry` in `aligner/config.rs` gives the 5-Base strings for `--illumina_5base`.
+Without `--taps`, every 5-Base output and run message is unchanged: `FiveBaseChemistry` in `aligner/config.rs` gives the 5-Base strings for `--illumina_5base`. The `--five_base_baseq` and `--five_base_bisulfite_bam` errors for a run with neither flag name both: "requires --illumina_5base or --taps" (`resolve` in `aligner/config.rs`, `run_five_base_bisulfite_standalone`).
 
 ## Links
 

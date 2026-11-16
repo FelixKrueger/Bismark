@@ -773,6 +773,43 @@ fn taps_records_equal_the_five_base_run() {
     assert!(rep5.contains("mem --meth=5base "), "{rep5}");
 }
 
+/// A 26 bp `chr1` holding all 16 dinucleotides (bam2nuc divides by each genomic count),
+/// starting with [`ONE_PAIR`]'s window `ACGTAC`.
+const DINUC_GENOME: &str = "ACGTACAACCGGTTAGATCTGCATGA";
+
+/// bam2nuc counts genomic sequence, so a `--taps` run's nucleotide stats equal its 5-Base twin's.
+#[cfg(unix)]
+#[test]
+fn taps_nucleotide_coverage_equals_the_five_base_run() {
+    let sq = "@SQ\\tSN:chr1\\tLN:26\\n";
+    let stats = "r_1_bismark_bwamem3_pe.nucleotide_stats.txt";
+    let nuc_run = || {
+        let run = fake_run(ONE_PAIR, &[("chr1", 26)], sq);
+        fs::write(
+            run.genome.path().join("genome.fa"),
+            format!(">chr1\n{DINUC_GENOME}\n"),
+        )
+        .unwrap();
+        run
+    };
+    let run = nuc_run();
+    taps_cmd(&run)
+        .arg("--nucleotide_coverage")
+        .assert()
+        .success();
+    let taps = fs::read_to_string(run.out.path().join(stats)).unwrap();
+    assert!(taps.starts_with("(di-)nucleotide\t"), "{taps}");
+    let twin = nuc_run();
+    bwamem3_cmd(&twin)
+        .arg("--nucleotide_coverage")
+        .assert()
+        .success();
+    assert_eq!(
+        taps,
+        fs::read_to_string(twin.out.path().join(stats)).unwrap()
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn taps_notice_and_summary_say_taps() {

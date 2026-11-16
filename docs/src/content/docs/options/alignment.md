@@ -385,7 +385,7 @@ The folder containing the `rammap` executable (used by `--rammap_subprocess`; no
 
 - `--taps`
 
-TAPS (mC→T) mode for paired-end, directional libraries: bwa-mem3 (`mem --meth=taps`) places the raw reads on the unconverted genome given as `--five_base_index` (the FASTA a `bwa-mem3 index --meth` index was built from), and Bismark calls methylation at inverted polarity on the Illumina 5-Base path. bwa-mem3 is the only engine; the 5-Base duplex, consensus, deconvolution and inline-UMI options are rejected. See the [TAPS guide](/Bismark/rust/taps/). Default: OFF.
+TAPS (mC→T) mode for paired-end, directional libraries: bwa-mem3 (`mem --meth=taps`) places the raw reads on the unconverted genome given as `--five_base_index` (the FASTA a `bwa-mem3 index --meth` index was built from), and Bismark calls methylation at inverted polarity on the Illumina 5-Base path. bwa-mem3 is the only engine; the 5-Base duplex, consensus, deconvolution, inline-UMI, `--five_base_min_mapq` and `--five_base_emit_multiplicity` options are rejected. See the [TAPS guide](/Bismark/rust/taps/). Default: OFF.
 
 #### OUTPUT:
 
