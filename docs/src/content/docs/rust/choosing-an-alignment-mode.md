@@ -97,3 +97,9 @@ For everything else, the combined index is the faster choice.
 default engine; `--illumina_5base --bwamem3` is the choice when methylated CpG islands matter, at the
 cost of a 23 GB index and about 28 GiB of memory. See
 [Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
+
+## TAPS libraries
+
+TAPS reads also align to the unconverted genome. `--taps` runs the same calling path with bwa-mem3 in
+its TAPS mode, the only engine for TAPS, with the same index and memory cost. See the
+[TAPS guide](/Bismark/rust/taps/).

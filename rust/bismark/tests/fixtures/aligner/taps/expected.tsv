@@ -1,0 +1,17 @@
+# Expected --taps counts on this fixture (bwa-mem3 0.16.0, x86_64); calls counted from XM/XG with samtools+awk.
+report	Sequence pairs analysed in total:	6316
+report	Number of paired-end alignments with a unique best hit:	6303
+report	Sequence pairs with no alignments under any condition:	13
+report	Sequence pairs did not map uniquely:	0
+calls	2kb_3_Unmodified	+	H	15	7859
+calls	2kb_3_Unmodified	+	X	12	5038
+calls	2kb_3_Unmodified	+	Z	17	5617
+calls	2kb_3_Unmodified	-	H	14	8447
+calls	2kb_3_Unmodified	-	X	12	4988
+calls	2kb_3_Unmodified	-	Z	25	6247
+calls	bacteriophage_lambda_CpG	+	H	127	47322
+calls	bacteriophage_lambda_CpG	+	X	116	20498
+calls	bacteriophage_lambda_CpG	+	Z	17261	598
+calls	bacteriophage_lambda_CpG	-	H	143	54357
+calls	bacteriophage_lambda_CpG	-	X	132	21686
+calls	bacteriophage_lambda_CpG	-	Z	18139	641
