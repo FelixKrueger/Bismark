@@ -84,7 +84,7 @@ A pair is written only when both mates are mapped and flagged proper, lie on one
 | The first N bases of each mate | `--five_base_umi_len N` | `five_base_emit_pe_record` |
 | Bases of a dovetailed or contained pair past the mate's 5' end | Always | `five_base_overhang_lens` |
 
-All three are in `aligner/mod.rs`. They change `XM` only, so the extractor and `--five_base_bisulfite_bam` follow them. `--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` read the bases from `SEQ` and CIGAR, so the UMI and overhang masks do not apply to them. The report counts the overhang bases under "Dovetail overhang bases not called".
+All three are in `aligner/mod.rs`. They change `XM`, so the extractor and `--five_base_bisulfite_bam` follow them. `--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` read the bases from `SEQ` and CIGAR; they skip the UMI and overhang bases through the `mk:B:I` tag (`five_base_called_range`), but not the low-quality ones. A BAM written by an earlier version has no `mk` tag, so `--five_base_consensus_from_bam` still counts those bases in it. The report counts the overhang bases under "Dovetail overhang bases not called".
 
 ## Optional outputs
 

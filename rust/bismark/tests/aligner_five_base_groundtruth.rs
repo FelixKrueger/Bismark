@@ -147,7 +147,7 @@ fn make_methylated_reads(reference: &[u8], read_len: usize, n_reads: usize) -> (
 /// pairs of a molecule must collapse into ONE duplex-paired family (keyed by fragment
 /// span + canonical dual UMI), and the per-molecule reconciliation must separate the 5mC
 /// molecule (methylation) from the homozygous C>T molecule (variant) — proving the PE
-/// strand handling (molecule-strand for pairing, FLAG coverage-strand for reconciliation).
+/// strand handling (molecule strand for pairing and reconciliation).
 #[test]
 fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
     if !have_minimap2() {
@@ -180,28 +180,44 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
         fq.extend_from_slice(&vec![b'I'; bytes.len()]);
         fq.push(b'\n');
     };
-    // Build one molecule's two pairs. `convert_target` puts T at the + target (5mC or
-    // variant on the + strand); `variant` also makes the - strand carry the variant.
+    // Build one molecule's two pairs: T at the + target (5mC or variant on the + strand);
+    // `variant` also makes the - strand carry it.
     let mut molecule = |s: usize, t: usize, variant: bool, umi_a: &str, umi_b: &str| {
-        // + strand as forward reads see it: reference with the target set to T.
+        // Top strand in + orientation, read by the top pair: the target set to T.
         let mut g_plus = reference[s..s + frag].to_vec();
         g_plus[t - s] = b'T';
-        // what reverse reads carry = revcomp of the - strand. For 5mC the - base at the
-        // target is intact (G, from unconverted C); for a variant it is A (from + T).
+        // The - strand in + orientation, as the bottom pair's reads carry it: intact at the
+        // target for 5mC, T (from the + variant) for a variant.
         let minus_src = if variant {
             g_plus.clone()
         } else {
             reference[s..s + frag].to_vec()
         };
         let g_minus_rc = revcomp(&minus_src);
-        let fwd_left = &g_plus[0..rl]; // covers [s, s+rl)
-        let rev_right = &g_minus_rc[0..rl]; // revcomp of [s+frag-rl, s+frag)
+        // Both mates of a pair carry their molecule strand's bases.
+        let g_plus_rc = revcomp(&g_plus);
         // Top-strand pair (molecule OT): R1 forward-left, R2 reverse-right. UMI A+B.
-        emit(&mut fq1, &format!("top_{s}:{umi_a}+{umi_b}"), fwd_left);
-        emit(&mut fq2, &format!("top_{s}:{umi_a}+{umi_b}"), rev_right);
+        emit(
+            &mut fq1,
+            &format!("top_{s}:{umi_a}+{umi_b}"),
+            &g_plus[0..rl],
+        );
+        emit(
+            &mut fq2,
+            &format!("top_{s}:{umi_a}+{umi_b}"),
+            &g_plus_rc[0..rl],
+        );
         // Bottom-strand pair (molecule OB): R1 reverse-right, R2 forward-left. UMI B+A.
-        emit(&mut fq1, &format!("bot_{s}:{umi_b}+{umi_a}"), rev_right);
-        emit(&mut fq2, &format!("bot_{s}:{umi_b}+{umi_a}"), fwd_left);
+        emit(
+            &mut fq1,
+            &format!("bot_{s}:{umi_b}+{umi_a}"),
+            &g_minus_rc[0..rl],
+        );
+        emit(
+            &mut fq2,
+            &format!("bot_{s}:{umi_b}+{umi_a}"),
+            &minus_src[0..rl],
+        );
     };
     molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
     molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
@@ -263,6 +279,17 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
     assert_eq!(
         fams_with_variant, 1,
         "PE: only the variant molecule should flag a variant\nreport:\n{report}"
+    );
+    assert!(
+        paired
+            .iter()
+            .any(|f| f[5] == "0" && f[6].parse::<u32>().unwrap() >= 1),
+        "PE: the 5mC molecule flags no variant and a methylation site\nreport:\n{report}"
+    );
+    // Every CpG of a fragment is read by both molecules' pairs, so none lacks the other strand.
+    assert!(
+        paired.iter().all(|f| f[7] == "0"),
+        "PE: no CpG should be undetermined\nreport:\n{report}"
     );
 }
 

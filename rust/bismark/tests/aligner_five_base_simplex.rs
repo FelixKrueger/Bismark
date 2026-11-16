@@ -813,3 +813,54 @@ fn consensus_from_bam_publishes_only_complete_outputs() {
         names(failed.path())
     );
 }
+
+/// With `--five_base_umi_len`, each input BAM without an `mk` tag is named in one warning.
+#[test]
+fn consensus_from_bam_warns_per_input_without_mk() {
+    if !samtools_available() {
+        eprintln!("skipping: samtools not on PATH");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    write_genome(tmp.path(), 1);
+    let with_rx = |recs: String, extra: &str| -> String {
+        recs.lines()
+            .map(|l| format!("{l}\tRX:Z:ACG{extra}\n"))
+            .collect()
+    };
+    let plain = with_rx(pair("p", 0, true, &seq_ot_methylated(), 60, 60), "");
+    let masked = with_rx(pair("m", 0, false, WINDOW, 60, 60), "\tmk:B:I,3,0");
+    let no_mk = make_bam(tmp.path(), "no_mk", 1, &plain);
+    let has_mk = make_bam(tmp.path(), "has_mk", 1, &masked);
+
+    let run = |extra: &[&str]| -> String {
+        let out_dir = tempfile::tempdir().unwrap();
+        let out = Command::new(bismark_bin())
+            .arg("--illumina_5base")
+            .arg("--five_base_consensus_from_bam")
+            .arg(&has_mk)
+            .arg("--five_base_consensus_from_bam")
+            .arg(&no_mk)
+            .arg("--genome")
+            .arg(tmp.path())
+            .arg("--output_dir")
+            .arg(out_dir.path())
+            .args(extra)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "consensus run failed:\n{stderr}");
+        stderr
+    };
+
+    let stderr = run(&["--five_base_umi_len", "3"]);
+    let warnings: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("has no mk tag masking a 3-base inline UMI"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "stderr:\n{stderr}");
+    assert!(warnings[0].contains("no_mk.bam"), "stderr:\n{stderr}");
+
+    let stderr = run(&[]);
+    assert!(!stderr.contains("has no mk tag"), "stderr:\n{stderr}");
+}
