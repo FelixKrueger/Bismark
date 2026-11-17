@@ -3138,8 +3138,8 @@ fn five_base_called_range(
     Ok(lo..inner.sequence().len().saturating_sub(hi))
 }
 
-/// Tracks the last R1 of the 5-Base `_pe.bam` so its R2 counts only the positions R1 does
-/// not cover; R2 must directly follow its R1.
+/// Tracks the last R1 so its R2 counts only the positions R1 does not cover; R2 must
+/// follow its R1, with only secondary or supplementary records in between.
 #[derive(Default)]
 struct MateSpan {
     name: Vec<u8>,
@@ -3183,10 +3183,8 @@ impl MateSpan {
     }
 }
 
-/// The CpG-cytosine observations one 5-Base record contributes, in reference order:
-/// called bases (`mk`) outside `mate_covered`, against the chromosome sequence `g`. As in
-/// the `XM` call, only C/T counts at a `+` cytosine and G/A at a `-` one, at or above
-/// `baseq` (0 = off; a record without QUAL is not quality-filtered).
+/// One record's CpG-cytosine observations outside `mate_covered`: as in `XM`, only C/T at a
+/// `+` cytosine and G/A at a `-` one, at or above `baseq` (a record without QUAL passes).
 fn cpg_observations(
     inner: &noodles_sam::alignment::RecordBuf,
     g: &[u8],
@@ -9298,10 +9296,12 @@ mod tests {
             let (o1, o2) = emit_test_pair(&genome, "p", &line("p", 99, 3, 9, 16, left), &right, 0);
             pass_outputs(&genome, dir.path(), left, &[&o1, &o2], 0).0
         };
-        let (clean, with_n) = (rows("TTCGTTTCGT"), rows("TTNGTTTCGT"));
-        // The `+` cytosine at 0-based 4 is read by R1 only.
-        let without_5: Vec<(u32, String)> = clean.iter().filter(|r| r.0 != 5).cloned().collect();
-        assert_eq!(with_n, without_5);
+        let clean = rows("TTCGTTTCGT");
+        let without =
+            |p: u32| -> Vec<(u32, String)> { clean.iter().filter(|r| r.0 != p).cloned().collect() };
+        // R1 alone reads the `+` cytosine at 0-based 4 and the `-` one at 5.
+        assert_eq!(rows("TTNGTTTCGT"), without(5), "N at the + cytosine");
+        assert_eq!(rows("TTCNTTTCGT"), without(6), "N at the - cytosine");
     }
 
     /// #1237: a base that is neither allele of the CpG cytosine is no call.
@@ -9327,6 +9327,25 @@ mod tests {
             "+ undetermined 0 0 NA",
             "only the opposite-strand read is left"
         );
+    }
+
+    /// #1237: an `N` at a `-` cytosine is no call in the duplex too.
+    #[test]
+    fn five_base_duplex_pe_skips_n_at_a_minus_cytosine() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // The bottom pair's R2 alone reads the `-` cytosine at 0-based 5 on its own strand.
+        let mut seq = b2.inner().sequence().as_ref().to_vec();
+        assert_eq!(seq[3], b'G');
+        seq[3] = b'N';
+        let mut inner = b2.inner().clone();
+        *inner.sequence_mut() = seq.into();
+        let b2n = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (_, duplex) = pass_outputs(&genome, dir.path(), "minus", &[&t1, &t2, &b1, &b2n], 0);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
     }
 
     /// #1237: with `--five_base_baseq`, a base below the threshold is no call.
@@ -9387,6 +9406,10 @@ mod tests {
         let sup = with_flags(&t2, "x", 147 | 0x800, None);
         let with_sup = pass_outputs(&genome, dir.path(), "sup", &[&t1, &sup, &t2, &b1, &b2], 0);
         assert_eq!(with_sup, clean, "supplementary R2");
+        // A supplementary part of R1 outside R1's span, between R1 and its R2.
+        let sup1 = with_flags(&t1, "t", 99 | 0x800, Some(13));
+        let with_sup1 = pass_outputs(&genome, dir.path(), "sup1", &[&t1, &sup1, &t2, &b1, &b2], 0);
+        assert_eq!(with_sup1, clean, "supplementary R1");
     }
 
     /// An R2 that does not directly follow its R1 stops the pass.
