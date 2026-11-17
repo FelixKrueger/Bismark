@@ -210,6 +210,12 @@ carries `mk`, and the duplex sites move from 107 / 1,022 / 230,207 to 7,180 / 43
 A BAM without `mk` gives the same `--five_base_consensus_from_bam` output from both binaries,
 with one warning. The full-depth figures are re-measured before GA.
 
+The duplex pass then stopped counting a CpG read by both mates of a pair twice (#1227). Same
+lane, `--five_base_umi_qname`, before vs after: core BAM, deconvolution report, consensus BAM and
+duplex families identical; own-strand duplex calls 301,811 → 281,563 (−6.7 %), methylated
+47.0 % → 47.0 % (DRAGEN genome-wide 49.7 %); duplex sites variant / methylation / undetermined
+2,150 / 273,953 / 860 → 2,167 / 273,929 / 863.
+
 ### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
 
 The full-depth run exposed a real scalability bug: the consensus pass held every read's
