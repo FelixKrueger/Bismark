@@ -3,6 +3,8 @@
 
 ## Unreleased
 
+Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)'s code audit ([#1167](https://github.com/FelixKrueger/Bismark/issues/1167)).
+
 ### All tools
 
 - **The extractor, bam2nuc, filter_non_conversion and methylation_consistency now read CRAM 3.0/3.1 alignments with `--cram_ref`, as deduplication already did ([#1205](https://github.com/FelixKrueger/Bismark/pull/1205), [#1207](https://github.com/FelixKrueger/Bismark/pull/1207)).**
@@ -65,6 +67,14 @@
 ### Scripts
 
 - **Breaking: `merge_coverage_files_ARGV.py -b X` now writes `X.cov.gz` instead of `X.merged.cov.gz`, never reads its own output and exits 1 on error; `merge_arbitrary_coverage_files.py` still works and runs it ([#1181](https://github.com/FelixKrueger/Bismark/pull/1181)).**
+
+### Rust library
+
+- **Breaking: the public modules `bam2nuc::genome`, `coverage2cytosine::genome`, `summary::fmt_g` and `report::logging` and the unused `io::reconstitute_cram_reference_from_bismark_genome` are removed, and `summary::timestamp::now_ctime_utc` is now `now_ctime_local` ([#1171](https://github.com/FelixKrueger/Bismark/pull/1171), [#1172](https://github.com/FelixKrueger/Bismark/pull/1172)).**
+
+### Documentation
+
+- **The docs drop or correct flags the binary rejects, mark `--buffer_size`, `--scaffolds` and `--ample_memory` as ignored, give the real `--ambig_bam` file name and say aligner output goes to the current directory by default ([#1189](https://github.com/FelixKrueger/Bismark/pull/1189)–[#1192](https://github.com/FelixKrueger/Bismark/pull/1192)).**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)
