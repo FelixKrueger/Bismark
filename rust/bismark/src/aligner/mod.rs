@@ -9357,6 +9357,58 @@ mod tests {
         assert_eq!((s.total_calls, s.methylated_calls), (6, 0));
     }
 
+    /// #1227: in the overlap R1's call stands; a 5mC both mates show counts once.
+    #[test]
+    fn five_base_duplex_pe_overlap_keeps_r1s_call() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        // R1 reads a T (5mC) at the overlap CpG cytosine 9; R2 reads `r2_right` there.
+        let totals = |r2_right: &str| {
+            let bam = dir.path().join(format!("{r2_right}.bam"));
+            let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+            let (t1, t2) = emit_test_pair(
+                &genome,
+                "t",
+                "t\t99\tchr1\t3\t60\t10M\t=\t9\t16\tTTCGTTTTGT\tIIIIIIIIII\tAS:i:0",
+                &format!("t\t147\tchr1\t9\t60\t10M\t=\t3\t-16\t{r2_right}\tIIIIIIIIII\tAS:i:0"),
+                0,
+            );
+            let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+            for r in [&t1, &t2, &b1, &b2] {
+                write_record(&mut w, r).unwrap();
+            }
+            w.finish().unwrap();
+            let report = dir.path().join(format!("{r2_right}.txt"));
+            let s =
+                staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None)).unwrap();
+            (s.total_calls, s.methylated_calls)
+        };
+        assert_eq!(totals("TTGTTTTCGT"), (6, 1), "both mates show the 5mC");
+        assert_eq!(totals("TCGTTTTCGT"), (6, 1), "R2 shows a C; R1's T stands");
+    }
+
+    /// #1227 with an inline UMI: the masked R2 end drops its site, the overlap still counts once.
+    #[test]
+    fn five_base_duplex_pe_overlap_with_inline_umi() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("umi.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        for (name, ot) in [("t", true), ("b", false)] {
+            let (o1, o2) = r2_genome_pair(&genome, name, ot, 2);
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("duplex.txt");
+        let s = staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        // The UMIs at the reverse mates' 5' ends cover the G at 16; it has no own-strand call.
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{text}");
+        assert_eq!((s.total_calls, s.methylated_calls), (5, 0));
+    }
+
     /// An R2 that does not directly follow its R1 stops the PE duplex pass.
     #[test]
     fn five_base_duplex_pe_rejects_an_r2_away_from_its_r1() {
