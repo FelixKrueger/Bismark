@@ -11,6 +11,7 @@
 - **`--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` now skip those bases too, read from a new `mk:B:I` tag ([#1211](https://github.com/FelixKrueger/Bismark/issues/1211); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
 - **Paired-end `--five_base_deconvolution` now counts R2, once where it overlaps R1, instead of skipping it ([#1220](https://github.com/FelixKrueger/Bismark/issues/1220); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
 - **Paired-end `--five_base_duplex` now counts R2 on its molecule's strand instead of as opposite-strand evidence ([#1222](https://github.com/FelixKrueger/Bismark/issues/1222); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
+- **Paired-end `--five_base_duplex` now counts a CpG read by both mates of a pair once, and its summary line reports methylated calls ([#1227](https://github.com/FelixKrueger/Bismark/issues/1227)).**
 - **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem3 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
 
