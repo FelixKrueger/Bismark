@@ -3184,12 +3184,14 @@ impl MateSpan {
 }
 
 /// The CpG-cytosine observations one 5-Base record contributes, in reference order:
-/// called bases (`mk`) outside `mate_covered`, against the chromosome sequence `g`.
+/// called bases (`mk`) outside `mate_covered`, against the chromosome sequence `g`. As in
+/// the `XM` call, only C/T counts at a `+` cytosine and G/A at a `-` one, at or above
+/// `baseq` (0 = off; a record without QUAL is not quality-filtered).
 fn cpg_observations(
     inner: &noodles_sam::alignment::RecordBuf,
     g: &[u8],
     mate_covered: &std::ops::Range<usize>,
-    _baseq: u8,
+    baseq: u8,
 ) -> Result<Vec<crate::aligner::five_base_duplex::SiteObs>> {
     use crate::aligner::five_base_duplex::SiteObs;
     use noodles_sam::alignment::record::cigar::op::Kind;
@@ -3199,6 +3201,7 @@ fn cpg_observations(
         return Ok(obs);
     };
     let seq = inner.sequence().as_ref();
+    let qual = inner.quality_scores().as_ref();
     let called = five_base_called_range(inner)?;
     let (mut ri, mut rp) = (0usize, usize::from(start) - 1);
     for op in inner.cigar().as_ref().iter() {
@@ -3208,19 +3211,27 @@ fn cpg_observations(
                 for _ in 0..len {
                     if called.contains(&ri)
                         && !mate_covered.contains(&rp)
+                        && !(baseq > 0 && qual.get(ri).is_some_and(|&q| q < baseq))
                         && let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp))
                     {
+                        let base = base.to_ascii_uppercase();
                         if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
-                            obs.push(SiteObs {
-                                pos0: rp as u32,
-                                plus: true,
-                                t_equivalent: base.eq_ignore_ascii_case(&b'T'),
-                            });
-                        } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
+                            if matches!(base, b'C' | b'T') {
+                                obs.push(SiteObs {
+                                    pos0: rp as u32,
+                                    plus: true,
+                                    t_equivalent: base == b'T',
+                                });
+                            }
+                        } else if gb == b'G'
+                            && rp > 0
+                            && g.get(rp - 1) == Some(&b'C')
+                            && matches!(base, b'G' | b'A')
+                        {
                             obs.push(SiteObs {
                                 pos0: rp as u32,
                                 plus: false,
-                                t_equivalent: base.eq_ignore_ascii_case(&b'A'),
+                                t_equivalent: base == b'A',
                             });
                         }
                     }
@@ -9136,12 +9147,20 @@ mod tests {
         crate::io::BismarkRecord::from_noodles_record(inner).unwrap()
     }
 
+    /// `rec` with BAM QUAL (reference orientation) set to `qual`; empty means absent.
+    fn with_qual(rec: &crate::io::BismarkRecord, qual: &[u8]) -> crate::io::BismarkRecord {
+        let mut inner = rec.inner().clone();
+        *inner.quality_scores_mut() = qual.to_vec().into();
+        crate::io::BismarkRecord::from_noodles_record(inner).unwrap()
+    }
+
     /// The deconvolution rows and the duplex report of `records`, written in that order.
     fn pass_outputs(
         genome: &Genome,
         dir: &Path,
         tag: &str,
         records: &[&crate::io::BismarkRecord],
+        baseq: u8,
     ) -> (Vec<(u32, String)>, String) {
         let bam = dir.join(format!("{tag}.bam"));
         let mut w = BamWriter::from_path(&bam, generate_sam_header(genome, "test")).unwrap();
@@ -9150,9 +9169,11 @@ mod tests {
         }
         w.finish().unwrap();
         let report = dir.join(format!("{tag}.duplex.txt"));
-        staging::scope(|| run_five_base_duplex_pe(genome, &bam, &report, None, 0)).unwrap();
+        staging::scope(|| run_five_base_duplex_pe(genome, &bam, &report, None, baseq)).unwrap();
+        let deconv = bam.with_extension("deconv.txt");
+        staging::scope(|| run_five_base_deconvolution(genome, &bam, &deconv, baseq)).unwrap();
         (
-            deconv_rows(genome, &bam),
+            report_rows(&deconv),
             std::fs::read_to_string(&report).unwrap(),
         )
     }
@@ -9161,7 +9182,12 @@ mod tests {
     fn deconv_rows(genome: &Genome, bam: &Path) -> Vec<(u32, String)> {
         let report = bam.with_extension("deconv.txt");
         staging::scope(|| run_five_base_deconvolution(genome, bam, &report, 0)).unwrap();
-        let mut rows: Vec<(u32, String)> = std::fs::read_to_string(&report)
+        report_rows(&report)
+    }
+
+    /// Rows of a deconvolution report `(1-based pos, rest of the row)`, sorted.
+    fn report_rows(report: &Path) -> Vec<(u32, String)> {
+        let mut rows: Vec<(u32, String)> = std::fs::read_to_string(report)
             .unwrap()
             .lines()
             .filter(|l| !l.starts_with('#'))
@@ -9259,6 +9285,92 @@ mod tests {
         assert_eq!(rows.len(), 6, "the chr1 pair's sites only");
     }
 
+    /// #1237: an `N` at a CpG cytosine is no call.
+    #[test]
+    fn five_base_deconvolution_skips_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let line = |n: &str, f: u16, pos: u32, mpos: u32, tlen: i32, seq: &str| {
+            format!("{n}\t{f}\tchr1\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0")
+        };
+        let right = line("p", 147, 9, 3, -16, "TCGTTTTCGT");
+        let rows = |left: &str| {
+            let (o1, o2) = emit_test_pair(&genome, "p", &line("p", 99, 3, 9, 16, left), &right, 0);
+            pass_outputs(&genome, dir.path(), left, &[&o1, &o2], 0).0
+        };
+        let (clean, with_n) = (rows("TTCGTTTCGT"), rows("TTNGTTTCGT"));
+        // The `+` cytosine at 0-based 4 is read by R1 only.
+        let without_5: Vec<(u32, String)> = clean.iter().filter(|r| r.0 != 5).cloned().collect();
+        assert_eq!(with_n, without_5);
+    }
+
+    /// #1237: a base that is neither allele of the CpG cytosine is no call.
+    #[test]
+    fn five_base_deconvolution_and_duplex_skip_a_mismatch() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // An `A` at the `+` cytosine at 0-based 15, read by the top pair's R2 only.
+        let mut seq = t2.inner().sequence().as_ref().to_vec();
+        assert_eq!(seq[7], b'C');
+        seq[7] = b'A';
+        let mut inner = t2.inner().clone();
+        *inner.sequence_mut() = seq.into();
+        let t2a = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (rows, duplex) = pass_outputs(&genome, dir.path(), "mm", &[&t1, &t2a, &b1, &b2], 0);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
+        let at = |p: u32| rows.iter().find(|r| r.0 == p).unwrap().1.clone();
+        assert_eq!(
+            at(16),
+            "+ undetermined 0 0 NA",
+            "only the opposite-strand read is left"
+        );
+    }
+
+    /// #1237: with `--five_base_baseq`, a base below the threshold is no call.
+    #[test]
+    fn five_base_deconvolution_and_duplex_honour_baseq() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // Phred 2 at R1's `+` cytosine at 0-based 4 (R1 starts at 2).
+        let mut q = vec![40u8; 10];
+        q[2] = 2;
+        let t1q = with_qual(&t1, &q);
+        let run = |tag: &str, baseq: u8| {
+            pass_outputs(&genome, dir.path(), tag, &[&t1q, &t2, &b1, &b2], baseq)
+        };
+        let clean = pass_outputs(&genome, dir.path(), "hi", &[&t1, &t2, &b1, &b2], 0);
+        assert_eq!(run("q0", 0), clean, "off");
+        assert_eq!(run("q2", 2), clean, "Phred 2 is not below 2");
+        let (rows, duplex) = run("q20", 20);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
+        let at = |r: &[(u32, String)], p: u32| r.iter().find(|x| x.0 == p).map(|x| x.1.clone());
+        assert_eq!(at(&clean.0, 5).as_deref(), Some("+ undetermined 0 1 0.00"));
+        assert_eq!(at(&rows, 5).as_deref(), Some("+ undetermined 0 0 NA"));
+    }
+
+    /// #1237: a record without QUAL still has its bases called under `--five_base_baseq`.
+    #[test]
+    fn five_base_walk_counts_bases_without_qual() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        let clean = pass_outputs(&genome, dir.path(), "q", &[&t1, &t2, &b1, &b2], 0);
+        let bare: Vec<crate::io::BismarkRecord> = [&t1, &t2, &b1, &b2]
+            .iter()
+            .map(|r| with_qual(r, &[]))
+            .collect();
+        let refs: Vec<&crate::io::BismarkRecord> = bare.iter().collect();
+        assert!(bare[0].inner().quality_scores().as_ref().is_empty());
+        assert_eq!(pass_outputs(&genome, dir.path(), "noq", &refs, 20), clean);
+    }
+
     /// #1236: both passes ignore secondary and supplementary records.
     #[test]
     fn five_base_passes_skip_secondary_and_supplementary() {
@@ -9266,14 +9378,14 @@ mod tests {
         let genome = five_base_genome("chr1", R2_GENOME);
         let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
         let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
-        let clean = pass_outputs(&genome, dir.path(), "clean", &[&t1, &t2, &b1, &b2]);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&t1, &t2, &b1, &b2], 0);
         // A secondary copy of R1 outside R1's span, between R1 and its R2.
         let sec = with_flags(&t1, "t", 99 | 0x100, Some(13));
-        let with_sec = pass_outputs(&genome, dir.path(), "sec", &[&t1, &sec, &t2, &b1, &b2]);
+        let with_sec = pass_outputs(&genome, dir.path(), "sec", &[&t1, &sec, &t2, &b1, &b2], 0);
         assert_eq!(with_sec, clean, "secondary R1");
         // A supplementary record of another read between R1 and its R2.
         let sup = with_flags(&t2, "x", 147 | 0x800, None);
-        let with_sup = pass_outputs(&genome, dir.path(), "sup", &[&t1, &sup, &t2, &b1, &b2]);
+        let with_sup = pass_outputs(&genome, dir.path(), "sup", &[&t1, &sup, &t2, &b1, &b2], 0);
         assert_eq!(with_sup, clean, "supplementary R2");
     }
 
