@@ -5,30 +5,30 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: 0882360
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: 0882360
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 0882360
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Install Bismark
 
 ## Summary
 
-Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base `--bwamem3` runs.
+Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base `--bwamem3` and TAPS `--taps` runs.
 
 ## Ways to get it
 
@@ -36,7 +36,7 @@ Bismark is one binary, `bismark`, that holds all 12 tools. The developer says pe
 |---|---|---|
 | Bioconda | `mamba install -c bioconda -c conda-forge bismark` | The developer gave this channel. The recipe is not in this repo. |
 | crates.io | `cargo install bismark` | One crate, `bismark` (`rust/bismark/Cargo.toml`). The `rammap-inprocess` and `binseq-input` features are off by default; add `--features rammap-inprocess,binseq-input` to get them. |
-| Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2, minimap2 2.31 and bwa-mem3 0.16.0, and builds with both optional features (`Dockerfile`). |
+| Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2, minimap2 2.31 and bwa-mem3 0.17.0, and builds with both optional features (`Dockerfile`). |
 | Prebuilt binaries | GitHub release assets | Built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin` (`release.yml`). |
 | nf-core/methylseq | Pipeline modules | The developer gave this channel. The container's `bismark --version` prints the `Bismark Version: v<version>` line that methylseq parses (`docker/bismark-canonical-wrapper.sh`). The image build reads that version from the binary's own `--version`, and fails if it cannot (`Dockerfile`). |
 

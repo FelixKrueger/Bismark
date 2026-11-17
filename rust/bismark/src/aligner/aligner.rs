@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::aligner::config::Aligner;
+use crate::aligner::config::{Aligner, FiveBaseChemistry};
 use crate::aligner::error::{AlignerError, Result};
 
 /// The Bowtie 2 version this port pins for the byte-identity gate.
@@ -27,10 +27,13 @@ pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 /// reports `rammap 1.1.1` (a `rammap ` banner prefix, unlike minimap2's bare number).
 pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
 
-/// The bwa-mem4 version the 5-Base `--bwamem4` engine is validated against (concordance gate).
+/// The bwa-mem4 version CI and the container install for the 5-Base `--bwamem4` engine.
 pub const PINNED_BWAMEM4_VERSION: &str = "4.5.0";
 
-/// The first bwa-mem4 release with `--meth=5base`.
+/// The bwa-mem4 versions the 5-Base engine is validated against; others warn.
+pub const VALIDATED_BWAMEM4_VERSIONS: &[&str] = &["4.5.0"];
+
+/// The first bwa-mem4 release with `--meth=5base` and `--meth=taps`.
 pub const MIN_BWAMEM4_VERSION: (u32, u32, u32) = (4, 5, 0);
 
 /// A located, working aligner.
@@ -54,7 +57,7 @@ fn binary_name(kind: Aligner) -> &'static str {
     }
 }
 
-/// The pinned version `kind` is byte-identity-validated against.
+/// The pinned version of `kind`; bwa-mem4 is validated against [`VALIDATED_BWAMEM4_VERSIONS`].
 fn pinned_version(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
@@ -99,8 +102,13 @@ fn resolve_aligner_path(kind: Aligner, path_to: Option<&Path>) -> Result<PathBuf
 
 /// Detect `kind`: resolve the path, run `--version`, parse the version, and warn
 /// if it is not the pinned version. Byte-identity is guaranteed only against the
-/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2).
-pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedAligner> {
+/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2). `chem` names the 5-Base-path mode in the
+/// bwa-mem4 messages; other aligners ignore it.
+pub fn detect_aligner(
+    kind: Aligner,
+    path_to: Option<&Path>,
+    chem: FiveBaseChemistry,
+) -> Result<DetectedAligner> {
     let path = resolve_aligner_path(kind, path_to)?;
 
     let not_working = || AlignerError::AlignerNotWorking {
@@ -142,18 +150,26 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
             parsed.unwrap_or_else(|| stdout.lines().next().unwrap_or("").trim().to_string());
         if found.is_empty() {
             return Err(AlignerError::Validation(format!(
-                "`bwa-mem4 version` printed no version ({}); --illumina_5base --bwamem4 needs \
+                "`bwa-mem4 version` printed no version ({}); {} needs \
                  bwa-mem4 >= {}.{}.{}.",
                 path.display(),
+                chem.engine_flags(),
                 MIN_BWAMEM4_VERSION.0,
                 MIN_BWAMEM4_VERSION.1,
                 MIN_BWAMEM4_VERSION.2
             )));
         }
+        let why = match chem {
+            FiveBaseChemistry::Illumina5Base => "the first release with --meth=5base",
+            FiveBaseChemistry::Taps => "the first release with --meth=taps",
+        };
         return Err(AlignerError::Validation(format!(
-            "bwa-mem4 {found} is too old or unrecognised: --illumina_5base --bwamem4 needs bwa-mem4 \
-             >= {}.{}.{} (the first release with --meth=5base).",
-            MIN_BWAMEM4_VERSION.0, MIN_BWAMEM4_VERSION.1, MIN_BWAMEM4_VERSION.2
+            "bwa-mem4 {found} is too old or unrecognised: {} needs bwa-mem4 \
+             >= {}.{}.{} ({why}).",
+            chem.engine_flags(),
+            MIN_BWAMEM4_VERSION.0,
+            MIN_BWAMEM4_VERSION.1,
+            MIN_BWAMEM4_VERSION.2
         )));
     }
     let version = parsed.unwrap_or_else(|| {
@@ -166,11 +182,18 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     });
 
     let pinned = pinned_version(kind);
-    if version != pinned && kind == Aligner::BwaMem4 {
+    let validated = if kind == Aligner::BwaMem4 {
+        VALIDATED_BWAMEM4_VERSIONS.contains(&version.as_str())
+    } else {
+        version == pinned
+    };
+    if !validated && kind == Aligner::BwaMem4 {
         eprintln!(
-            "Warning: detected bwa-mem4 {version}; Bismark's 5-Base engine is validated against {pinned}."
+            "Warning: detected bwa-mem4 {version}; Bismark's {} engine is validated against {}.",
+            chem.label(),
+            VALIDATED_BWAMEM4_VERSIONS.join(" and ")
         );
-    } else if version != pinned {
+    } else if !validated {
         eprintln!(
             "Warning: detected {} {version}, but byte-identity is only guaranteed against the \
              pinned version {pinned}.",
@@ -253,6 +276,7 @@ fn is_version_triple(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aligner::config::FiveBaseChemistry::{Illumina5Base, Taps};
 
     #[test]
     fn parses_standard_bowtie2_version_line() {
@@ -318,6 +342,8 @@ mod tests {
     fn bwamem4_detection_metadata() {
         assert_eq!(binary_name(Aligner::BwaMem4), "bwa-mem4");
         assert_eq!(pinned_version(Aligner::BwaMem4), "4.5.0");
+        assert_eq!(VALIDATED_BWAMEM4_VERSIONS, ["4.5.0"]);
+        assert!(VALIDATED_BWAMEM4_VERSIONS.contains(&PINNED_BWAMEM4_VERSION));
         assert_eq!(path_flag(Aligner::BwaMem4), "--path_to_bwamem4");
         assert_eq!(Aligner::BwaMem4.token(), "bwamem4");
         assert_eq!(Aligner::BwaMem4.name(), "bwa-mem4");
@@ -376,7 +402,7 @@ mod tests {
             "#!/bin/sh\n[ \"$1\" = version ] && { echo 4.5.0; exit 0; }\n\
              echo \"ERROR: unknown command '$1'\" >&2; exit 1\n",
         );
-        let d = detect_aligner(Aligner::BwaMem4, Some(dir.path())).unwrap();
+        let d = detect_aligner(Aligner::BwaMem4, Some(dir.path()), Illumina5Base).unwrap();
         assert_eq!(d.version, "4.5.0");
     }
 
@@ -384,10 +410,32 @@ mod tests {
     #[test]
     fn detect_bwamem4_rejects_too_old() {
         let dir = fake_bwamem4("#!/bin/sh\necho 4.4.1\n");
-        let err = detect_aligner(Aligner::BwaMem4, Some(dir.path()))
+        let err = detect_aligner(Aligner::BwaMem4, Some(dir.path()), Illumina5Base)
             .unwrap_err()
             .to_string();
         assert!(err.contains("4.4.1") && err.contains("4.5.0"), "{err}");
+        assert!(err.contains("--illumina_5base --bwamem4 needs"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_bwamem4_messages_name_taps_under_taps() {
+        let old = fake_bwamem4("#!/bin/sh\necho 4.4.1\n");
+        let e = detect_aligner(Aligner::BwaMem4, Some(old.path()), Taps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("--taps needs bwa-mem4 >= 4.5.0") && !e.contains("--illumina_5base"),
+            "{e}"
+        );
+        let empty = fake_bwamem4("#!/bin/sh\nexit 0\n");
+        let e = detect_aligner(Aligner::BwaMem4, Some(empty.path()), Taps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("--taps needs") && !e.contains("--illumina_5base"),
+            "{e}"
+        );
     }
 
     /// Phase 3 (T1): the rammap detection metadata (binary / pin / path flag).

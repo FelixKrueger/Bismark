@@ -105,3 +105,9 @@ bismark --illumina_5base --bwamem4 --five_base_index /path/to/bwm4/genome.fa \
 ```
 
 See [Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
+
+## TAPS libraries
+
+TAPS reads also align to the unconverted genome. `--taps` runs the same calling path with bwa-mem4 in
+its TAPS mode, the only engine for TAPS, with the same index and memory cost. See the
+[TAPS guide](/Bismark/rust/taps/).

@@ -9,7 +9,9 @@
 //! `--maxins`/`--maxins 500` → `--quiet`.
 
 use crate::aligner::cli::Cli;
-use crate::aligner::config::{Aligner, GapPenalties, Mm2Preset, ReadFormat, ScoreMinForm};
+use crate::aligner::config::{
+    Aligner, FiveBaseChemistry, GapPenalties, Mm2Preset, ReadFormat, ScoreMinForm,
+};
 use crate::aligner::error::{AlignerError, Result};
 
 /// Build the `aligner_options` string + the (read,ref) gap penalties used later
@@ -270,12 +272,14 @@ fn common_aligner_options(
     Ok((opts, gp))
 }
 
-/// The bwa-mem4 5-Base option string. Every default that has changed between releases is pinned;
-/// `-t` is appended at spawn time.
-pub(crate) fn bwamem4_options() -> String {
-    "mem --meth=5base --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
-     --meth-tags none -K 100000000"
-        .into()
+/// The bwa-mem4 option string for a 5-Base-path chemistry. Every default that has changed between
+/// releases is pinned; `-t` is appended at spawn time.
+pub(crate) fn bwamem4_options(chem: FiveBaseChemistry) -> String {
+    format!(
+        "mem --meth={} --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
+         --meth-tags none -K 100000000",
+        chem.bwamem4_meth()
+    )
 }
 
 /// Bowtie 2 / minimap2 tuning that has no bwa-mem4 equivalent.
@@ -300,9 +304,10 @@ fn reject_bwamem4_tuning(cli: &Cli) -> Result<()> {
             "--most_valid_alignments",
         ),
     ];
+    let mode = if cli.taps { "--taps" } else { "--bwamem4" };
     match set.iter().find(|(on, _)| *on) {
         Some((_, flag)) => Err(AlignerError::Validation(format!(
-            "{flag} is not supported with --bwamem4: bwa-mem4 uses its own scoring and infers \
+            "{flag} is not supported with {mode}: bwa-mem4 uses its own scoring and infers \
              insert sizes itself."
         ))),
         None => Ok(()),
@@ -328,7 +333,7 @@ pub(crate) fn build_five_base_aligner_options(
             insertion_open: 5,
             insertion_extend: 3,
         };
-        return Ok((bwamem4_options(), gp));
+        return Ok((bwamem4_options(FiveBaseChemistry::of(cli)), gp));
     }
     let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
     if cli.bowtie_threads.is_some_and(|p| p < 2) {
@@ -853,6 +858,47 @@ mod tests {
         );
         assert_eq!(bwm3(&["--phred64-quals"]).unwrap(), bwm3(&[]).unwrap());
         assert_eq!(bwm3(&["-p", "8"]).unwrap(), bwm3(&[]).unwrap());
+    }
+
+    /// The bwa-mem4 options a `--taps` run resolves to (through the TAPS expansion).
+    fn taps_opts(args: &[&str]) -> Result<String> {
+        let mut v = vec!["--taps", "--five_base_index", "/x/g.fa"];
+        v.extend_from_slice(args);
+        let cli = crate::aligner::config::expand_taps(&cli_from(&v))
+            .unwrap()
+            .into_owned();
+        build_five_base_aligner_options(&cli, Aligner::BwaMem4, ReadFormat::FastQ).map(|r| r.0)
+    }
+
+    #[test]
+    fn taps_option_string_differs_only_in_meth() {
+        let taps = taps_opts(&[]).unwrap();
+        assert_eq!(
+            taps,
+            "mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
+             --meth-tags none -K 100000000"
+        );
+        assert_eq!(
+            taps.replace("--meth=taps", "--meth=5base"),
+            bwm3(&[]).unwrap()
+        );
+    }
+
+    #[test]
+    fn taps_rejects_tuning_naming_taps() {
+        for args in [
+            &["--local"][..],
+            &["--score_min", "L,0,-0.2"],
+            &["-N", "1"],
+            &["--maxins", "600"],
+            &["--dovetail"],
+        ] {
+            let e = taps_opts(args).unwrap_err().to_string();
+            assert!(
+                e.contains("is not supported with --taps") && !e.contains("--bwamem4"),
+                "{args:?}: {e}"
+            );
+        }
     }
 
     #[test]

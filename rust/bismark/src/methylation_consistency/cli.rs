@@ -90,7 +90,7 @@ pub enum LibraryMode {
     Single,
     /// Forced paired-end (`-p`).
     Paired,
-    /// Auto-detect per file from the Bismark `@PG` line (default). A missing
+    /// Auto-detect per file from the Bismark `@PG` line and first record (default). A missing
     /// Bismark `@PG` falls through to single-end (SPEC §2.3).
     Auto,
 }

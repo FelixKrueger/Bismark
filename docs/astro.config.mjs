@@ -64,6 +64,7 @@ export default defineConfig({
             { label: 'Scope of the rewrite', slug: 'rust/overview' },
             { label: 'Choosing an alignment mode', slug: 'rust/choosing-an-alignment-mode' },
             { label: 'Illumina 5-Base', slug: 'rust/illumina-5-base' },
+            { label: 'TAPS', slug: 'rust/taps' },
             { label: 'Benchmarks', slug: 'rust/benchmarks' },
           ],
         },

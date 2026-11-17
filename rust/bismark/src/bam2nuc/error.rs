@@ -118,6 +118,15 @@ pub enum BismarkBam2nucError {
         flag: u16,
     },
 
+    /// A file detected as paired-end from its first record has a record without FLAG `0x1`.
+    #[error(
+        "a record has FLAG {flag}, which is not paired-end, in a file whose first record is paired-end; the file mixes single-end and paired-end records"
+    )]
+    MixedLayout {
+        /// The offending SAM FLAG value.
+        flag: u16,
+    },
+
     /// Could not determine single-end vs paired-end from the BAM `@PG` header
     /// (Perl `test_file`: `die "Failed to figure out SE or PE..."`).
     #[error(
@@ -195,6 +204,10 @@ mod tests {
         assert_eq!(
             BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag: 0 }.to_string(),
             "-p/--paired was given but a record has FLAG 0, which is not paired-end; drop -p/--paired for single-end input"
+        );
+        assert_eq!(
+            BismarkBam2nucError::MixedLayout { flag: 0 }.to_string(),
+            "a record has FLAG 0, which is not paired-end, in a file whose first record is paired-end; the file mixes single-end and paired-end records"
         );
         assert_eq!(
             BismarkBam2nucError::SePeUndetermined.to_string(),

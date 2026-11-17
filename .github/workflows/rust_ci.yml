@@ -137,7 +137,7 @@ jobs:
         run: cargo test -p bismark --features binseq-input
 
   bwamem4:
-    name: bwa-mem4 5-Base gate (${{ matrix.runner }})
+    name: bwa-mem4 5-Base and TAPS gate (${{ matrix.runner }})
     # bwa-mem4 is not in apt; it is built from crates.io with current stable Rust (its MSRV
     # is above this workspace's 1.89 pin) into ~/.cargo/bin, which rust-cache keeps.
     runs-on: ${{ matrix.runner }}
@@ -166,7 +166,7 @@ jobs:
       - name: cargo test (bwa-mem4 gates)
         env:
           BISMARK_TEST_BWAMEM4: "1"
-        run: cargo test -p bismark --test aligner_five_base_bwamem4 --test aligner_five_base_bwamem4_fake
+        run: cargo test -p bismark --test aligner_five_base_bwamem4 --test aligner_five_base_bwamem4_fake --test aligner_taps_bwamem4
 
   fmt:
     name: cargo fmt --check
@@ -220,6 +220,7 @@ jobs:
           samtools --version >/dev/null
       - name: Run live-Perl byte-identity oracles (fail-loud + prove all 13 ran)
         env:
+          # Makes a skipped oracle panic.
           BISMARK_REQUIRE_PERL: "1"
         run: |
           set -euo pipefail
@@ -240,8 +241,10 @@ jobs:
                   perl_vs_rust_nondirectional_pe_dedup \
                   perl_vs_rust_nondirectional_pe_extractor \
                   2>&1 | tee /dev/stderr)
-          n=$(printf '%s\n' "$out" | grep -cE '^test .* \.\.\. ok$' || true)
-          test "$n" -eq "$EXPECTED" || { echo "::error::expected $EXPECTED oracle tests, $n ran ok"; exit 1; }
-          if printf '%s\n' "$out" | grep -q '^skipping:'; then
-            echo "::error::an oracle silently skipped"; exit 1
+          # Subprocess output can split a `test … ok` line; count from the per-binary summaries.
+          n=$({ grep -aoE 'test result: ok\. [0-9]+ passed' <<<"$out" || true; } | awk '{s+=$4} END{print s+0}')
+          if [ "$n" != "$EXPECTED" ]; then
+            echo "::error::expected $EXPECTED oracle tests, $n ran ok"
+            grep -aE 'test result:' <<<"$out" || true
+            exit 1
           fi

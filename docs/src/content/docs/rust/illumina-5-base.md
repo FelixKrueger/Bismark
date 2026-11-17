@@ -12,6 +12,9 @@ read `T` at a genomic `C` is methylated (`Z`), a read `C` is unmethylated (`z`).
 The mode is opt-in behind `--illumina_5base` and is **paired-end only** (the 5-Base
 library is paired-end and directional; single-end input is rejected at startup).
 
+For TAPS libraries, which also convert methylated C to T, use [`--taps`](/Bismark/rust/taps/):
+the same calling path with bwa-mem4 in its TAPS mode.
+
 ## Stability contract
 
 5-Base is **not byte-identical** to anything: Perl Bismark has no 5-Base path, so there is
@@ -29,7 +32,8 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
   only for UMI/enrichment kits, so there is no WGS consensus-CX to correlate against) by
   per-strand **mean-methylation agreement** with DRAGEN (~47.9% vs ~48%, bias-free). All
   four are additionally held to a reproducible lambda/pUC19 spike-in gate that runs in CI
-  with no proprietary data.
+  with no proprietary data. The deconvolution, duplex and consensus figures predate the
+  fixes for #1211, #1220 and #1222; a lane-1 re-check is in `validation/VALIDATION_REAL_DATA.md`.
 - **Preview:** `--five_base_umi_qname` (duplex UMI taken from the read name). It works and
   is exercised on real data, but is not yet held to the same gated contract.
 - **Unchanged:** the faithful bisulfite / EM-seq suite is **byte-frozen**. Every legacy
@@ -181,8 +185,8 @@ It is opt-in because it is expensive (measured with bwa-mem3 0.16.0 on GRCh38):
 |---|---|
 | Index | `bwa-mem3 index --meth genome.fa`: about 1 h and about 104 GB RAM for GRCh38 |
 | Index on disk | about 23 GB needed for GRCh38; `index --meth` writes about 39 GB, and `genome.fa.meth.fa` (6.3 GB) and the plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
-| Alignment memory | the engine's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
-| Runtime | about 38–39 min per 95–98M pairs at 32 threads (engine alone) |
+| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads; bwa-mem4 peaked 30% lower on GRCh38 at 8 threads) plus about 3.2 GB for Bismark's copy of the genome |
+| Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
 Pass the FASTA path the index was built from as `--five_base_index`. An index built by
 `bwa-mem4 index --meth` or by `bwa-mem3 index --meth` gives the same alignments. Build the index from
@@ -210,8 +214,10 @@ no alignment.
 
 With `--five_base_umi_len N`, the first N bases of each mate are never called, for every engine,
 including bases the engine aligned rather than soft-clipped. The UMI and overhang masks apply to
-the core calls (`XM`, and everything the extractor reads); `--five_base_duplex`,
-`--five_base_consensus` and `--five_base_deconvolution` do not apply them yet.
+the core calls (`XM`, and everything the extractor reads) and to `--five_base_duplex`,
+`--five_base_consensus` and `--five_base_deconvolution`, which find the masked read ends in the
+`mk:B:I` tag (bases masked at the 5' and 3' end of the read). A BAM written by an earlier
+version has no `mk` tag, so `--five_base_consensus_from_bam` still counts those bases in it.
 
 Before Bismark validates a newer bwa-mem4, the per-CpG comparison with the validated version is
 re-run on 1M read pairs; until then, other versions run with the warning above.

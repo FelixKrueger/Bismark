@@ -16,6 +16,7 @@ const TAG_XG: [u8; 2] = *b"XG";
 const TAG_MD: [u8; 2] = *b"MD";
 const TAG_NM: [u8; 2] = *b"NM";
 const TAG_RX: [u8; 2] = *b"RX";
+const TAG_MK: [u8; 2] = *b"mk";
 
 /// Extract the `XM:Z:` methylation-call string from a record's data.
 pub fn xm(data: &Data) -> Result<&[u8], BismarkIoError> {
@@ -66,6 +67,33 @@ pub fn nm(data: &Data) -> Result<Option<u32>, BismarkIoError> {
 /// when `--five_base_umi_len > 0`). Returns `Ok(None)` if absent.
 pub fn rx(data: &Data) -> Result<Option<&[u8]>, BismarkIoError> {
     optional_string_tag(data, &TAG_RX, "RX")
+}
+
+/// Extract the optional 5-Base `mk:B:I` tag (#1211) as `(5' bases, 3' bases)` masked in read
+/// orientation. Returns `Ok(None)` if absent.
+pub fn mk(data: &Data) -> Result<Option<(usize, usize)>, BismarkIoError> {
+    use noodles_sam::alignment::record_buf::data::field::value::Array;
+    let tag = noodles_sam::alignment::record::data::field::Tag::from(TAG_MK);
+    let value = match data.get(&tag) {
+        None => return Ok(None),
+        Some(v) => v,
+    };
+    let ends: Option<Vec<i64>> = match value {
+        Value::Array(Array::Int8(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt8(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::Int16(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt16(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::Int32(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        Value::Array(Array::UInt32(v)) => Some(v.iter().map(|&x| i64::from(x)).collect()),
+        _ => None,
+    };
+    match ends.as_deref() {
+        Some(&[a, b]) if a >= 0 && b >= 0 => Ok(Some((a as usize, b as usize))),
+        _ => Err(BismarkIoError::MalformedTag {
+            tag: "mk",
+            reason: format!("expected B with 2 non-negative integers, got {value:?}"),
+        }),
+    }
 }
 
 fn string_tag<'a>(
@@ -202,5 +230,39 @@ mod tests {
             err,
             BismarkIoError::MalformedTag { tag: "XR", .. }
         ));
+    }
+
+    #[test]
+    fn mk_reads_any_integer_array_subtype() {
+        use noodles_sam::alignment::record_buf::data::field::value::Array;
+        for value in [
+            Array::UInt32(vec![3, 5]),
+            Array::UInt8(vec![3, 5]),
+            Array::Int16(vec![3, 5]),
+            Array::Int32(vec![3, 5]),
+        ] {
+            let mut data = make_data();
+            data.insert(Tag::from(TAG_MK), Value::Array(value));
+            assert_eq!(mk(&data).unwrap(), Some((3, 5)));
+        }
+        assert_eq!(mk(&make_data()).unwrap(), None);
+    }
+
+    #[test]
+    fn mk_rejects_wrong_length_negative_and_non_integer_values() {
+        use noodles_sam::alignment::record_buf::data::field::value::Array;
+        for value in [
+            Value::Array(Array::UInt32(vec![3])),
+            Value::Array(Array::Int32(vec![-1, 2])),
+            Value::Array(Array::Float(vec![1.0, 2.0])),
+            Value::String(BString::from("3,5")),
+        ] {
+            let mut data = make_data();
+            data.insert(Tag::from(TAG_MK), value);
+            assert!(matches!(
+                mk(&data).unwrap_err(),
+                BismarkIoError::MalformedTag { tag: "mk", .. }
+            ));
+        }
     }
 }

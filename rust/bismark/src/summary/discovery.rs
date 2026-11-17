@@ -5,7 +5,7 @@
 //! Perl `bismark2summary:152-367`:
 //!
 //! - **Discovery** (`:152-205`): explicit `@ARGV` verbatim, else Perl's
-//!   four globs (plus mm2/rammap) in a fixed order, each sorted with Perl's
+//!   four globs (plus mm2/rammap/bwamem4) in a fixed order, each sorted with Perl's
 //!   **case-folded** glob collation (spike-confirmed: case-fold-primary, raw-bytes-secondary,
 //!   locale/platform-invariant — `SPIKE_glob_sort_order.md`).
 //! - **Derivation** (`:251-367`): `.bam` strip, `_pe` ⇒ PE, and the

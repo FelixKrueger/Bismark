@@ -5,26 +5,26 @@ description: The header, FLAG values and the XM, XR, XG, NM, MD, YS, CB and UR t
 tags: [bam, xm-tag, methylation-call-string, format]
 page_id: bam-output
 subject_status: current
-updated: 2026-11-14
+updated: 2026-11-16
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/output.rs
-    commit: 0882360
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 0882360
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 0882360
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 0882360
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bam2nuc/cli.rs
-    commit: c4f286d
+    commit: 1dd7112
 ---
 
 # Bismark BAM records
@@ -43,9 +43,9 @@ From `generate_sam_header` in `aligner/output.rs`:
 | `@SQ` | One per chromosome, in genome order, with `LN` |
 | `@PG` | `ID:Bismark VN:<version> CL:"bismark <arguments>"` |
 
-`bismark dedup`, `bismark extract` and `bismark bam2nuc` read the `@PG ID:Bismark` line to tell single-end from paired-end; each takes `-s`/`-p` to override it.
+`bismark dedup`, `extract`, `bam2nuc`, `filter` and `consistency` read the `@PG ID:Bismark` line to tell single-end from paired-end. If that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end, as for a run on a positional paired uBAM, BINSEQ or unaligned CRAM file (`detect_paired` in `io/read.rs`). Each takes `-s`/`-p` to override it.
 
-A `--bwamem3` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>` (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection reads only the Bismark line.
+A `--bwamem3` or `--taps` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>` (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection ignores it.
 
 ## Strand tags
 
@@ -103,6 +103,8 @@ From `methylation_call` in `aligner/methylation.rs`. Upper case is methylated, l
 | `.` | Not a cytosine in the genome |
 
 For reverse-strand records `SEQ` is reverse-complemented and `XM` is reversed, so both read in genome order. In 5-Base mode the same characters are used with inverted chemistry: a read `T` at a genomic C is methylated. A 5-Base read base that is not called is `.`, also at a cytosine: low-quality bases, inline UMI bases and dovetail overhangs ([usage/align-5-base-reads.md](../usage/align-5-base-reads.md)).
+
+A 5-Base record with UMI or overhang bases masked carries `mk:B:I,<5' bases>,<3' bases>`, counted in read orientation (`five_base_emit_pe_record` in `aligner/mod.rs`). The duplex, consensus and deconvolution passes skip those bases.
 
 ## 5-Base consensus BAMs
 

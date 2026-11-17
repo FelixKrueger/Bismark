@@ -5,26 +5,26 @@ description: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem
 tags: [alignment, 5-base, minimap2, bowtie2, hisat2, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-12
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 0882360
+    commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 0882360
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 0882360
+    commit: d1dd2e8
 ---
 
 # Align 5-Base reads
@@ -65,7 +65,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 
 ### bwa-mem3
 
-- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; another version runs with a warning that the 5-Base engine is validated against 0.16.0 (`detect_aligner` in `aligner/aligner.rs`).
+- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; 0.16.0 and 0.17.0 are validated (`VALIDATED_BWAMEM3_VERSIONS`), and another version runs with a warning that the 5-Base engine is validated against them (`detect_aligner` in `aligner/aligner.rs`).
 - **Index files.** `<genome.fa>.amb`, `.ann`, `.pac` and `.meth.amb`, `.meth.ann`, `.meth.pac`, `.meth.bwt.2bit.64` must exist before the run starts (`check_bwamem3_index_files` in `aligner/config.rs`). The plain `.bwt.2bit.64` and `.meth.fa` are not needed.
 - **Same assembly.** The contig names and lengths in the `.ann` file must equal the genome folder's before bwa-mem3 starts, and the `@SQ` lines bwa-mem3 writes must equal them again (`read_bwa_ann`, `check_contigs_match` and `five_base_align_and_call_pe` in `aligner/mod.rs`).
 - **Keep the index out of `--genome`.** A FASTA in the genome folder whose name ends in `.meth.fa` stops the run (`run_pe_five_base`).
@@ -84,7 +84,7 @@ A pair is written only when both mates are mapped and flagged proper, lie on one
 | The first N bases of each mate | `--five_base_umi_len N` | `five_base_emit_pe_record` |
 | Bases of a dovetailed or contained pair past the mate's 5' end | Always | `five_base_overhang_lens` |
 
-All three are in `aligner/mod.rs`. They change `XM` only, so the extractor and `--five_base_bisulfite_bam` follow them. `--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` read the bases from `SEQ` and CIGAR, so the UMI and overhang masks do not apply to them. The report counts the overhang bases under "Dovetail overhang bases not called".
+All three are in `aligner/mod.rs`. They change `XM`, so the extractor and `--five_base_bisulfite_bam` follow them. `--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` read the bases from `SEQ` and CIGAR; they skip the UMI and overhang bases through the `mk:B:I` tag (`five_base_called_range`). `--five_base_duplex` and `--five_base_deconvolution` also call a CpG cytosine only from a C or T (G or A on the minus strand) at or above `--five_base_baseq`, as `XM` does (`cpg_observations`); `--five_base_consensus` does not skip low-quality bases. A BAM written by an earlier version has no `mk` tag, so `--five_base_consensus_from_bam` still counts those bases in it. The report counts the overhang bases under "Dovetail overhang bases not called".
 
 ## Optional outputs
 
@@ -93,6 +93,7 @@ Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolut
 ## Links
 
 - [usage/align-reads.md](align-reads.md): the bisulfite aligner, output names and threads.
+- [usage/align-taps-reads.md](align-taps-reads.md): `--taps`, which runs TAPS libraries on this path with bwa-mem3.
 - [reference/aligner-cli.md](../reference/aligner-cli.md): every 5-Base option and the combinations that stop the run.
 - [reference/bam-output.md](../reference/bam-output.md): the `@PG` lines and the records in the BAM.
 - [troubleshooting.md](../troubleshooting.md): low 5-Base coverage at methylated CpG islands, and bwa-mem3 errors.
