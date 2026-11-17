@@ -3138,12 +3138,35 @@ fn five_base_called_range(
     Ok(lo..inner.sequence().len().saturating_sub(hi))
 }
 
-/// Tracks the last R1 so its R2 counts only the positions R1 does not cover; R2 must
-/// follow its R1, with only secondary or supplementary records in between.
+/// Tracks the last R1 so its R2 counts only the positions R1 does not cover and the CpGs
+/// where R1 has no information; R2 must follow its R1, with only secondary or supplementary
+/// records in between.
 #[derive(Default)]
 struct MateSpan {
     name: Vec<u8>,
     span: std::ops::Range<usize>,
+    r1_gaps: Vec<u32>,
+}
+
+/// What a record leaves to its R1: R1's reference span, except the sorted CpG positions
+/// where R1 has no information.
+#[derive(Default)]
+struct Covered {
+    span: std::ops::Range<usize>,
+    gaps: Vec<u32>,
+}
+
+impl Covered {
+    fn hides(&self, rp: usize) -> bool {
+        self.span.contains(&rp) && self.gaps.binary_search(&(rp as u32)).is_err()
+    }
+}
+
+/// One record's CpG observations, and the CpG positions where it has no information
+/// (an `N`, a base below `--five_base_baseq`, or a deletion).
+struct CpgWalk {
+    obs: Vec<crate::aligner::five_base_duplex::SiteObs>,
+    gaps: Vec<u32>,
 }
 
 impl MateSpan {
@@ -3154,13 +3177,13 @@ impl MateSpan {
         inner: &noodles_sam::alignment::RecordBuf,
         pass: &str,
         bam_path: &Path,
-    ) -> Result<Option<std::ops::Range<usize>>> {
+    ) -> Result<Option<Covered>> {
         let flags = u16::from(inner.flags());
         if flags & 0x900 != 0 {
             return Ok(None);
         }
         let name: &[u8] = inner.name().map_or(&[], |n| n.as_ref());
-        let mate_covered = if flags & 0x80 != 0 {
+        let covered = if flags & 0x80 != 0 {
             if self.name != name {
                 return Err(AlignerError::Validation(format!(
                     "{pass}: R2 '{}' does not follow its R1 in {}",
@@ -3168,9 +3191,12 @@ impl MateSpan {
                     bam_path.display()
                 )));
             }
-            self.span.clone()
+            Covered {
+                span: self.span.clone(),
+                gaps: std::mem::take(&mut self.r1_gaps),
+            }
         } else {
-            0..0
+            Covered::default()
         };
         if flags & 0x40 != 0 {
             self.name = name.to_vec();
@@ -3178,25 +3204,42 @@ impl MateSpan {
                 (Some(s), Some(e)) => usize::from(s) - 1..usize::from(e),
                 _ => 0..0,
             };
+            self.r1_gaps.clear();
         }
-        Ok(Some(mate_covered))
+        Ok(Some(covered))
+    }
+
+    /// Remember where the current R1 has no information, so its R2 can fill those CpGs.
+    fn record_r1(&mut self, inner: &noodles_sam::alignment::RecordBuf, gaps: &[u32]) {
+        let flags = u16::from(inner.flags());
+        if flags & 0x40 != 0 && flags & 0x900 == 0 {
+            self.r1_gaps = gaps.to_vec();
+        }
     }
 }
 
-/// One record's CpG-cytosine observations outside `mate_covered`: as in `XM`, only C/T at a
-/// `+` cytosine and G/A at a `-` one, at or above `baseq` (a record without QUAL passes).
+/// One record's CpG-cytosine observations where `covered` does not hide them: as in `XM`,
+/// only C/T at a `+` cytosine and G/A at a `-` one, at or above `baseq` (no QUAL passes).
 fn cpg_observations(
     inner: &noodles_sam::alignment::RecordBuf,
     g: &[u8],
-    mate_covered: &std::ops::Range<usize>,
+    covered: &Covered,
     baseq: u8,
-) -> Result<Vec<crate::aligner::five_base_duplex::SiteObs>> {
+) -> Result<CpgWalk> {
     use crate::aligner::five_base_duplex::SiteObs;
     use noodles_sam::alignment::record::cigar::op::Kind;
 
-    let mut obs = Vec::new();
+    let mut walk = CpgWalk {
+        obs: Vec::new(),
+        gaps: Vec::new(),
+    };
+    let is_cpg_c = |rp: usize| {
+        let gb = g.get(rp).copied();
+        (gb == Some(b'C') && g.get(rp + 1) == Some(&b'G'))
+            || (gb == Some(b'G') && rp > 0 && g.get(rp - 1) == Some(&b'C'))
+    };
     let Some(start) = inner.alignment_start() else {
-        return Ok(obs);
+        return Ok(walk);
     };
     let seq = inner.sequence().as_ref();
     let qual = inner.quality_scores().as_ref();
@@ -3208,27 +3251,24 @@ fn cpg_observations(
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
                 for _ in 0..len {
                     if called.contains(&ri)
-                        && !mate_covered.contains(&rp)
-                        && !(baseq > 0 && qual.get(ri).is_some_and(|&q| q < baseq))
-                        && let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp))
+                        && !covered.hides(rp)
+                        && is_cpg_c(rp)
+                        && let Some(&base) = seq.get(ri)
                     {
                         let base = base.to_ascii_uppercase();
-                        if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
-                            if matches!(base, b'C' | b'T') {
-                                obs.push(SiteObs {
-                                    pos0: rp as u32,
-                                    plus: true,
-                                    t_equivalent: base == b'T',
-                                });
-                            }
-                        } else if gb == b'G'
-                            && rp > 0
-                            && g.get(rp - 1) == Some(&b'C')
-                            && matches!(base, b'G' | b'A')
-                        {
-                            obs.push(SiteObs {
+                        let plus = g[rp] == b'C';
+                        if base == b'N' || (baseq > 0 && qual.get(ri).is_some_and(|&q| q < baseq)) {
+                            walk.gaps.push(rp as u32);
+                        } else if plus && matches!(base, b'C' | b'T') {
+                            walk.obs.push(SiteObs {
                                 pos0: rp as u32,
-                                plus: false,
+                                plus,
+                                t_equivalent: base == b'T',
+                            });
+                        } else if !plus && matches!(base, b'G' | b'A') {
+                            walk.obs.push(SiteObs {
+                                pos0: rp as u32,
+                                plus,
                                 t_equivalent: base == b'A',
                             });
                         }
@@ -3238,11 +3278,21 @@ fn cpg_observations(
                 }
             }
             Kind::Insertion | Kind::SoftClip => ri += len,
-            Kind::Deletion | Kind::Skip => rp += len,
+            Kind::Deletion | Kind::Skip => {
+                // A deletion between two called bases is no information at its CpGs.
+                if ri > 0 && called.contains(&(ri - 1)) && called.contains(&ri) {
+                    for d in rp..rp + len {
+                        if is_cpg_c(d) && !covered.hides(d) {
+                            walk.gaps.push(d as u32);
+                        }
+                    }
+                }
+                rp += len;
+            }
             _ => {}
         }
     }
-    Ok(obs)
+    Ok(walk)
 }
 
 /// #787 deconvolution pass: read back the just-written 5-Base BAM, build the per-CpG
@@ -3251,7 +3301,8 @@ fn cpg_observations(
 /// `+` strand, OB reads the `-` strand (in forward orientation). At a genomic `C` (CpG)
 /// the own strand is OT and the T-equivalent allele is `T`; at a genomic `G` the own
 /// strand is OB and the T-equivalent allele is `A`. R2 is called on its R1's strand, adds
-/// only the positions R1 does not cover, and must directly follow its R1.
+/// the positions R1 does not cover and the CpGs where R1 has no information, and must
+/// follow its R1.
 fn run_five_base_deconvolution(
     genome: &Genome,
     bam_path: &Path,
@@ -3271,7 +3322,7 @@ fn run_five_base_deconvolution(
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("deconvolution: {e}")))?;
         let inner = rec.inner();
-        let Some(mate_covered) = mates.next(inner, "deconvolution", bam_path)? else {
+        let Some(covered) = mates.next(inner, "deconvolution", bam_path)? else {
             continue; // secondary / supplementary
         };
         let flags = u16::from(inner.flags());
@@ -3293,7 +3344,9 @@ fn run_five_base_deconvolution(
             continue;
         };
         let Some(g) = genome.get(chrom) else { continue };
-        for o in cpg_observations(inner, g, &mate_covered, baseq)? {
+        let walk = cpg_observations(inner, g, &covered, baseq)?;
+        mates.record_r1(inner, &walk.gaps);
+        for o in walk.obs {
             let own = if o.plus { is_ot } else { is_ob };
             dec.observe(chrom, o.pos0, o.plus, own, o.t_equivalent);
         }
@@ -3322,7 +3375,8 @@ fn run_five_base_deconvolution(
 /// family without explicit R1/R2 pairing. The MOLECULE strand (which duplex pair:
 /// `R1-forward == OT`) drives both family pairing and per-CpG own/opposite: R2 maps the
 /// other way but reads the copy of its R1's strand, so its bases are that strand's (#1222).
-/// R2 adds only the positions its R1 does not cover (#1227).
+/// R2 adds the positions its R1 does not cover (#1227) and the CpGs where R1 has no
+/// information (#1238).
 fn run_five_base_duplex_pe(
     genome: &Genome,
     bam_path: &Path,
@@ -3341,7 +3395,7 @@ fn run_five_base_duplex_pe(
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex-pe: {e}")))?;
         let inner = rec.inner();
-        let Some(mate_covered) = mates.next(inner, "duplex-pe", bam_path)? else {
+        let Some(covered) = mates.next(inner, "duplex-pe", bam_path)? else {
             continue; // secondary / supplementary
         };
         let flag = u16::from(inner.flags());
@@ -3388,7 +3442,9 @@ fn run_five_base_duplex_pe(
             Vec::new()
         };
 
-        let obs = cpg_observations(inner, g, &mate_covered, baseq)?;
+        let walk = cpg_observations(inner, g, &covered, baseq)?;
+        mates.record_r1(inner, &walk.gaps);
+        let obs = walk.obs;
         let key = DuplexKey {
             chrom: chrom.clone(),
             start: frag_start,
@@ -9084,15 +9140,15 @@ mod tests {
                 s.to_vec()
             }
         };
-        let q = vec![b'I'; r1.seq.len()];
+        let (q1, q2) = (vec![b'I'; r1.seq.len()], vec![b'I'; r2.seq.len()]);
         five_base_emit_pe_record(
             &r1,
             &r2,
             name,
             &read(&r1),
-            &q,
+            &q1,
             &read(&r2),
-            &q,
+            &q2,
             genome,
             &refid,
             false,
@@ -9388,6 +9444,137 @@ mod tests {
         let refs: Vec<&crate::io::BismarkRecord> = bare.iter().collect();
         assert!(bare[0].inner().quality_scores().as_ref().is_empty());
         assert_eq!(pass_outputs(&genome, dir.path(), "noq", &refs, 20), clean);
+    }
+
+    /// A `R2_GENOME` pair: R1 `r1` on [2,12) (CIGAR `cigar1`), R2 `r2` on [8,18), top strand.
+    fn r2_genome_top_pair(
+        genome: &Genome,
+        name: &str,
+        cigar1: &str,
+        r1: &str,
+        r2: &str,
+        umi_len: usize,
+    ) -> (crate::io::BismarkRecord, crate::io::BismarkRecord) {
+        let q1 = "I".repeat(r1.len());
+        let q2 = "I".repeat(r2.len());
+        emit_test_pair(
+            genome,
+            name,
+            &format!("{name}\t99\tchr1\t3\t60\t{cigar1}\t=\t9\t16\t{r1}\t{q1}\tAS:i:0"),
+            &format!("{name}\t147\tchr1\t9\t60\t10M\t=\t3\t-16\t{r2}\t{q2}\tAS:i:0"),
+            umi_len,
+        )
+    }
+
+    const R2_LEFT: &str = "TTCGTTTCGT";
+    const R2_RIGHT: &str = "TCGTTTTCGT";
+
+    /// #1238: where R1 reads an `N` in the overlap, R2's base fills the CpG.
+    #[test]
+    fn five_base_deconvolution_r2_fills_r1_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0);
+        // R1's `N` at the overlap `+` cytosine at 0-based 9.
+        let (n1, n2) = r2_genome_top_pair(&genome, "p", "10M", "TTCGTTTNGT", R2_RIGHT, 0);
+        assert_eq!(
+            pass_outputs(&genome, dir.path(), "n", &[&n1, &n2], 0),
+            clean
+        );
+    }
+
+    /// #1238: where R1's base is below `--five_base_baseq` in the overlap, R2's base counts.
+    #[test]
+    fn five_base_duplex_pe_r2_fills_r1_low_quality() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&t1, &t2, &b1, &b2], 20);
+        // Phred 2 at R1's overlap `+` cytosine at 0-based 9 (R1 starts at 2).
+        let mut q = vec![40u8; 10];
+        q[7] = 2;
+        let t1q = with_qual(&t1, &q);
+        let low = pass_outputs(&genome, dir.path(), "low", &[&t1q, &t2, &b1, &b2], 20);
+        let family = low.1.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t6\t0", "{}", low.1);
+        assert_eq!(low, clean);
+    }
+
+    /// #1238: a mismatching R1 base is information, so it still hides R2's base.
+    #[test]
+    fn five_base_r1_mismatch_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0).0;
+        // A `C` at the overlap `-` cytosine at 0-based 10.
+        let (m1, m2) = r2_genome_top_pair(&genome, "p", "10M", "TTCGTTTCCT", R2_RIGHT, 0);
+        let rows = pass_outputs(&genome, dir.path(), "mm", &[&m1, &m2], 0).0;
+        let without_11: Vec<(u32, String)> = clean.into_iter().filter(|r| r.0 != 11).collect();
+        assert_eq!(rows, without_11);
+    }
+
+    /// #1238: where R1 has a deletion over an overlap CpG, R2's base fills it.
+    #[test]
+    fn five_base_deconvolution_r2_fills_r1_deletion() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0);
+        // R1 deletes the `+` cytosine at 0-based 9.
+        let (d1, d2) = r2_genome_top_pair(&genome, "p", "7M1D2M", "TTCGTTTGT", R2_RIGHT, 0);
+        assert_eq!(u16::from(d1.inner().flags()) & 0x40, 0x40);
+        assert_eq!(
+            pass_outputs(&genome, dir.path(), "del", &[&d1, &d2], 0),
+            clean
+        );
+    }
+
+    /// #1238: a masked inline UMI in R1 still hides the R2 bases under it.
+    #[test]
+    fn five_base_r1_masked_umi_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let line = |f: u16, tlen: i32| {
+            format!("p\t{f}\tchr1\t3\t60\t10M\t=\t3\t{tlen}\t{R2_LEFT}\tIIIIIIIIII\tAS:i:0")
+        };
+        // Both mates on [2,12); R1's 3-base UMI covers 0-based 2-4.
+        let (r1, r2) = emit_test_pair(&genome, "p", &line(99, 10), &line(147, -10), 3);
+        let rows = pass_outputs(&genome, dir.path(), "umi", &[&r1, &r2], 0).0;
+        assert!(
+            rows.iter().all(|r| r.0 != 5),
+            "no call under R1's UMI: {rows:?}"
+        );
+    }
+
+    /// #1238: an R1's no-call positions do not carry over to the next pair.
+    #[test]
+    fn five_base_r1_gaps_reset_per_pair() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (b1, b2) = r2_genome_top_pair(&genome, "b", "10M", R2_LEFT, R2_RIGHT, 0);
+        // The duplex pass drops a record without a mate position: B's R1 but not its R2.
+        let mut inner = b1.inner().clone();
+        *inner.mate_alignment_start_mut() = None;
+        let b1x = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (c1, c2) = r2_genome_pair(&genome, "c", false, 0);
+        let duplex = |a1_seq: &str, tag: &str| {
+            // A lone R1 before pair B, in a family of its own (mate at 10).
+            let (a1, _) = emit_test_pair(
+                &genome,
+                "a",
+                &format!("a\t99\tchr1\t3\t60\t10M\t=\t10\t17\t{a1_seq}\tIIIIIIIIII\tAS:i:0"),
+                "a\t147\tchr1\t10\t60\t10M\t=\t3\t-17\tCGTTTTCGTT\tIIIIIIIIII\tAS:i:0",
+                0,
+            );
+            pass_outputs(&genome, dir.path(), tag, &[&a1, &b1x, &b2, &c1, &c2], 0).1
+        };
+        // `N`s at the overlap cytosines 9 and 10 in A's R1 must not open B's R1 span.
+        let with_gaps = duplex("TTCGTTTNNT", "gaps");
+        assert!(with_gaps.contains("\t1+2\t"), "{with_gaps}");
+        assert_eq!(with_gaps, duplex(R2_LEFT, "clean"));
     }
 
     /// #1236: both passes ignore secondary and supplementary records.
