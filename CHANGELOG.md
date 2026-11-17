@@ -3,9 +3,16 @@
 
 ## Unreleased
 
+### All tools
+
+- **The extractor, bam2nuc, filter_non_conversion and methylation_consistency now read CRAM 3.0/3.1 alignments with `--cram_ref`, as deduplication already did ([#1205](https://github.com/FelixKrueger/Bismark/pull/1205), [#1207](https://github.com/FelixKrueger/Bismark/pull/1207)).**
+- **Alignments read from CRAM get their NM and MD tags back, and deduplicated CRAM input is named without `.cram` ([#1206](https://github.com/FelixKrueger/Bismark/pull/1206)).**
+- **Deduplication, the extractor, bam2nuc, filter_non_conversion and methylation_consistency read a BAM as paired-end when its first record is paired although the Bismark `@PG` line has no `-1`/`-2`, as after a positional paired uBAM, BINSEQ or CRAM run ([#1218](https://github.com/FelixKrueger/Bismark/pull/1218)).**
+- **BAM output ends in a single BGZF EOF block and a write error such as a full disk now fails the run instead of leaving a truncated BAM ([#1173](https://github.com/FelixKrueger/Bismark/pull/1173)).**
+
 ### bismark (aligner)
 
-- **New `--bwamem3` adds bwa-mem3 (0.16.0 and 0.17.0 validated) as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
+- **New `--bwamem3` adds bwa-mem3 (0.16.0 and 0.17.0 validated) as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209), [#1240](https://github.com/FelixKrueger/Bismark/pull/1240)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
 - **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **`--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` now skip those bases too, read from a new `mk:B:I` tag ([#1211](https://github.com/FelixKrueger/Bismark/issues/1211); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
@@ -15,6 +22,48 @@
 - **`--five_base_deconvolution` and `--five_base_duplex` now call a CpG cytosine only from a C or T (G or A on the minus strand) at or above `--five_base_baseq`, as the methylation call does, so an `N` no longer counts as unmethylated ([#1237](https://github.com/FelixKrueger/Bismark/issues/1237)).**
 - **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem3 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
+- **Unaligned CRAM is accepted as read input like a uBAM ([#1204](https://github.com/FelixKrueger/Bismark/pull/1204)).**
+- **Outputs are written under a `.partial` name and renamed when complete, so a failed run leaves no half-written BAM or report under its final name ([#1212](https://github.com/FelixKrueger/Bismark/pull/1212), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213)).**
+- **`--nucleotide_coverage` now runs bam2nuc on each final BAM, as Perl did, instead of being accepted and ignored ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213), [#1215](https://github.com/FelixKrueger/Bismark/pull/1215)).**
+- **`--old_flag`, `--rg_id` and `--rg_sample` are rejected instead of ignored, and minimap2 and rammap runs reject `-D`/`-R` ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1186](https://github.com/FelixKrueger/Bismark/pull/1186), [#1201](https://github.com/FelixKrueger/Bismark/pull/1201)).**
+- **Two inputs that would write the same output name, such as `--basename` with several files, now stop the run before anything is written ([#1199](https://github.com/FelixKrueger/Bismark/pull/1199)).**
+- **`--multicore` fails on paired-end mate files of different lengths, and its subset files and uBAM/BINSEQ transcode directories carry the run's process id so runs sharing a temp dir no longer overwrite each other ([#1183](https://github.com/FelixKrueger/Bismark/pull/1183), [#1185](https://github.com/FelixKrueger/Bismark/pull/1185)).**
+- **`--combined_index` runs fail when the read names of the two streams go out of step, instead of reporting every later read as unaligned and exiting 0 ([#1184](https://github.com/FelixKrueger/Bismark/pull/1184)).**
+- **An alignment that runs past the chromosome end is counted as a read whose genomic sequence could not be extracted, as in Perl, instead of crashing the run ([#1187](https://github.com/FelixKrueger/Bismark/pull/1187)).**
+- **The 5-Base deconvolution summary now labels its two counts as methylated and all calls at non-variant sites, so their ratio reads as a methylation level rather than a fraction of calls kept ([#1203](https://github.com/FelixKrueger/Bismark/pull/1203)).**
+
+### deduplicate_bismark
+
+- **Coordinate-sorted single-end BAMs are accepted ([#1179](https://github.com/FelixKrueger/Bismark/pull/1179)).**
+- **`--sam` output stays SAM text with `--parallel`, `--multiple` inputs whose `@SQ` order differs are rejected, and a failed run removes its partial output ([#1175](https://github.com/FelixKrueger/Bismark/pull/1175), [#1174](https://github.com/FelixKrueger/Bismark/pull/1174), [#1178](https://github.com/FelixKrueger/Bismark/pull/1178)).**
+
+### bismark extract (methylation extractor)
+
+- **`--include_overlap` now works on a paired-end BAM detected without `-p`, the parallel pipeline stops at the first error, and `--cytosine_report` reads the coverage from memory instead of re-reading the `.cov.gz` ([#1195](https://github.com/FelixKrueger/Bismark/pull/1195), [#1169](https://github.com/FelixKrueger/Bismark/pull/1169), [#1194](https://github.com/FelixKrueger/Bismark/pull/1194)).**
+
+### bismark2bedGraph
+
+- **Concatenated gzip input is read to the end instead of stopping after the first member ([#1168](https://github.com/FelixKrueger/Bismark/pull/1168)).**
+
+### coverage2cytosine
+
+- **Reports, including the GpC and DRACH ones, are written as they are built instead of buffered a chromosome at a time, which lowers peak memory ([#1170](https://github.com/FelixKrueger/Bismark/pull/1170), [#1197](https://github.com/FelixKrueger/Bismark/pull/1197)).**
+
+### bam2nuc
+
+- **`-s`/`--single` and `-p`/`--paired` override the layout read from the `@PG` line, and the genomic composition cache is written atomically ([#1224](https://github.com/FelixKrueger/Bismark/pull/1224), [#1177](https://github.com/FelixKrueger/Bismark/pull/1177)).**
+
+### bismark_genome_preparation
+
+- **A FASTA without a final newline no longer joins the next file's header onto its last line, and dotfiles are skipped when finding FASTA files ([#1176](https://github.com/FelixKrueger/Bismark/pull/1176), [#1180](https://github.com/FelixKrueger/Bismark/pull/1180)).**
+
+### bismark2summary
+
+- **minimap2, rammap and bwa-mem3 BAMs are found and `--help` says so, and the HTML timestamp is local time as in Perl ([#1196](https://github.com/FelixKrueger/Bismark/pull/1196), [#1209](https://github.com/FelixKrueger/Bismark/pull/1209), [#1230](https://github.com/FelixKrueger/Bismark/pull/1230), [#1171](https://github.com/FelixKrueger/Bismark/pull/1171)).**
+
+### Scripts
+
+- **Breaking: `merge_coverage_files_ARGV.py -b X` now writes `X.cov.gz` instead of `X.merged.cov.gz`, never reads its own output and exits 1 on error; `merge_arbitrary_coverage_files.py` still works and runs it ([#1181](https://github.com/FelixKrueger/Bismark/pull/1181)).**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)
