@@ -165,7 +165,7 @@ The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extracto
 
 ### bwa-mem3 (`--bwamem3`)
 
-[bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 has a methylation-aware 5-Base mode
+[bwa-mem3](https://github.com/fg-labs/bwa-mem3) (0.16.0 or later) has a methylation-aware 5-Base mode
 (`mem --meth=5base`) that does not penalise a read `T` at a genomic `C`, so methylated reads
 from CpG-dense regions align as well as unmethylated ones (see the
 [known limitation](#known-limitation-cpg-dense-methylated-regions)). bwa-mem3 only places the
@@ -178,7 +178,7 @@ It is opt-in because it is expensive:
 | Index | `bwa-mem3 index --meth genome.fa`: about 1 h and about 104 GB RAM for GRCh38 |
 | Index on disk | about 23 GB needed for GRCh38; `bwa-mem3 index --meth` writes about 39 GB, and `genome.fa.meth.fa` (6.3 GB) and the plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
 | Alignment memory | bwa-mem3's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
-| Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 alone) |
+| Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
 Pass the FASTA path the index was built from as `--five_base_index`. Build the index from
 the same FASTA as the `--genome` folder: Bismark compares the index's contig names and
@@ -192,8 +192,8 @@ Bismark fixes every bwa-mem3 option that affects placement (`--meth-scoring neut
 --meth-context all --meth-seed-prune=spec30`), because bwa-mem3's defaults have changed
 between releases, and it ignores `$BWAMEM3_METH_SEED_PRUNE`. The Bowtie 2 and minimap2
 tuning options and `--local` are rejected with `--bwamem3`; `-p`/`--multicore` set its
-threads. Versions before 0.16.0 are rejected, and other versions run with a warning that
-0.16.0 is the validated one. The BAM records the bwa-mem3 version and command line in a
+threads. Versions before 0.16.0 are rejected; 0.16.0 and 0.17.0 are validated, and other
+versions run with a warning. The BAM records the bwa-mem3 version and command line in a
 `@PG ID:bwa-mem3` line, and the report states the version.
 
 As with the other engines, Bismark keeps proper pairs at any MAPQ; about 5% of bwa-mem3's

@@ -65,7 +65,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 
 ### bwa-mem3
 
-- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; another version runs with a warning that the 5-Base engine is validated against 0.16.0 (`detect_aligner` in `aligner/aligner.rs`).
+- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; 0.16.0 and 0.17.0 are validated (`VALIDATED_BWAMEM3_VERSIONS`), and another version runs with a warning that the 5-Base engine is validated against them (`detect_aligner` in `aligner/aligner.rs`).
 - **Index files.** `<genome.fa>.amb`, `.ann`, `.pac` and `.meth.amb`, `.meth.ann`, `.meth.pac`, `.meth.bwt.2bit.64` must exist before the run starts (`check_bwamem3_index_files` in `aligner/config.rs`). The plain `.bwt.2bit.64` and `.meth.fa` are not needed.
 - **Same assembly.** The contig names and lengths in the `.ann` file must equal the genome folder's before bwa-mem3 starts, and the `@SQ` lines bwa-mem3 writes must equal them again (`read_bwa_ann`, `check_contigs_match` and `five_base_align_and_call_pe` in `aligner/mod.rs`).
 - **Keep the index out of `--genome`.** A FASTA in the genome folder whose name ends in `.meth.fa` stops the run (`run_pe_five_base`).

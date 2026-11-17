@@ -1,6 +1,6 @@
 //! Hermetic `--illumina_5base --bwamem3` tests against a fake `bwa-mem3` script.
 //!
-//! The fake answers `version` with `0.16.0` and otherwise prints a SAM header plus one
+//! The fake answers `version` with `0.17.0` and otherwise prints a SAM header plus one
 //! R1 (FLAG 99) / R2 (FLAG 147) pair per FASTQ read pair, all mapped to `chr1:1`.
 
 use std::fs;
@@ -64,12 +64,12 @@ fn make_stub_bwamem3_index(prefix: &Path, contigs: &[(&str, u64)]) {
 fn make_fake_bwamem3(dir: &Path, sq: &str) {
     let script = format!(
         r#"#!/bin/sh
-[ "$1" = version ] && {{ echo 0.16.0; echo "Compiler: gcc 15.2.0"; exit 0; }}
+[ "$1" = version ] && {{ echo 0.17.0; echo "Compiler: gcc 15.2.0"; exit 0; }}
 [ -n "$FAKE_ENV_DUMP" ] && env > "$FAKE_ENV_DUMP"
 [ -n "$FAKE_ARGV_DUMP" ] && echo "$@" > "$FAKE_ARGV_DUMP"
 n=$#
 eval r1=\${{$((n-1))}}
-printf '@HD\tVN:1.5\n{sq}@PG\tID:bwa-mem3\tPN:bwa-mem3\tVN:0.16.0\n'
+printf '@HD\tVN:1.5\n{sq}@PG\tID:bwa-mem3\tPN:bwa-mem3\tVN:0.17.0\n'
 awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id) }}
      NR%4==2 {{
        print id "\t99\tchr1\t1\t60\t6M\t=\t1\t6\t" $0 "\tFFFFFF\tAS:i:6"
@@ -231,7 +231,7 @@ fn bwamem3_engine_sq_mismatch_fails() {
 fn custom_fake(run: &FakeRun, body: &str) {
     let script = format!(
         r#"#!/bin/sh
-[ "$1" = version ] && {{ echo 0.16.0; exit 0; }}
+[ "$1" = version ] && {{ echo 0.17.0; exit 0; }}
 n=$#
 eval r1=\${{$((n-1))}}
 printf '@HD\tVN:1.5\n@SQ\tSN:chr1\tLN:8\n'
@@ -320,7 +320,7 @@ fn bwamem3_killed_before_the_header_is_an_engine_failure_not_an_index_mismatch()
     let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
     write_exec(
         &run.bins.path().join("bwa-mem3"),
-        "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.16.0; exit 0; }\nkill -9 $$\n",
+        "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.17.0; exit 0; }\nkill -9 $$\n",
     );
     bwamem3_cmd(&run)
         .assert()
@@ -524,12 +524,12 @@ fn bwamem3_bam_header_has_engine_pg_and_stays_paired() {
         .unwrap_or_else(|| panic!("no bwa-mem3 @PG:\n{text}"));
     assert!(pg.contains("\tPN:bwa-mem3"), "{pg}");
     assert!(pg.contains("\tPP:Bismark"), "{pg}");
-    assert!(pg.contains("\tVN:0.16.0"), "{pg}");
+    assert!(pg.contains("\tVN:0.17.0"), "{pg}");
     assert!(pg.contains("\tCL:bwa-mem3 mem --meth=5base "), "{pg}");
     assert!(text.contains("@PG\tID:Bismark\t"), "{text}");
     assert_eq!(bismark::io::detect_paired_from_header(&header), Some(true));
     let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
-    assert!(rep.contains("bwa-mem3 version: 0.16.0\n"), "{rep}");
+    assert!(rep.contains("bwa-mem3 version: 0.17.0\n"), "{rep}");
 }
 
 fn bam_records(run: &FakeRun) -> Vec<bismark::io::BismarkRecord> {
@@ -650,15 +650,33 @@ fn bwamem3_other_version_warns_and_runs() {
     let fake = run.bins.path().join("bwa-mem3");
     let script = fs::read_to_string(&fake)
         .unwrap()
-        .replace("echo 0.16.0", "echo 0.17.0");
+        .replace("echo 0.17.0", "echo 0.18.0");
     write_exec(&fake, &script);
     bwamem3_cmd(&run)
         .assert()
         .success()
         .stderr(predicate::str::contains(
-            "Warning: detected bwa-mem3 0.17.0; Bismark's 5-Base engine is validated against 0.16.0.",
+            "Warning: detected bwa-mem3 0.18.0; Bismark's 5-Base engine is validated against 0.16.0 and 0.17.0.",
         ))
         .stderr(predicate::str::contains("byte-identity").not());
+}
+
+/// bwa-mem3 0.16.0 is validated too, so it runs without the version warning.
+#[cfg(unix)]
+#[test]
+fn bwamem3_016_runs_without_warning() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let fake = run.bins.path().join("bwa-mem3");
+    let script = fs::read_to_string(&fake)
+        .unwrap()
+        .replace("echo 0.17.0", "echo 0.16.0");
+    write_exec(&fake, &script);
+    bwamem3_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Warning: detected bwa-mem3").not());
+    let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
+    assert!(rep.contains("bwa-mem3 version: 0.16.0\n"), "{rep}");
 }
 
 /// `bismark --taps` for `run`, before any extra arguments.
@@ -709,7 +727,7 @@ fn taps_report_has_chemistry_line_after_version() {
         ));
     let rep = report(&run);
     assert!(
-        rep.contains("bwa-mem3 version: 0.16.0\nLibrary chemistry: TAPS (mC->T)\n\n"),
+        rep.contains("bwa-mem3 version: 0.17.0\nLibrary chemistry: TAPS (mC->T)\n\n"),
         "{rep}"
     );
     assert!(
@@ -769,7 +787,7 @@ fn taps_records_equal_the_five_base_run() {
     assert_eq!(taps, five);
     let rep5 = report(&twin);
     assert!(!rep5.contains("Library chemistry"), "{rep5}");
-    assert!(rep5.contains("bwa-mem3 version: 0.16.0\n\n"), "{rep5}");
+    assert!(rep5.contains("bwa-mem3 version: 0.17.0\n\n"), "{rep5}");
     assert!(rep5.contains("mem --meth=5base "), "{rep5}");
 }
 
@@ -870,13 +888,13 @@ fn taps_version_warning_names_taps() {
     let fake = run.bins.path().join("bwa-mem3");
     let script = fs::read_to_string(&fake)
         .unwrap()
-        .replace("echo 0.16.0", "echo 0.17.0");
+        .replace("echo 0.17.0", "echo 0.18.0");
     write_exec(&fake, &script);
     taps_cmd(&run)
         .assert()
         .success()
         .stderr(predicate::str::contains(
-            "Warning: detected bwa-mem3 0.17.0; Bismark's TAPS engine is validated against 0.16.0.",
+            "Warning: detected bwa-mem3 0.18.0; Bismark's TAPS engine is validated against 0.16.0 and 0.17.0.",
         ));
 }
 

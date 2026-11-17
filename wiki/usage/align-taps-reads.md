@@ -78,7 +78,7 @@ The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-c
 |---|---|
 | Start-up notice (`five_base_notice` in `aligner/mod.rs`) | `Note: --taps is the TAPS (mC->T) mode`, aligned with bwa-mem3 to the unconverted genome, not byte-identical, validated on public TAPS data |
 | Resolved configuration | a `TAPS index:` line (`aligner/config.rs`) |
-| bwa-mem3 version messages (`detect_aligner` in `aligner/aligner.rs`) | `--taps needs bwa-mem3 >= 0.16.0`; another version warns that the TAPS engine is validated against 0.16.0 |
+| bwa-mem3 version messages (`detect_aligner` in `aligner/aligner.rs`) | `--taps needs bwa-mem3 >= 0.16.0`; a version other than 0.16.0 or 0.17.0 warns that the TAPS engine is validated against those two |
 | Alignment report | `Library chemistry: TAPS (mC->T)` after the `bwa-mem3 version:` line (`run_pe_five_base`) |
 | BAM `@PG` | Bismark's line holds the command line with `--taps`; bwa-mem3's holds `--meth=taps` |
 

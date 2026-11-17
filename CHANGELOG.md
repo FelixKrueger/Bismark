@@ -5,7 +5,7 @@
 
 ### bismark (aligner)
 
-- **New `--bwamem3` adds bwa-mem3 0.16.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
+- **New `--bwamem3` adds bwa-mem3 (0.16.0 and 0.17.0 validated) as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
 - **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **`--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` now skip those bases too, read from a new `mk:B:I` tag ([#1211](https://github.com/FelixKrueger/Bismark/issues/1211); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**

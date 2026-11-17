@@ -35,8 +35,8 @@ bismark --taps --five_base_index /path/to/bwm3/genome.fa \
 `--five_base_index` is the FASTA path the index was built from (the option name is shared with
 the 5-Base mode). The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
 are the same as for `--illumina_5base --bwamem3`; see
-[bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 is the
-validated version; older versions are rejected and newer ones run with a warning.
+[bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and
+0.17.0 are validated; older versions are rejected and other versions run with a warning.
 
 Output names are those of a bwa-mem3 5-Base run (`*_bismark_bwamem3_pe.bam`,
 `*_bismark_bwamem3_PE_report.txt`). The run identifies itself as TAPS: the start-up notice, the
@@ -86,8 +86,8 @@ below come from public data and can be reproduced with the commands at the end o
 
 ### What CI checks on every change
 
-- **bwa-mem3 mode.** bwa-mem3 0.16.0 maps `--meth=taps` and `--meth=5base` to the same chemistry
-  ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.16.0/src/meth_opts.cpp#L18-L21)),
+- **bwa-mem3 mode.** bwa-mem3 0.16.0 and 0.17.0 map `--meth=taps` and `--meth=5base` to the same
+  chemistry ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.17.0/src/meth_opts.cpp#L18-L21)),
   and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem3`.
 - **Spike-in controls.** 6,316 public TAPS read pairs on the CpG-methylated lambda and the
   unmodified 2 kb controls, from the mouse ES cell TAPS library of Liu et al. (2019), GEO
