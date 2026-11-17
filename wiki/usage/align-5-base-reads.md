@@ -5,7 +5,7 @@ description: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem
 tags: [alignment, 5-base, minimap2, bowtie2, hisat2, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-14
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
@@ -21,7 +21,7 @@ sources:
     commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: d1dd2e8
+    commit: a5891d2
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
     commit: d1dd2e8

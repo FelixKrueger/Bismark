@@ -5,7 +5,7 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-16
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
@@ -42,7 +42,7 @@ sources:
     commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 1dd7112
+    commit: a5891d2
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
     commit: 1dd7112
