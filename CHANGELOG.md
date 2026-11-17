@@ -1,7 +1,7 @@
 # Bismark Changelog
 
 
-## Unreleased
+## Bismark 3.3.0 (released 2026-11-17)
 
 Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)'s code audit ([#1167](https://github.com/FelixKrueger/Bismark/issues/1167)).
 
