@@ -216,6 +216,15 @@ duplex families identical; own-strand duplex calls 301,811 → 281,563 (−6.7 %
 47.0 % → 47.0 % (DRAGEN genome-wide 49.7 %); duplex sites variant / methylation / undetermined
 2,150 / 273,953 / 860 → 2,167 / 273,929 / 863.
 
+The deconvolution and duplex passes then called a CpG cytosine only from its two alleles (C/T,
+or G/A on the minus strand), at or above `--five_base_baseq` (#1237). Same lane, before vs after;
+the core BAM, consensus BAM and duplex families are identical at both settings:
+
+| `--five_base_baseq` | deconvolution calls | duplex calls | deconvolution precision / recall |
+|---|---|---|---|
+| 0 | 176,415,247 → 175,636,178 (−0.4 %) | 281,563 → 280,551 | 94.8 / 72.7 % → 94.7 / 72.7 % |
+| 20 | 176,415,247 → 172,503,185 (−2.2 %) | 281,563 → 277,068 | 94.8 / 72.7 % → 95.1 / 72.1 % |
+
 ### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
 
 The full-depth run exposed a real scalability bug: the consensus pass held every read's
