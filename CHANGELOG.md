@@ -3,6 +3,16 @@
 
 ## Unreleased
 
+Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)'s code audit ([#1167](https://github.com/FelixKrueger/Bismark/issues/1167)).
+
+### All tools
+
+- **BAM files now end with one BGZF EOF block instead of two, and a failed final flush (such as a full disk) is an error instead of a truncated BAM with exit 0; records are unchanged but BAM file md5s differ from 3.2.0 ([#1173](https://github.com/FelixKrueger/Bismark/pull/1173)).**
+- **CRAM files written by samtools now read back with the NM and MD tags that samtools leaves out ([#1206](https://github.com/FelixKrueger/Bismark/pull/1206)).**
+- **dedup, extract, bam2nuc, filter and consistency read a BAM as paired-end when its Bismark `@PG` line has no `-1`/`-2` but its first record is paired, as after a positional paired uBAM, BINSEQ or unaligned CRAM run; a `@PG` command line without a standalone `-1`/`-2` token (such as `--1=R1`) is therefore now read as paired-end, unlike Perl ([#1218](https://github.com/FelixKrueger/Bismark/pull/1218); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
+- **Known issue: for paired-end CRAM input the TLEN sign of some pairs can differ from `samtools view`, so use BAM input if TLEN matters ([#1206](https://github.com/FelixKrueger/Bismark/pull/1206)).**
+- **FASTA discovery skips dotfiles such as macOS `._chr1.fa` ([#1180](https://github.com/FelixKrueger/Bismark/pull/1180)).**
+
 ### bismark (aligner)
 
 - **New `--bwamem3` adds bwa-mem3 (0.16.0 and 0.17.0 validated) as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
@@ -15,6 +25,69 @@
 - **`--five_base_deconvolution` and `--five_base_duplex` now call a CpG cytosine only from a C or T (G or A on the minus strand) at or above `--five_base_baseq`, as the methylation call does, so an `N` no longer counts as unmethylated ([#1237](https://github.com/FelixKrueger/Bismark/issues/1237)).**
 - **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem3 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
+- **`--nucleotide_coverage` now runs bam2nuc on each finished BAM and writes the `nucleotide_stats.txt` that `bismark report` reads, as Perl Bismark does, instead of being accepted and ignored ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213), [#1215](https://github.com/FelixKrueger/Bismark/pull/1215)).**
+- **`--old_flag` is now rejected instead of accepted and ignored ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200)).**
+- **Outputs are written as `<name>.<pid>.partial` and renamed when their input finishes, so a failed run no longer leaves a finished-looking BAM or report under the final name ([#1212](https://github.com/FelixKrueger/Bismark/pull/1212)).**
+- **Unaligned CRAM read files are accepted as input, like a uBAM ([#1204](https://github.com/FelixKrueger/Bismark/pull/1204)).**
+- **Inputs that would write the same output name are rejected at start-up ([#1199](https://github.com/FelixKrueger/Bismark/pull/1199)).**
+- **`--multicore` subset and uBAM/BINSEQ transcode temp files now include the process id, so concurrent runs sharing a temp directory, or same-named R1/R2 files from different folders, no longer collide ([#1185](https://github.com/FelixKrueger/Bismark/pull/1185)).**
+- **Paired-end `--multicore` runs now fail when R1 and R2 have different read counts ([#1183](https://github.com/FelixKrueger/Bismark/pull/1183)).**
+- **`--combined_index` runs now fail when the read names of the passes get out of step ([#1184](https://github.com/FelixKrueger/Bismark/pull/1184)).**
+- **An alignment that runs past the chromosome end no longer makes the aligner panic ([#1187](https://github.com/FelixKrueger/Bismark/pull/1187)).**
+- **`--rg_id` and `--rg_sample` are rejected like `--rg_tag` ([#1186](https://github.com/FelixKrueger/Bismark/pull/1186)).**
+- **`--minimap2` and `--rammap` reject `-D`/`-R` instead of ignoring them, and the single-end run summary loses leftover developer text ([#1201](https://github.com/FelixKrueger/Bismark/pull/1201)).**
+- **The 5-Base deconvolution summary line now says what its two counts are ([#1203](https://github.com/FelixKrueger/Bismark/pull/1203)).**
+
+### bismark dedup
+
+- **`--multiple` rejects inputs whose `@SQ` order differs ([#1174](https://github.com/FelixKrueger/Bismark/pull/1174)).**
+- **`--sam` output stays text SAM when `--parallel` is set ([#1175](https://github.com/FelixKrueger/Bismark/pull/1175)).**
+- **A failed non-UMI run removes its partial output ([#1178](https://github.com/FelixKrueger/Bismark/pull/1178)).**
+- **Coordinate-sorted single-end input is accepted, as in Perl ([#1179](https://github.com/FelixKrueger/Bismark/pull/1179)).**
+- **For a `.cram` input the output and report names drop the `.cram` (`x.deduplicated.bam`) ([#1206](https://github.com/FelixKrueger/Bismark/pull/1206)).**
+
+### bismark extract
+
+- **New `--cram_ref` reads CRAM input ([#1205](https://github.com/FelixKrueger/Bismark/pull/1205)).**
+- **The parallel pipeline stops at the first error ([#1169](https://github.com/FelixKrueger/Bismark/pull/1169)).**
+- **`--include_overlap` and `--yacht` are checked against the auto-detected single- or paired-end layout ([#1195](https://github.com/FelixKrueger/Bismark/pull/1195)).**
+- **`--cytosine_report` takes the coverage from memory instead of re-reading the `.bismark.cov.gz` ([#1194](https://github.com/FelixKrueger/Bismark/pull/1194)).**
+
+### bismark coverage2cytosine
+
+- **The cytosine, GpC and DRACH reports are streamed instead of buffered a chromosome at a time ([#1170](https://github.com/FelixKrueger/Bismark/pull/1170), [#1197](https://github.com/FelixKrueger/Bismark/pull/1197)).**
+
+### bismark bedgraph
+
+- **Every member of a concatenated gzip input is read, not only the first ([#1168](https://github.com/FelixKrueger/Bismark/pull/1168)).**
+
+### bismark bam2nuc, filter and consistency
+
+- **`bismark bam2nuc`, `bismark filter` and `bismark consistency` read CRAM 3.0/3.1 input with `--cram_ref` ([#1207](https://github.com/FelixKrueger/Bismark/pull/1207)).**
+- **New `-s/--single` and `-p/--paired` for `bismark bam2nuc` set the layout for a BAM whose `@PG` line does not show it, such as one from a positional paired uBAM, BINSEQ or unaligned CRAM run ([#1224](https://github.com/FelixKrueger/Bismark/pull/1224)).**
+- **bam2nuc writes its genomic composition cache atomically ([#1177](https://github.com/FelixKrueger/Bismark/pull/1177)).**
+
+### bismark genome_preparation
+
+- **A FASTA file without a final newline no longer runs into the next file's header, in both the Rust tool and the legacy Perl script ([#1176](https://github.com/FelixKrueger/Bismark/pull/1176)).**
+
+### bismark summary
+
+- **The HTML report is stamped in local time like `bismark2report`, not UTC ([#1171](https://github.com/FelixKrueger/Bismark/pull/1171)).**
+- **minimap2, rammap and bwa-mem3 BAMs are discovered ([#1196](https://github.com/FelixKrueger/Bismark/pull/1196), [#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
+
+### Scripts
+
+- **`merge_coverage_files_ARGV.py` now never re-reads its own output, writes `merged_coverage_file.cov.gz` by default and exits non-zero on error, and `merge_arbitrary_coverage_files.py` is a wrapper for it ([#1181](https://github.com/FelixKrueger/Bismark/pull/1181)).**
+- **Breaking: `merge_coverage_files_ARGV.py -b X` writes `X.cov.gz` instead of `X.merged.cov.gz` ([#1181](https://github.com/FelixKrueger/Bismark/pull/1181)).**
+
+### Rust library
+
+- **Breaking: the public modules `bam2nuc::genome`, `coverage2cytosine::genome`, `summary::fmt_g` and `report::logging` and the unused `io::reconstitute_cram_reference_from_bismark_genome` are removed, and `summary::timestamp::now_ctime_utc` is now `now_ctime_local` ([#1171](https://github.com/FelixKrueger/Bismark/pull/1171), [#1172](https://github.com/FelixKrueger/Bismark/pull/1172)).**
+
+### Documentation
+
+- **The docs drop or correct flags the binary rejects, mark `--buffer_size`, `--scaffolds` and `--ample_memory` as ignored, give the real `--ambig_bam` file name and say aligner output goes to the current directory by default ([#1189](https://github.com/FelixKrueger/Bismark/pull/1189)–[#1192](https://github.com/FelixKrueger/Bismark/pull/1192)).**
 
 
 ## Bismark 3.2.0 (released 2026-11-09)
