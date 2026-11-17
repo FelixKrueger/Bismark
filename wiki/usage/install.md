@@ -9,16 +9,16 @@ updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: a5891d2
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
     commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: a5891d2
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a5891d2
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
     commit: d1dd2e8

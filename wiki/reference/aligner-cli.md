@@ -5,7 +5,7 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-16
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
@@ -27,7 +27,7 @@ sources:
     commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 1dd7112
+    commit: 3fcbe21
 ---
 
 # Aligner options

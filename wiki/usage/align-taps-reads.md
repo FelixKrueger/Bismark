@@ -21,7 +21,7 @@ sources:
     commit: 6aec899
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a5891d2
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
     commit: 1dd7112

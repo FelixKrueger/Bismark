@@ -5,7 +5,7 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-16
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
@@ -30,7 +30,7 @@ sources:
     commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 1dd7112
+    commit: 3fcbe21
 ---
 
 # Bismark overview
