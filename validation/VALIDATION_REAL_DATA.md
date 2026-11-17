@@ -225,6 +225,16 @@ the core BAM, consensus BAM and duplex families are identical at both settings:
 | 0 | 176,415,247 → 175,636,178 (−0.4 %) | 281,563 → 280,551 | 94.8 / 72.7 % → 94.7 / 72.7 % |
 | 20 | 176,415,247 → 172,503,185 (−2.2 %) | 281,563 → 277,068 | 94.8 / 72.7 % → 95.1 / 72.1 % |
 
+In the mate overlap, R2 then filled the CpGs where R1 has an `N`, a base below
+`--five_base_baseq` or a deletion (#1238). Same lane, before vs after; the core BAM, consensus BAM
+and duplex families are identical, and precision/recall is unchanged (94.7 / 72.7 % at 0,
+95.1 / 72.1 % at 20):
+
+| `--five_base_baseq` | deconvolution calls | duplex calls | deconvolution rows added |
+|---|---|---|---|
+| 0 | 175,636,178 → 175,639,120 | 280,551 → 280,552 | 71 |
+| 20 | 172,503,185 → 172,613,987 | 277,068 → 277,360 | 2,049 |
+
 ### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
 
 The full-depth run exposed a real scalability bug: the consensus pass held every read's
