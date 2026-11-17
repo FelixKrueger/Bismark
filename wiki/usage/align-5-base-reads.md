@@ -5,7 +5,7 @@ description: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem
 tags: [alignment, 5-base, minimap2, bowtie2, hisat2, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-14
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
@@ -21,7 +21,7 @@ sources:
     commit: d1dd2e8
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: d1dd2e8
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
     commit: d1dd2e8
@@ -65,7 +65,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 
 ### bwa-mem3
 
-- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; another version runs with a warning that the 5-Base engine is validated against 0.16.0 (`detect_aligner` in `aligner/aligner.rs`).
+- **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; 0.16.0 and 0.17.0 are validated (`VALIDATED_BWAMEM3_VERSIONS`), and another version runs with a warning that the 5-Base engine is validated against them (`detect_aligner` in `aligner/aligner.rs`).
 - **Index files.** `<genome.fa>.amb`, `.ann`, `.pac` and `.meth.amb`, `.meth.ann`, `.meth.pac`, `.meth.bwt.2bit.64` must exist before the run starts (`check_bwamem3_index_files` in `aligner/config.rs`). The plain `.bwt.2bit.64` and `.meth.fa` are not needed.
 - **Same assembly.** The contig names and lengths in the `.ann` file must equal the genome folder's before bwa-mem3 starts, and the `@SQ` lines bwa-mem3 writes must equal them again (`read_bwa_ann`, `check_contigs_match` and `five_base_align_and_call_pe` in `aligner/mod.rs`).
 - **Keep the index out of `--genome`.** A FASTA in the genome folder whose name ends in `.meth.fa` stops the run (`run_pe_five_base`).

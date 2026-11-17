@@ -5,7 +5,7 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-16
+updated: 2026-11-17
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
@@ -42,7 +42,7 @@ sources:
     commit: 1dd7112
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 1dd7112
+    commit: 3fcbe21
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
     commit: 1dd7112
@@ -118,7 +118,7 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `the bwa-mem3 index does not match the genome folder` (or `output header`) | The index was built from another FASTA or assembly; contig names or lengths differ (`check_contigs_match` in `aligner/mod.rs`) | Rebuild the index from the FASTA in the `--genome` folder |
 | `bwa-mem3 ended before writing its SAM header; bwa-mem3 exited with signal 9` | bwa-mem3 was killed while loading its index, usually for lack of memory (`five_base_align_and_call_pe`, `describe_exit` in `aligner/mod.rs`) | Give the job more memory |
 | `<file>.meth.fa in the genome folder is a bwa-mem3 index file` | The bwa-mem3 index sits in the `--genome` folder (`run_pe_five_base` in `aligner/mod.rs`) | Move the index to its own folder |
-| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.16.0, or pass `--path_to_bwamem3 <dir>` |
+| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.17.0, or pass `--path_to_bwamem3 <dir>` |
 | `--taps aligns with bwa-mem3 only` | `--taps` was given another aligner flag (`expand_taps` in `aligner/config.rs`) | Drop the aligner flag |
 | `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution, `--five_base_umi_qname` or `--five_base_emit_multiplicity` (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](usage/align-taps-reads.md) |
 | `--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure …` or `--five_base_min_mapq only filters the duplex/consensus pass …` | `--taps` with a non-zero `--five_base_umi_len` or `--five_base_min_mapq` (`expand_taps`) | Drop the option |

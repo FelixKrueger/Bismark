@@ -27,8 +27,11 @@ pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 /// reports `rammap 1.1.1` (a `rammap ` banner prefix, unlike minimap2's bare number).
 pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
 
-/// The bwa-mem3 version the 5-Base `--bwamem3` engine is validated against (concordance gate).
-pub const PINNED_BWAMEM3_VERSION: &str = "0.16.0";
+/// The bwa-mem3 version CI and the container install for the 5-Base `--bwamem3` engine.
+pub const PINNED_BWAMEM3_VERSION: &str = "0.17.0";
+
+/// The bwa-mem3 versions the 5-Base engine is validated against; others warn.
+pub const VALIDATED_BWAMEM3_VERSIONS: &[&str] = &["0.16.0", "0.17.0"];
 
 /// The first bwa-mem3 release with `--meth=5base`.
 pub const MIN_BWAMEM3_VERSION: (u32, u32, u32) = (0, 16, 0);
@@ -54,7 +57,7 @@ fn binary_name(kind: Aligner) -> &'static str {
     }
 }
 
-/// The pinned version `kind` is byte-identity-validated against.
+/// The pinned version of `kind`; bwa-mem3 is validated against [`VALIDATED_BWAMEM3_VERSIONS`].
 fn pinned_version(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
@@ -181,12 +184,18 @@ pub fn detect_aligner(
     });
 
     let pinned = pinned_version(kind);
-    if version != pinned && kind == Aligner::BwaMem3 {
+    let validated = if kind == Aligner::BwaMem3 {
+        VALIDATED_BWAMEM3_VERSIONS.contains(&version.as_str())
+    } else {
+        version == pinned
+    };
+    if !validated && kind == Aligner::BwaMem3 {
         eprintln!(
-            "Warning: detected bwa-mem3 {version}; Bismark's {} engine is validated against {pinned}.",
-            chem.label()
+            "Warning: detected bwa-mem3 {version}; Bismark's {} engine is validated against {}.",
+            chem.label(),
+            VALIDATED_BWAMEM3_VERSIONS.join(" and ")
         );
-    } else if version != pinned {
+    } else if !validated {
         eprintln!(
             "Warning: detected {} {version}, but byte-identity is only guaranteed against the \
              pinned version {pinned}.",
@@ -334,7 +343,9 @@ mod tests {
     #[test]
     fn bwamem3_detection_metadata() {
         assert_eq!(binary_name(Aligner::BwaMem3), "bwa-mem3");
-        assert_eq!(pinned_version(Aligner::BwaMem3), "0.16.0");
+        assert_eq!(pinned_version(Aligner::BwaMem3), "0.17.0");
+        assert_eq!(VALIDATED_BWAMEM3_VERSIONS, ["0.16.0", "0.17.0"]);
+        assert!(VALIDATED_BWAMEM3_VERSIONS.contains(&PINNED_BWAMEM3_VERSION));
         assert_eq!(path_flag(Aligner::BwaMem3), "--path_to_bwamem3");
         assert_eq!(Aligner::BwaMem3.token(), "bwamem3");
         assert_eq!(Aligner::BwaMem3.name(), "bwa-mem3");
