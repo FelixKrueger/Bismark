@@ -3148,8 +3148,8 @@ struct MateSpan {
     r1_gaps: Vec<u32>,
 }
 
-/// What a record leaves to its R1: R1's reference span, except the sorted CpG positions
-/// where R1 has no information.
+/// What R1 leaves to its R2: R1's reference span, except the sorted CpG positions where
+/// R1 has no information.
 #[derive(Default)]
 struct Covered {
     span: std::ops::Range<usize>,
@@ -3210,10 +3210,10 @@ impl MateSpan {
     }
 
     /// Remember where the current R1 has no information, so its R2 can fill those CpGs.
-    fn record_r1(&mut self, inner: &noodles_sam::alignment::RecordBuf, gaps: &[u32]) {
+    fn record_r1(&mut self, inner: &noodles_sam::alignment::RecordBuf, gaps: Vec<u32>) {
         let flags = u16::from(inner.flags());
         if flags & 0x40 != 0 && flags & 0x900 == 0 {
-            self.r1_gaps = gaps.to_vec();
+            self.r1_gaps = gaps;
         }
     }
 }
@@ -3279,7 +3279,7 @@ fn cpg_observations(
             }
             Kind::Insertion | Kind::SoftClip => ri += len,
             Kind::Deletion | Kind::Skip => {
-                // A deletion between two called bases is no information at its CpGs.
+                // A deletion or skip between two called bases is no information at its CpGs.
                 if ri > 0 && called.contains(&(ri - 1)) && called.contains(&ri) {
                     for d in rp..rp + len {
                         if is_cpg_c(d) && !covered.hides(d) {
@@ -3345,7 +3345,7 @@ fn run_five_base_deconvolution(
         };
         let Some(g) = genome.get(chrom) else { continue };
         let walk = cpg_observations(inner, g, &covered, baseq)?;
-        mates.record_r1(inner, &walk.gaps);
+        mates.record_r1(inner, walk.gaps);
         for o in walk.obs {
             let own = if o.plus { is_ot } else { is_ob };
             dec.observe(chrom, o.pos0, o.plus, own, o.t_equivalent);
@@ -3443,7 +3443,7 @@ fn run_five_base_duplex_pe(
         };
 
         let walk = cpg_observations(inner, g, &covered, baseq)?;
-        mates.record_r1(inner, &walk.gaps);
+        mates.record_r1(inner, walk.gaps);
         let obs = walk.obs;
         let key = DuplexKey {
             chrom: chrom.clone(),
@@ -9547,6 +9547,24 @@ mod tests {
             rows.iter().all(|r| r.0 != 5),
             "no call under R1's UMI: {rows:?}"
         );
+    }
+
+    /// #1238: a deletion next to R1's masked UMI is not between called bases, so it still
+    /// hides R2's base.
+    #[test]
+    fn five_base_deletion_beside_r1_mask_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        // Both mates on [2,12); R1 deletes the `+` cytosine at 0-based 4 inside its 3-base UMI.
+        let (r1, r2) = emit_test_pair(
+            &genome,
+            "p",
+            "p\t99\tchr1\t3\t60\t2M1D7M\t=\t3\t10\tTTGTTTCGT\tIIIIIIIII\tAS:i:0",
+            &format!("p\t147\tchr1\t3\t60\t10M\t=\t3\t-10\t{R2_LEFT}\tIIIIIIIIII\tAS:i:0"),
+            3,
+        );
+        let rows = pass_outputs(&genome, dir.path(), "mdel", &[&r1, &r2], 0).0;
+        assert!(rows.iter().all(|r| r.0 != 5), "{rows:?}");
     }
 
     /// #1238: an R1's no-call positions do not carry over to the next pair.
