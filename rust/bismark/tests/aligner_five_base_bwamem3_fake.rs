@@ -515,7 +515,13 @@ fn header_text(header: &noodles_sam::Header) -> String {
 #[test]
 fn bwamem3_bam_header_has_engine_pg_and_stays_paired() {
     let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-    bwamem3_cmd(&run).assert().success();
+    bwamem3_cmd(&run)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "bwa-mem3 seems to be working fine",
+        ))
+        .stderr(predicate::str::contains("Warning: detected bwa-mem3").not());
     let header = read_bam_header(&run.out.path().join("r_1_bismark_bwamem3_pe.bam"));
     let text = header_text(&header);
     let pg = text
@@ -674,6 +680,9 @@ fn bwamem3_016_runs_without_warning() {
     bwamem3_cmd(&run)
         .assert()
         .success()
+        .stderr(predicate::str::contains(
+            "bwa-mem3 seems to be working fine",
+        ))
         .stderr(predicate::str::contains("Warning: detected bwa-mem3").not());
     let rep = fs::read_to_string(run.out.path().join("r_1_bismark_bwamem3_PE_report.txt")).unwrap();
     assert!(rep.contains("bwa-mem3 version: 0.16.0\n"), "{rep}");

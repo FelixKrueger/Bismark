@@ -57,7 +57,7 @@ fn binary_name(kind: Aligner) -> &'static str {
     }
 }
 
-/// The pinned version `kind` is byte-identity-validated against.
+/// The pinned version of `kind`; bwa-mem3 is validated against [`VALIDATED_BWAMEM3_VERSIONS`].
 fn pinned_version(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
@@ -345,6 +345,7 @@ mod tests {
         assert_eq!(binary_name(Aligner::BwaMem3), "bwa-mem3");
         assert_eq!(pinned_version(Aligner::BwaMem3), "0.17.0");
         assert_eq!(VALIDATED_BWAMEM3_VERSIONS, ["0.16.0", "0.17.0"]);
+        assert!(VALIDATED_BWAMEM3_VERSIONS.contains(&PINNED_BWAMEM3_VERSION));
         assert_eq!(path_flag(Aligner::BwaMem3), "--path_to_bwamem3");
         assert_eq!(Aligner::BwaMem3.token(), "bwamem3");
         assert_eq!(Aligner::BwaMem3.name(), "bwa-mem3");

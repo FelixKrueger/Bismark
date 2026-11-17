@@ -177,7 +177,7 @@ It is opt-in because it is expensive:
 |---|---|
 | Index | `bwa-mem3 index --meth genome.fa`: about 1 h and about 104 GB RAM for GRCh38 |
 | Index on disk | about 23 GB needed for GRCh38; `bwa-mem3 index --meth` writes about 39 GB, and `genome.fa.meth.fa` (6.3 GB) and the plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
-| Alignment memory | bwa-mem3's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
+| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
 Pass the FASTA path the index was built from as `--five_base_index`. Build the index from
@@ -210,7 +210,7 @@ the core calls (`XM`, and everything the extractor reads) and to `--five_base_du
 `mk:B:I` tag (bases masked at the 5' and 3' end of the read). A BAM written by an earlier
 version has no `mk` tag, so `--five_base_consensus_from_bam` still counts those bases in it.
 
-Before Bismark validates a newer bwa-mem3, the per-CpG comparison with the validated version is
+Before Bismark validates a newer bwa-mem3, the per-CpG comparison with a validated version is
 re-run on 1M read pairs; until then, other versions run with the warning above.
 
 ### Advanced modes
