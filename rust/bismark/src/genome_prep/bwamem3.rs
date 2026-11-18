@@ -101,15 +101,18 @@ pub fn build(
     max_memory: Option<&str>,
     logger: &Logger,
 ) -> Result<PathBuf, GenomePrepError> {
-    let partial = genome_folder.join(format!("{PARTIAL_PREFIX}{}", std::process::id()));
-    note_leftovers(genome_folder, &partial, logger)?;
+    let pid = std::process::id();
+    for note in leftover_notes(genome_folder, pid)? {
+        logger.note(&note);
+    }
+    let partial = genome_folder.join(format!("{PARTIAL_PREFIX}{pid}"));
     // A folder with this run's PID is from a killed earlier run.
     if partial.exists() {
         fs::remove_dir_all(&partial).map_err(at(&partial))?;
     }
     fs::create_dir(&partial).map_err(at(&partial))?;
 
-    let built = stage_and_index(
+    if let Err(e) = stage_and_index(
         files,
         genome_folder,
         &partial,
@@ -117,48 +120,76 @@ pub fn build(
         threads,
         max_memory,
         logger,
-    )
-    .and_then(|()| publish(&partial, genome_folder, logger));
-    if built.is_err() {
+    ) {
         let _ = fs::remove_dir_all(&partial);
+        return Err(e);
     }
-    built
+    publish(&partial, genome_folder, logger).map_err(|e| GenomePrepError::Bwamem3Failed {
+        genome: genome_folder.to_path_buf(),
+        detail: format!(
+            "{e}. The new index is complete in {}: move it to {} by hand (a re-run with the same \
+             process id would delete it)",
+            partial.display(),
+            genome_folder.join(INDEX_DIR).display()
+        ),
+    })
 }
 
-/// Mention other runs' `.partial.*` and interrupted rebuilds' `.old.*` folders; never touch them.
-fn note_leftovers(
-    genome_folder: &Path,
-    own_partial: &Path,
-    logger: &Logger,
-) -> Result<(), GenomePrepError> {
+/// Notes on other runs' `.partial.*` and interrupted rebuilds' `.old.*` folders (never touched).
+fn leftover_notes(genome_folder: &Path, pid: u32) -> Result<Vec<String>, GenomePrepError> {
+    let own_partial = format!("{PARTIAL_PREFIX}{pid}");
+    let own_old = format!("{OLD_PREFIX}{pid}");
+    let have_index = fs::symlink_metadata(genome_folder.join(INDEX_DIR)).is_ok();
+    let mut notes = Vec::new();
     for entry in fs::read_dir(genome_folder)
         .map_err(at(genome_folder))?
         .filter_map(|e| e.ok())
     {
-        let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        let age = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
+        let partial = name.starts_with(PARTIAL_PREFIX) && name != own_partial;
+        // `publish` replaces this run's own `.old` only when `Bwamem3_Index/` exists.
+        let old = name.starts_with(OLD_PREFIX) && !(name == own_old && have_index);
+        if !partial && !old {
+            continue;
+        }
+        let path = entry.path();
+        let age = newest_mtime(&path, 3)
             .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .map(|d| format!(" (last changed {} min ago)", d.as_secs() / 60))
+            .map(|d| format!(" (last written {} min ago)", d.as_secs() / 60))
             .unwrap_or_default();
-        if name.starts_with(PARTIAL_PREFIX) && path != own_partial {
-            logger.note(&format!(
+        notes.push(if partial {
+            format!(
                 "Note: {}{age} exists: another bwa-mem3 index build may be running here, or one \
-                 was killed. It is left alone; remove it if it is stale.",
+                 was killed. It is left alone; remove it if no build is running.",
                 path.display()
-            ));
-        } else if name.starts_with(OLD_PREFIX) {
-            logger.note(&format!(
+            )
+        } else {
+            format!(
                 "Note: {}{age} is a previous bwa-mem3 index left by an interrupted rebuild. It is \
                  left alone; remove it once {INDEX_DIR}/ is complete.",
                 path.display()
-            ));
+            )
+        });
+    }
+    Ok(notes)
+}
+
+/// Newest modification time of `path` and of everything up to `depth` levels below it.
+fn newest_mtime(path: &Path, depth: u32) -> Option<SystemTime> {
+    let mut newest = fs::symlink_metadata(path).and_then(|m| m.modified()).ok();
+    if depth > 0
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let t = if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                newest_mtime(&entry.path(), depth - 1)
+            } else {
+                entry.metadata().and_then(|m| m.modified()).ok()
+            };
+            newest = newest.max(t);
         }
     }
-    Ok(())
+    newest
 }
 
 fn stage_and_index(
@@ -181,10 +212,23 @@ fn stage_and_index(
     prune_and_check(partial, &contigs, genome_folder)
 }
 
-/// Sequence bytes of one line as the aligner counts them: up to `\n`, then up to the first `\r`.
-fn seq_len(line: &[u8]) -> u64 {
+/// Bases on one sequence line (without its `\n` and one trailing `\r`), or the byte that would end up
+/// in the index's `.amb` and stop bwa-mem3 from loading it.
+fn seq_line_len(line: &[u8]) -> Result<u64, String> {
     let line = line.strip_suffix(b"\n").unwrap_or(line);
-    line.iter().position(|&b| b == b'\r').unwrap_or(line.len()) as u64
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    match line
+        .iter()
+        .find(|&&b| matches!(b, b' ' | b'\t' | b'\r' | 0x0b | 0x0c) || b >= 0x80)
+    {
+        None => Ok(line.len() as u64),
+        Some(b' ') => Err("a space".to_string()),
+        Some(b'\t') => Err("a tab".to_string()),
+        Some(b'\r') => Err("a carriage return (\\r) before the end of the line".to_string()),
+        Some(0x0b) => Err("a vertical tab".to_string()),
+        Some(0x0c) => Err("a form feed".to_string()),
+        Some(b) => Err(format!("the non-ASCII byte 0x{b:02x}")),
+    }
 }
 
 /// Put the genome at `<dir>/genome.fa` (a link to a single file, else a decompressed
@@ -215,13 +259,18 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
         })?;
         let mut first = true;
         let mut last_newline = true;
+        let mut line_no = 0u64;
         loop {
             line.clear();
             if reader.read_until(b'\n', &mut line).map_err(at(file))? == 0 {
                 break;
             }
-            if std::mem::take(&mut first) && line[0] != b'>' {
-                return Err(GenomePrepError::NotFasta(file.clone()));
+            line_no += 1;
+            if first {
+                first = false;
+                if line[0] != b'>' {
+                    return Err(GenomePrepError::NotFasta(file.clone()));
+                }
             }
             if line[0] == b'>' {
                 let name = extract_chromosome_name(&line, file)?;
@@ -239,7 +288,15 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
                 }
                 contigs.push((name, 0));
             } else if let Some(last) = contigs.last_mut() {
-                last.1 += seq_len(&line);
+                last.1 += seq_line_len(&line).map_err(|what| {
+                    GenomePrepError::Validation(format!(
+                        "{}: contig {}, line {line_no}: the sequence contains {what}; bwa-mem3 \
+                         would write it into the index and then could not load it. Remove \
+                         whitespace and non-ASCII bytes from sequence lines.",
+                        file.display(),
+                        last.0
+                    ))
+                })?;
             }
             if let Some(w) = out.as_mut() {
                 w.write_all(&line).map_err(at(&target))?;
@@ -361,12 +418,14 @@ fn prune_and_check(
     Ok(())
 }
 
+/// `rename(from, to)`, naming both paths on failure.
+fn move_to(from: &Path, to: &Path) -> Result<(), String> {
+    fs::rename(from, to)
+        .map_err(|e| format!("could not move {} to {}: {e}", from.display(), to.display()))
+}
+
 /// Move `partial` to `<genome>/Bwamem3_Index/`, swapping out any existing index.
-fn publish(
-    partial: &Path,
-    genome_folder: &Path,
-    logger: &Logger,
-) -> Result<PathBuf, GenomePrepError> {
+fn publish(partial: &Path, genome_folder: &Path, logger: &Logger) -> Result<PathBuf, String> {
     let dest = genome_folder.join(INDEX_DIR);
     if fs::symlink_metadata(&dest).is_ok() {
         logger.note(&format!(
@@ -375,21 +434,18 @@ fn publish(
         ));
         let old = genome_folder.join(format!("{OLD_PREFIX}{}", std::process::id()));
         if fs::symlink_metadata(&old).is_ok() {
-            fs::remove_dir_all(&old).map_err(at(&old))?;
+            fs::remove_dir_all(&old)
+                .map_err(|e| format!("could not remove {}: {e}", old.display()))?;
         }
-        fs::rename(&dest, &old).map_err(at(&dest))?;
-        if let Err(e) = fs::rename(partial, &dest) {
-            if let Err(back) = fs::rename(&old, &dest) {
-                return Err(GenomePrepError::Bwamem3Failed {
-                    genome: genome_folder.to_path_buf(),
-                    detail: format!(
-                        "could not move the new index into place ({e}) or the previous one back \
-                         ({back}); the previous index is in {}",
-                        old.display()
-                    ),
-                });
+        move_to(&dest, &old)?;
+        if let Err(e) = move_to(partial, &dest) {
+            if let Err(back) = move_to(&old, &dest) {
+                return Err(format!(
+                    "{e}; {back}; the previous index is in {}",
+                    old.display()
+                ));
             }
-            return Err(at(&dest)(e));
+            return Err(e);
         }
         if let Err(e) = fs::remove_dir_all(&old) {
             logger.note(&format!(
@@ -398,7 +454,7 @@ fn publish(
             ));
         }
     } else {
-        fs::rename(partial, &dest).map_err(at(&dest))?;
+        move_to(partial, &dest)?;
     }
     Ok(dest.join(INDEX_PREFIX_NAME))
 }
@@ -569,11 +625,43 @@ mod tests {
     }
 
     #[test]
-    fn lengths_count_like_the_aligner() {
-        assert_eq!(seq_len(b"ACGT\n"), 4);
-        assert_eq!(seq_len(b"ACGT\r\n"), 4);
-        assert_eq!(seq_len(b"AC\rGT\n"), 2);
-        assert_eq!(seq_len(b"AC GT"), 5);
+    fn sequence_lines_count_or_name_the_bad_byte() {
+        for (line, len) in [
+            (&b"ACGT\n"[..], 4),
+            (b"ACGT\r\n", 4),
+            (b"ACGT", 4),
+            (b"NNNN\n", 4),
+            (b"acgtRY\n", 6),
+            (b"\n", 0),
+        ] {
+            assert_eq!(seq_line_len(line), Ok(len), "{line:?}");
+        }
+        for (line, what) in [
+            (&b"AC GT\n"[..], "a space"),
+            (b"AC\tGT\n", "a tab"),
+            (b"ACGT\r\r\n", "carriage return"),
+            (b"AC\rGT\r\n", "carriage return"),
+            (b"AC\x0bGT\n", "vertical tab"),
+            (b"AC\x0cGT\n", "form feed"),
+            (b"AC\xc3\xa9\n", "0xc3"),
+        ] {
+            let e = seq_line_len(line).unwrap_err();
+            assert!(e.contains(what), "{line:?}: {e}");
+        }
+        let g = tempdir().unwrap();
+        let p = tempdir().unwrap();
+        let bad = g.path().join("bad.fa");
+        fs::write(&bad, b">chr7\nACGT\nAC GT\n").unwrap();
+        let e = stage_input(std::slice::from_ref(&bad), p.path())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains(&format!(
+                "{}: contig chr7, line 3: the sequence contains a space",
+                bad.display()
+            )),
+            "{e}"
+        );
         let g = tempdir().unwrap();
         let p = tempdir().unwrap();
         let fa = g.path().join("a.fa");
@@ -597,10 +685,44 @@ mod tests {
         fs::write(&a, b">chrA\nAC\n").unwrap();
         fs::write(&b, b">chrB\nGT\n").unwrap();
         fs::set_permissions(&b, fs::Permissions::from_mode(0o000)).unwrap();
+        if File::open(&b).is_ok() {
+            fs::set_permissions(&b, fs::Permissions::from_mode(0o644)).unwrap();
+            eprintln!("skipping: permission bits do not stop this user (root)");
+            return;
+        }
         let r = stage_input(&[a, b.clone()], p.path());
         fs::set_permissions(&b, fs::Permissions::from_mode(0o644)).unwrap();
         let e = r.unwrap_err().to_string();
         assert!(e.starts_with(&b.display().to_string()), "{e}");
+    }
+
+    fn notes(g: &Path, pid: u32) -> String {
+        leftover_notes(g, pid).unwrap().join("\n")
+    }
+
+    #[test]
+    fn leftover_notes_name_other_runs_and_lone_previous_indexes() {
+        let g = tempdir().unwrap();
+        fs::create_dir_all(g.path().join("Bwamem3_Index.partial.7/tmp/bwa-meth-x")).unwrap();
+        fs::write(
+            g.path()
+                .join("Bwamem3_Index.partial.7/tmp/bwa-meth-x/seed.fa"),
+            b"",
+        )
+        .unwrap();
+        fs::create_dir(g.path().join("Bwamem3_Index.partial.42")).unwrap();
+        fs::create_dir(g.path().join("Bwamem3_Index.old.42")).unwrap();
+        fs::write(g.path().join("chr1.fa"), b">c\nA\n").unwrap();
+        let n = notes(g.path(), 42);
+        assert!(n.contains("partial.7 (last written 0 min ago)"), "{n}");
+        assert!(!n.contains("partial.42"), "own partial: {n}");
+        assert!(n.contains("old.42"), "only copy of the previous index: {n}");
+        assert!(!n.contains("chr1"), "{n}");
+
+        fs::create_dir(g.path().join(INDEX_DIR)).unwrap();
+        let n = notes(g.path(), 42);
+        assert!(!n.contains("old.42"), "replaced by publish: {n}");
+        assert!(notes(g.path(), 43).contains("old.42"), "another run's .old");
     }
 
     #[test]

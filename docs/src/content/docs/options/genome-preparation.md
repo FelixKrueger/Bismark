@@ -41,7 +41,7 @@ This will create bisulfite indexes for use with minimap2 (https://github.com/lh3
 
 - `--bwamem3`
 
-  Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`, bwa-mem3 0.16.0 or later) of the unconverted genome in `<genome_folder>/Bwamem3_Index/`, for `bismark --taps` and `bismark --illumina_5base --bwamem3`, which find it there without `--five_base_index`. No bisulfite-converted genome is written. A human genome takes about 1 h, about 104 GB of RAM and up to 70 GB of free disk while building; the finished index is about 23 GB. Does not work in conjunction with `--single_fasta`, `--slam`, `--large-index` or `--combined_genome`. (Default: OFF).
+  Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`, bwa-mem3 0.16.0 or later) of the unconverted genome in `<genome_folder>/Bwamem3_Index/`, for `bismark --taps` and `bismark --illumina_5base --bwamem3`, which find it there without `--five_base_index`. No bisulfite-converted genome is written. A human genome takes about 1 h, about 104 GB of RAM and up to 70 GB of free disk while building; the finished index is about 23 GB. Sequence lines must not contain spaces, tabs or other whitespace, which bwa-mem3 would write into the index and then fail to load; such a genome is rejected before indexing (CRLF line ends are fine). Does not work in conjunction with `--single_fasta`, `--slam`, `--large-index` or `--combined_genome`. (Default: OFF).
 
 - `--bwamem3_max_memory SIZE`
 

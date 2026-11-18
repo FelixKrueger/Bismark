@@ -231,14 +231,20 @@ impl Cli {
             }
         }
 
-        // --parallel must be ≥ 2 if given (Perl line 110).
-        if let Some(p) = self.parallel
-            && p < 2
-            && aligner != Aligner::BwaMem3
-        {
-            return Err(GenomePrepError::Validation(
-                "--parallel should have a value of 2 or more — please respecify".to_string(),
-            ));
+        // --parallel is ≥ 2 for the paired bisulfite indexers (Perl line 110), ≥ 1 for bwa-mem3.
+        match self.parallel {
+            Some(0) if aligner == Aligner::BwaMem3 => {
+                return Err(GenomePrepError::Validation(
+                    "--parallel should have a value of 1 or more with --bwamem3 — please respecify"
+                        .to_string(),
+                ));
+            }
+            Some(p) if p < 2 && aligner != Aligner::BwaMem3 => {
+                return Err(GenomePrepError::Validation(
+                    "--parallel should have a value of 2 or more — please respecify".to_string(),
+                ));
+            }
+            _ => {}
         }
         let threads = self.parallel.unwrap_or(1);
 
@@ -329,6 +335,11 @@ mod tests {
             .unwrap();
         assert_eq!(r.parallel, Some(1));
         assert!(cli(&["--parallel", "1", g]).validate().is_err());
+        let e = cli(&["--bwamem3", "--parallel", "0", g])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("1 or more with --bwamem3"), "{e}");
     }
 
     #[test]

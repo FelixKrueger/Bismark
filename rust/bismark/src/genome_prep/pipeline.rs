@@ -148,7 +148,6 @@ fn run_bwamem3(
         prefix.display(),
         config.genome_folder.display()
     ));
-    // After the index, so bad contig names and a short memory budget fail before this pass.
     if config.genomic_composition {
         logger.note(
             "Calculating genomic nucleotide frequencies (this may take several minutes \
