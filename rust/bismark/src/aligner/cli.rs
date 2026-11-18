@@ -139,8 +139,9 @@ pub struct Cli {
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
     /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` or `--taps` it is instead
-    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from; optional when
-    /// `<genome>/Bwamem3_Index/` (from `bismark_genome_preparation --bwamem3`) exists.
+    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder
+    /// written by `bismark_genome_preparation --bwamem3`; optional when `<genome>/Bwamem3_Index/`
+    /// exists.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI

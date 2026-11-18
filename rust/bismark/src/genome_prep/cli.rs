@@ -82,7 +82,7 @@ pub struct Cli {
 
     /// Threads per indexing process (≥ 2). Bowtie 2, HISAT2 and minimap2 run two indexers
     /// concurrently, so `--parallel 4` uses 8 cores total. With --bwamem3 it is bwa-mem3's `-t`
-    /// (default: all cores).
+    /// (≥ 1; default: all cores).
     #[arg(long)]
     pub parallel: Option<u32>,
 
@@ -234,6 +234,7 @@ impl Cli {
         // --parallel must be ≥ 2 if given (Perl line 110).
         if let Some(p) = self.parallel
             && p < 2
+            && aligner != Aligner::BwaMem3
         {
             return Err(GenomePrepError::Validation(
                 "--parallel should have a value of 2 or more — please respecify".to_string(),
@@ -323,6 +324,11 @@ mod tests {
             .validate()
             .unwrap();
         assert_eq!(r.bwamem3_max_memory.as_deref(), Some("8G"));
+        let r = cli(&["--bwamem3", "--parallel", "1", g])
+            .validate()
+            .unwrap();
+        assert_eq!(r.parallel, Some(1));
+        assert!(cli(&["--parallel", "1", g]).validate().is_err());
     }
 
     #[test]

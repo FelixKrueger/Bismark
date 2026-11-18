@@ -118,7 +118,7 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
     Ok(())
 }
 
-/// `--bwamem3`: genomic composition (optional), then the bwa-mem3 methylation index.
+/// `--bwamem3`: the bwa-mem3 methylation index, then the genomic composition (optional).
 fn run_bwamem3(
     config: &ResolvedConfig,
     files: &[PathBuf],
@@ -132,14 +132,6 @@ fn run_bwamem3(
     };
     let version = bwamem3::check_version(&bin, logger)?;
     logger.note(&format!("Using bwa-mem3 {version} ({})", bin.display()));
-    if config.genomic_composition {
-        logger.note(
-            "Calculating genomic nucleotide frequencies (this may take several minutes \
-             depending on genome size) ...",
-        );
-        composition::write_genomic_composition(files, &config.genome_folder, logger)?;
-        logger.note("Finished processing genomic nucleotide frequencies\n");
-    }
     logger.note("Bismark Genome Preparation - Step II: Launching the bwa-mem3 indexer");
     let prefix = bwamem3::build(
         files,
@@ -156,6 +148,15 @@ fn run_bwamem3(
         prefix.display(),
         config.genome_folder.display()
     ));
+    // After the index, so bad contig names and a short memory budget fail before this pass.
+    if config.genomic_composition {
+        logger.note(
+            "Calculating genomic nucleotide frequencies (this may take several minutes \
+             depending on genome size) ...",
+        );
+        composition::write_genomic_composition(files, &config.genome_folder, logger)?;
+        logger.note("Finished processing genomic nucleotide frequencies\n");
+    }
     logger.note(
         "\n=========================================\n\nGenome preparation complete. Enjoy!\n",
     );

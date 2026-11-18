@@ -2464,10 +2464,12 @@ fn five_base_emit_record(
 /// `_pe.bam` + PE report. Mirrors `run_pe`'s setup.
 fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
     let started = Instant::now();
-    if let Some(f) = config.genome.fastas.iter().find(|f| {
-        f.file_name()
-            .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
-    }) {
+    if let Some(f) = config
+        .genome
+        .fastas
+        .iter()
+        .find(|f| crate::genome_prep::bwamem3::is_index_fasta(f))
+    {
         return Err(AlignerError::Validation(format!(
             "{} in the genome folder is a bwa-mem3 index file, not genome; keep bwa-mem3 index \
              files out of the top level of the --genome folder (`bismark_genome_preparation \

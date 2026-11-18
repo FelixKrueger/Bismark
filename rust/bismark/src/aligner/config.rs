@@ -831,10 +831,26 @@ fn resolve_five_base_index(
     genome_dir: &Path,
 ) -> Result<Option<PathBuf>> {
     if let Some(index) = &cli.five_base_index {
-        if aligner == Aligner::BwaMem3 {
-            check_bwamem3_index_files(index, IndexSource::Explicit)?;
+        if aligner != Aligner::BwaMem3 {
+            return Ok(Some(index.clone()));
         }
-        return Ok(Some(index.clone()));
+        // A folder holding a `bismark_genome_preparation --bwamem3` index stands for its prefix.
+        let index = if index.is_dir() {
+            let prefix = index.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+            if !PathBuf::from(format!("{}.meth.ann", prefix.display())).is_file() {
+                return Err(AlignerError::Validation(format!(
+                    "--five_base_index {} is a folder; pass the index prefix (the FASTA path the \
+                     index was built from), or a folder written by `bismark_genome_preparation \
+                     --bwamem3`.",
+                    index.display()
+                )));
+            }
+            prefix
+        } else {
+            index.clone()
+        };
+        check_bwamem3_index_files(&index, IndexSource::Explicit)?;
+        return Ok(Some(index));
     }
     if aligner != Aligner::BwaMem3 {
         return Ok(None);
@@ -2369,7 +2385,7 @@ mod tests {
     }
 
     #[test]
-    fn taps_missing_index_names_taps() {
+    fn bwamem3_missing_index_names_the_mode() {
         let (_t, g, r1, r2) = fasta_only_genome_and_reads();
         let (g, r1, r2) = (
             g.to_str().unwrap(),
@@ -2432,6 +2448,29 @@ mod tests {
             resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
             Some(other)
         );
+
+        // The index folder itself stands for its prefix.
+        let cli = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            dir.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .into_owned();
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+            Some(dir.join("genome.fa"))
+        );
+        let e = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            g.to_str().unwrap(),
+        ]))
+        .map(|c| resolve_five_base_index(&c, Aligner::BwaMem3, &g))
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("is a folder; pass the index prefix"), "{e}");
 
         // Other engines never pick it up.
         let cli = cli_from(&["--illumina_5base"]);

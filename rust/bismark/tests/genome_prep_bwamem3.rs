@@ -141,3 +141,74 @@ fn genome_prep_index_matches_a_manual_build_and_is_found_by_taps() {
     assert!(!a.is_empty());
     assert_eq!(a, records(&bam(explicit.path())));
 }
+
+/// The common layout: one gzipped FASTA, linked rather than copied.
+#[test]
+fn single_gz_genome_matches_a_manual_build() {
+    if !bwamem3_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (genome prep bwa-mem3 gate)");
+        return;
+    }
+    let genome = TempDir::new().unwrap();
+    let gz = genome.path().join("spikes.fa.gz");
+    let mut e = flate2::write::GzEncoder::new(
+        fs::File::create(&gz).unwrap(),
+        flate2::Compression::default(),
+    );
+    std::io::Write::write_all(&mut e, &fs::read(fixture("spikes.fa")).unwrap()).unwrap();
+    e.finish().unwrap();
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .arg("--bwamem3")
+        .arg(genome.path())
+        .timeout(Duration::from_secs(300))
+        .assert()
+        .success();
+
+    let manual = TempDir::new().unwrap();
+    let fa = manual.path().join("spikes.fa");
+    fs::copy(fixture("spikes.fa"), &fa).unwrap();
+    let st = StdCommand::new("bwa-mem3")
+        .args(["index", "--meth"])
+        .arg(&fa)
+        .output()
+        .unwrap();
+    assert!(
+        st.status.success(),
+        "{}",
+        String::from_utf8_lossy(&st.stderr)
+    );
+    for s in SEVEN {
+        assert_eq!(
+            fs::read(genome.path().join(format!("Bwamem3_Index/genome.fa.{s}"))).unwrap(),
+            fs::read(format!("{}.{s}", fa.display())).unwrap(),
+            "genome.fa.{s} differs from the manual build"
+        );
+    }
+}
+
+/// bwa-mem3's memory pre-check still exits 3, which Bismark reports as a memory error.
+#[test]
+fn too_small_a_budget_is_a_memory_error() {
+    if !bwamem3_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (genome prep bwa-mem3 gate)");
+        return;
+    }
+    let genome = TempDir::new().unwrap();
+    fs::copy(fixture("spikes.fa"), genome.path().join("spikes.fa")).unwrap();
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .args(["--bwamem3", "--bwamem3_max_memory", "1K"])
+        .arg(genome.path())
+        .timeout(Duration::from_secs(120))
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "the --bwamem3_max_memory you gave (1K)",
+        ));
+    let names: Vec<String> = fs::read_dir(genome.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["spikes.fa"]);
+}

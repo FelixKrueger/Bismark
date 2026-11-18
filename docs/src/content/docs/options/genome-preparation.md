@@ -49,7 +49,7 @@ This will create bisulfite indexes for use with minimap2 (https://github.com/lh3
 
 - `--parallel INT`
 
-Use several threads for each indexing process to speed up the genome preparation step. Remember that the indexing is run twice in parallel already (for the top and bottom strand separately), so e.g. `--parallel 4` will use 8 threads in total. With `--bwamem3` there is one indexer and `--parallel` sets its thread count; without it, bwa-mem3 uses all cores. Please also see `--large-index` for parallel processing of VERY LARGE genomes (e.g. the axolotl)
+Use several threads for each indexing process to speed up the genome preparation step. Remember that the indexing is run twice in parallel already (for the top and bottom strand separately), so e.g. `--parallel 4` will use 8 threads in total. With `--bwamem3` there is one indexer and `--parallel` (1 or more) sets its thread count; without it, bwa-mem3 uses all cores. Please also see `--large-index` for parallel processing of VERY LARGE genomes (e.g. the axolotl)
 
 - `--single_fasta`
 
@@ -79,22 +79,6 @@ This script is supposed to convert a specified reference genome into two differe
 Both bisulfite genomes will be stored in subfolders within the reference genome folder containing the unconverted reference sequence (in FastA format). Once the bisulfite
 conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2, HISAT2 or minimap2 indexer (`bowtie2-build` or `hisat2-build` or `minimap2 -d`, respectively). Here is the structure of the reference genome folder after successful indexing (with Bowtie2 in this case):
 
-With `--bwamem3`, the folder holds only the 7 index files `bwa-mem3 mem --meth` reads:
-
-```
-├── Bwamem3_Index
-│   ├── genome.fa.amb
-│   ├── genome.fa.ann
-│   ├── genome.fa.meth.amb
-│   ├── genome.fa.meth.ann
-│   ├── genome.fa.meth.bwt.2bit.64
-│   ├── genome.fa.meth.pac
-│   └── genome.fa.pac
-└── reference_sequence.fa
-```
-
-With Bowtie 2:
-
 ```
 ├── Bisulfite_Genome
 │   ├── CT_conversion
@@ -113,5 +97,19 @@ With Bowtie 2:
 │       ├── BS_GA.rev.1.bt2
 │       ├── BS_GA.rev.2.bt2
 │       └── genome_mfa.GA_conversion.fa
+└── reference_sequence.fa
+```
+
+With `--bwamem3`, the folder holds only the 7 index files `bwa-mem3 mem --meth` reads:
+
+```
+├── Bwamem3_Index
+│   ├── genome.fa.amb
+│   ├── genome.fa.ann
+│   ├── genome.fa.meth.amb
+│   ├── genome.fa.meth.ann
+│   ├── genome.fa.meth.bwt.2bit.64
+│   ├── genome.fa.meth.pac
+│   └── genome.fa.pac
 └── reference_sequence.fa
 ```

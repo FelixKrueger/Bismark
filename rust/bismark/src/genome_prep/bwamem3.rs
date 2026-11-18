@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 use crate::aligner::aligner::{
     MIN_BWAMEM3_VERSION, VALIDATED_BWAMEM3_VERSIONS, bwamem3_version_ok, parse_bwamem3_version,
@@ -26,21 +27,26 @@ pub const INDEX_PREFIX_NAME: &str = "genome.fa";
 const PARTIAL_PREFIX: &str = "Bwamem3_Index.partial.";
 const OLD_PREFIX: &str = "Bwamem3_Index.old.";
 
-/// What staging learned about the genome.
-#[derive(Debug)]
-struct Staged {
-    /// Contig names in file order.
-    names: Vec<String>,
-    /// Total sequence length (bases).
-    total_len: u64,
+/// Contig names and lengths of the staged genome, in file order.
+type Contigs = Vec<(String, u64)>;
+
+/// Wrap an I/O error with the path it concerns.
+fn at(path: &Path) -> impl FnOnce(std::io::Error) -> GenomePrepError + '_ {
+    move |source| GenomePrepError::IoAt {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+/// `true` for the converted FASTA `bwa-mem3 index --meth` writes next to its input.
+pub(crate) fn is_index_fasta(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
 }
 
 /// Reject bwa-mem3 index files that discovery picked up as genome FASTA.
 pub fn reject_index_files(files: &[PathBuf]) -> Result<(), GenomePrepError> {
-    if let Some(f) = files.iter().find(|f| {
-        f.file_name()
-            .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
-    }) {
+    if let Some(f) = files.iter().find(|f| is_index_fasta(f)) {
         return Err(GenomePrepError::Validation(format!(
             "{} is a bwa-mem3 index file, not genome; remove it from the genome folder",
             f.display()
@@ -96,21 +102,12 @@ pub fn build(
     logger: &Logger,
 ) -> Result<PathBuf, GenomePrepError> {
     let partial = genome_folder.join(format!("{PARTIAL_PREFIX}{}", std::process::id()));
-    for entry in fs::read_dir(genome_folder)?.filter_map(|e| e.ok()) {
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with(PARTIAL_PREFIX) && entry.path() != partial {
-            logger.note(&format!(
-                "Note: {} exists: another bwa-mem3 index build may be running here, or one was \
-                 killed. It is left alone; remove it if it is stale.",
-                entry.path().display()
-            ));
-        }
-    }
-    // Same PID as a killed earlier run (PIDs repeat in containers): that folder is ours to clear.
+    note_leftovers(genome_folder, &partial, logger)?;
+    // A folder with this run's PID is from a killed earlier run.
     if partial.exists() {
-        fs::remove_dir_all(&partial)?;
+        fs::remove_dir_all(&partial).map_err(at(&partial))?;
     }
-    fs::create_dir(&partial)?;
+    fs::create_dir(&partial).map_err(at(&partial))?;
 
     let built = stage_and_index(
         files,
@@ -128,6 +125,42 @@ pub fn build(
     built
 }
 
+/// Mention other runs' `.partial.*` and interrupted rebuilds' `.old.*` folders; never touch them.
+fn note_leftovers(
+    genome_folder: &Path,
+    own_partial: &Path,
+    logger: &Logger,
+) -> Result<(), GenomePrepError> {
+    for entry in fs::read_dir(genome_folder)
+        .map_err(at(genome_folder))?
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let age = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .map(|d| format!(" (last changed {} min ago)", d.as_secs() / 60))
+            .unwrap_or_default();
+        if name.starts_with(PARTIAL_PREFIX) && path != own_partial {
+            logger.note(&format!(
+                "Note: {}{age} exists: another bwa-mem3 index build may be running here, or one \
+                 was killed. It is left alone; remove it if it is stale.",
+                path.display()
+            ));
+        } else if name.starts_with(OLD_PREFIX) {
+            logger.note(&format!(
+                "Note: {}{age} is a previous bwa-mem3 index left by an interrupted rebuild. It is \
+                 left alone; remove it once {INDEX_DIR}/ is complete.",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn stage_and_index(
     files: &[PathBuf],
     genome_folder: &Path,
@@ -137,31 +170,43 @@ fn stage_and_index(
     max_memory: Option<&str>,
     logger: &Logger,
 ) -> Result<(), GenomePrepError> {
-    let staged = stage_input(files, partial)?;
+    let contigs = stage_input(files, partial)?;
     logger.note(&format!(
         "Indexing {} bp in {} contigs with `bwa-mem3 index --meth`. A human genome needs about \
          104 GB of RAM and up to 70 GB of free disk; bwa-mem3 prints its exact memory requirement.",
-        staged.total_len,
-        staged.names.len()
+        contigs.iter().map(|c| c.1).sum::<u64>(),
+        contigs.len()
     ));
     run_index(bin, partial, threads, max_memory, genome_folder)?;
-    prune_and_check(partial, &staged.names, genome_folder)
+    prune_and_check(partial, &contigs, genome_folder)
+}
+
+/// Sequence bytes of one line as the aligner counts them: up to `\n`, then up to the first `\r`.
+fn seq_len(line: &[u8]) -> u64 {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.iter().position(|&b| b == b'\r').unwrap_or(line.len()) as u64
 }
 
 /// Put the genome at `<dir>/genome.fa` (a link to a single file, else a decompressed
 /// concatenation) and check its contig names.
-fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Staged, GenomePrepError> {
+fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError> {
     let target = dir.join(INDEX_PREFIX_NAME);
-    let mut out = if files.len() == 1 && cfg!(unix) {
-        link(&fs::canonicalize(&files[0])?, &target)?;
+    #[cfg(unix)]
+    let linked = files.len() == 1 && {
+        let src = fs::canonicalize(&files[0]).map_err(at(&files[0]))?;
+        std::os::unix::fs::symlink(&src, &target).map_err(at(&target))?;
+        true
+    };
+    #[cfg(not(unix))]
+    let linked = false;
+    let mut out = if linked {
         None
     } else {
-        Some(BufWriter::new(File::create(&target)?))
+        Some(BufWriter::new(File::create(&target).map_err(at(&target))?))
     };
 
-    let mut names = Vec::new();
+    let mut contigs: Contigs = Vec::new();
     let mut seen = HashSet::new();
-    let mut total_len = 0u64;
     let mut line = Vec::new();
     for file in files {
         let mut reader = open_fasta(file)?;
@@ -169,12 +214,11 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Staged, GenomePrepError>
         let mut last_newline = true;
         loop {
             line.clear();
-            if reader.read_until(b'\n', &mut line)? == 0 {
+            if reader.read_until(b'\n', &mut line).map_err(at(file))? == 0 {
                 break;
             }
-            if first {
-                extract_chromosome_name(&line, file)?;
-                first = false;
+            if std::mem::take(&mut first) && line[0] != b'>' {
+                return Err(GenomePrepError::NotFasta(file.clone()));
             }
             if line[0] == b'>' {
                 let name = extract_chromosome_name(&line, file)?;
@@ -190,15 +234,12 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Staged, GenomePrepError>
                 if !seen.insert(name.clone()) {
                     return Err(GenomePrepError::DuplicateChromosome(name));
                 }
-                names.push(name);
-            } else {
-                total_len += line
-                    .iter()
-                    .filter(|&&b| !matches!(b, b'\n' | b'\r'))
-                    .count() as u64;
+                contigs.push((name, 0));
+            } else if let Some(last) = contigs.last_mut() {
+                last.1 += seq_len(&line);
             }
             if let Some(w) = out.as_mut() {
-                w.write_all(&line)?;
+                w.write_all(&line).map_err(at(&target))?;
             }
             last_newline = line.last() == Some(&b'\n');
         }
@@ -208,23 +249,13 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Staged, GenomePrepError>
         if let Some(w) = out.as_mut()
             && !last_newline
         {
-            w.write_all(b"\n")?;
+            w.write_all(b"\n").map_err(at(&target))?;
         }
     }
     if let Some(mut w) = out {
-        w.flush()?;
+        w.flush().map_err(at(&target))?;
     }
-    Ok(Staged { names, total_len })
-}
-
-#[cfg(unix)]
-fn link(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(src, dst)
-}
-
-#[cfg(not(unix))]
-fn link(_src: &Path, _dst: &Path) -> std::io::Result<()> {
-    unreachable!("single-file genomes are copied off unix")
+    Ok(contigs)
 }
 
 /// `bwa-mem3 index --meth` with its scratch inside `dir`.
@@ -236,7 +267,7 @@ fn run_index(
     genome_folder: &Path,
 ) -> Result<(), GenomePrepError> {
     let tmp = dir.join("tmp");
-    fs::create_dir(&tmp)?;
+    fs::create_dir(&tmp).map_err(at(&tmp))?;
     let mut cmd = Command::new(bin);
     cmd.current_dir(dir).arg("index").arg("--meth");
     if let Some(t) = threads {
@@ -254,6 +285,15 @@ fn run_index(
         Some(0) => Ok(()),
         Some(3) => Err(GenomePrepError::Bwamem3Memory {
             genome: genome_folder.to_path_buf(),
+            hint: match max_memory {
+                Some(m) => format!(
+                    "The budget is the --bwamem3_max_memory you gave ({m}); raise it, or run on a \
+                     machine with more memory."
+                ),
+                None => "Its budget is the detected RAM less a reserve; raise it with \
+                         --bwamem3_max_memory, or run on a machine with more memory."
+                    .to_string(),
+            },
         }),
         _ => Err(GenomePrepError::Bwamem3Failed {
             genome: genome_folder.to_path_buf(),
@@ -265,7 +305,7 @@ fn run_index(
 /// Drop what `mem --meth` never opens, then require the 7 index files and matching contigs.
 fn prune_and_check(
     dir: &Path,
-    names: &[String],
+    contigs: &[(String, u64)],
     genome_folder: &Path,
 ) -> Result<(), GenomePrepError> {
     let failed = |detail: String| GenomePrepError::Bwamem3Failed {
@@ -277,13 +317,15 @@ fn prune_and_check(
         format!("{INDEX_PREFIX_NAME}.meth.fa"),
         format!("{INDEX_PREFIX_NAME}.bwt.2bit.64"),
     ] {
-        match fs::remove_file(dir.join(name)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+        let path = dir.join(name);
+        match fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(at(&path)(e)),
             _ => {}
         }
     }
-    match fs::remove_dir_all(dir.join("tmp")) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+    let tmp = dir.join("tmp");
+    match fs::remove_dir_all(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(at(&tmp)(e)),
         _ => {}
     }
     for suffix in BWAMEM3_INDEX_SUFFIXES {
@@ -295,18 +337,22 @@ fn prune_and_check(
     }
     let ann = crate::aligner::read_bwa_ann(&dir.join(INDEX_PREFIX_NAME))
         .map_err(|e| failed(e.to_string()))?;
-    let ann_names: Vec<&str> = ann.iter().map(|(n, _)| n.as_str()).collect();
-    if ann_names != names.iter().map(String::as_str).collect::<Vec<_>>() {
-        let first_diff = ann_names
+    if ann != contigs {
+        let first_diff = ann
             .iter()
-            .zip(names)
-            .find(|(a, b)| **a != b.as_str())
-            .map(|(a, b)| format!("; first difference: `{a}` in the index, `{b}` in the genome"))
+            .zip(contigs)
+            .find(|(a, b)| a != b)
+            .map(|((an, al), (gn, gl))| {
+                format!(
+                    "; first difference: `{an}` ({al} bp) in the index, `{gn}` ({gl} bp) in the \
+                     genome"
+                )
+            })
             .unwrap_or_default();
         return Err(failed(format!(
             "the index lists {} contigs, the genome {}{first_diff}",
-            ann_names.len(),
-            names.len()
+            ann.len(),
+            contigs.len()
         )));
     }
     Ok(())
@@ -319,19 +365,28 @@ fn publish(
     logger: &Logger,
 ) -> Result<PathBuf, GenomePrepError> {
     let dest = genome_folder.join(INDEX_DIR);
-    if dest.exists() {
+    if fs::symlink_metadata(&dest).is_ok() {
         logger.note(&format!(
             "Replacing the existing bwa-mem3 index in {}",
             dest.display()
         ));
         let old = genome_folder.join(format!("{OLD_PREFIX}{}", std::process::id()));
-        if old.exists() {
-            fs::remove_dir_all(&old)?;
+        if fs::symlink_metadata(&old).is_ok() {
+            fs::remove_dir_all(&old).map_err(at(&old))?;
         }
-        fs::rename(&dest, &old)?;
+        fs::rename(&dest, &old).map_err(at(&dest))?;
         if let Err(e) = fs::rename(partial, &dest) {
-            let _ = fs::rename(&old, &dest);
-            return Err(e.into());
+            if let Err(back) = fs::rename(&old, &dest) {
+                return Err(GenomePrepError::Bwamem3Failed {
+                    genome: genome_folder.to_path_buf(),
+                    detail: format!(
+                        "could not move the new index into place ({e}) or the previous one back \
+                         ({back}); the previous index is in {}",
+                        old.display()
+                    ),
+                });
+            }
+            return Err(at(&dest)(e));
         }
         if let Err(e) = fs::remove_dir_all(&old) {
             logger.note(&format!(
@@ -340,7 +395,7 @@ fn publish(
             ));
         }
     } else {
-        fs::rename(partial, &dest)?;
+        fs::rename(partial, &dest).map_err(at(&dest))?;
     }
     Ok(dest.join(INDEX_PREFIX_NAME))
 }
@@ -359,15 +414,22 @@ mod tests {
         e.finish().unwrap();
     }
 
-    fn ann(dir: &Path, contigs: &[&str]) {
-        let mut s = format!("{} {} 11\n", contigs.len() * 4, contigs.len());
-        for (i, c) in contigs.iter().enumerate() {
-            s.push_str(&format!("0 {c} (null)\n{} 4 0\n", i * 4));
+    fn ann(dir: &Path, contigs: &[(&str, u64)]) {
+        let total: u64 = contigs.iter().map(|c| c.1).sum();
+        let mut s = format!("{total} {} 11\n", contigs.len());
+        let mut off = 0;
+        for (c, len) in contigs {
+            s.push_str(&format!("0 {c} (null)\n{off} {len} 0\n"));
+            off += len;
         }
         fs::write(dir.join(format!("{INDEX_PREFIX_NAME}.ann")), s).unwrap();
     }
 
-    fn all_index_files(dir: &Path, contigs: &[&str]) {
+    fn contigs(c: &[(&str, u64)]) -> Contigs {
+        c.iter().map(|(n, l)| (n.to_string(), *l)).collect()
+    }
+
+    fn all_index_files(dir: &Path, contigs: &[(&str, u64)]) {
         for s in BWAMEM3_INDEX_SUFFIXES {
             fs::write(dir.join(format!("{INDEX_PREFIX_NAME}.{s}")), b"").unwrap();
         }
@@ -385,8 +447,7 @@ mod tests {
         let t = p.path().join(INDEX_PREFIX_NAME);
         assert!(fs::symlink_metadata(&t).unwrap().file_type().is_symlink());
         assert_eq!(fs::read_link(&t).unwrap(), fs::canonicalize(&fa).unwrap());
-        assert_eq!(s.names, ["chr1", "chr2"]);
-        assert_eq!(s.total_len, 8);
+        assert_eq!(s, [("chr1".to_string(), 6), ("chr2".to_string(), 2)]);
     }
 
     #[cfg(unix)]
@@ -399,7 +460,7 @@ mod tests {
         let s = stage_input(std::slice::from_ref(&fa), p.path()).unwrap();
         let t = p.path().join(INDEX_PREFIX_NAME);
         assert!(fs::symlink_metadata(&t).unwrap().file_type().is_symlink());
-        assert_eq!(s.names, ["chr1"]);
+        assert_eq!(s, [("chr1".to_string(), 4)]);
     }
 
     #[test]
@@ -414,8 +475,7 @@ mod tests {
         let t = p.path().join(INDEX_PREFIX_NAME);
         assert!(!fs::symlink_metadata(&t).unwrap().file_type().is_symlink());
         assert_eq!(fs::read(&t).unwrap(), b">chrA\nAC\n>chrB\nGT\n");
-        assert_eq!(s.names, ["chrA", "chrB"]);
-        assert_eq!(s.total_len, 4);
+        assert_eq!(s, [("chrA".to_string(), 2), ("chrB".to_string(), 2)]);
     }
 
     #[test]
@@ -455,12 +515,13 @@ mod tests {
     #[test]
     fn prune_keeps_exactly_the_seven_files() {
         let p = tempdir().unwrap();
-        all_index_files(p.path(), &["chr1", "chr2"]);
+        let two = [("chr1", 4), ("chr2", 4)];
+        all_index_files(p.path(), &two);
         for extra in ["", ".meth.fa", ".bwt.2bit.64"] {
             fs::write(p.path().join(format!("{INDEX_PREFIX_NAME}{extra}")), b"x").unwrap();
         }
         fs::create_dir(p.path().join("tmp")).unwrap();
-        prune_and_check(p.path(), &["chr1".into(), "chr2".into()], Path::new("/g")).unwrap();
+        prune_and_check(p.path(), &contigs(&two), Path::new("/g")).unwrap();
         let mut left: Vec<String> = fs::read_dir(p.path())
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -477,22 +538,70 @@ mod tests {
     #[test]
     fn prune_rejects_missing_file_and_contig_mismatch() {
         let p = tempdir().unwrap();
-        all_index_files(p.path(), &["chr1", "chr2"]);
+        let two = contigs(&[("chr1", 4), ("chr2", 4)]);
+        all_index_files(p.path(), &[("chr1", 4), ("chr2", 4)]);
         fs::remove_file(p.path().join(format!("{INDEX_PREFIX_NAME}.meth.pac"))).unwrap();
-        let e = prune_and_check(p.path(), &["chr1".into(), "chr2".into()], Path::new("/g"))
+        let e = prune_and_check(p.path(), &two, Path::new("/g"))
             .unwrap_err()
             .to_string();
         assert!(e.contains("genome.fa.meth.pac") && e.contains("/g"), "{e}");
 
+        for (index, want) in [
+            (
+                [("chr1", 4), ("chrX", 4)],
+                "`chrX` (4 bp) in the index, `chr2` (4 bp) in the genome",
+            ),
+            (
+                [("chr1", 4), ("chr2", 5)],
+                "`chr2` (5 bp) in the index, `chr2` (4 bp) in the genome",
+            ),
+        ] {
+            let p = tempdir().unwrap();
+            all_index_files(p.path(), &index);
+            let e = prune_and_check(p.path(), &two, Path::new("/g"))
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(want), "{e}");
+        }
+    }
+
+    #[test]
+    fn lengths_count_like_the_aligner() {
+        assert_eq!(seq_len(b"ACGT\n"), 4);
+        assert_eq!(seq_len(b"ACGT\r\n"), 4);
+        assert_eq!(seq_len(b"AC\rGT\n"), 2);
+        assert_eq!(seq_len(b"AC GT"), 5);
+        let g = tempdir().unwrap();
         let p = tempdir().unwrap();
-        all_index_files(p.path(), &["chr1", "chrX"]);
-        let e = prune_and_check(p.path(), &["chr1".into(), "chr2".into()], Path::new("/g"))
-            .unwrap_err()
-            .to_string();
-        assert!(
-            e.contains("`chrX` in the index, `chr2` in the genome"),
-            "{e}"
+        let fa = g.path().join("a.fa");
+        fs::write(&fa, b">chr1\r\nACGT\r\nAC\r\n").unwrap();
+        let b = g.path().join("b.fa");
+        fs::write(&b, b">chr2\nN\n").unwrap();
+        assert_eq!(
+            stage_input(&[fa, b], p.path()).unwrap(),
+            contigs(&[("chr1", 6), ("chr2", 1)])
         );
+    }
+
+    #[test]
+    fn index_fasta_names() {
+        assert!(is_index_fasta(Path::new("/g/genome.fa.meth.fa")));
+        assert!(!is_index_fasta(Path::new("/g/chr1.fa")));
+        assert!(!is_index_fasta(Path::new("/g/meth.fasta")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_replaces_a_dangling_index_link() {
+        let g = tempdir().unwrap();
+        let dest = g.path().join(INDEX_DIR);
+        std::os::unix::fs::symlink(g.path().join("gone"), &dest).unwrap();
+        let partial = g.path().join("Bwamem3_Index.partial.1");
+        fs::create_dir(&partial).unwrap();
+        fs::write(partial.join("new"), b"").unwrap();
+        publish(&partial, g.path(), &Logger::new(false)).unwrap();
+        assert!(dest.join("new").is_file());
+        assert_eq!(fs::read_dir(g.path()).unwrap().count(), 1);
     }
 
     #[test]

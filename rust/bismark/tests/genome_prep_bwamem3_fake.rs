@@ -171,15 +171,16 @@ fn a_rebuild_replaces_the_old_index() {
 /// Each failure leaves an existing index and the genome folder as they were.
 #[test]
 fn failures_keep_the_existing_index() {
-    let cases: [(&str, &str, &str); 6] = [
-        ("FAKE_EXIT", "3", "--bwamem3_max_memory"),
+    let cases: [(&str, &str, &str); 7] = [
+        ("FAKE_EXIT", "3", "the detected RAM less a reserve"),
         ("FAKE_EXIT", "1", "exit status: 1"),
+        ("FAKE_EXIT", "5", "exit status: 5"),
         ("FAKE_EXIT", "kill", "signal"),
         ("FAKE_OMIT", "meth.pac", "did not write genome.fa.meth.pac"),
         (
             "FAKE_ANN_NAME",
             "chrZ",
-            "`chrZ` in the index, `chrA` in the genome",
+            "`chrZ` (4 bp) in the index, `chrA` (4 bp) in the genome",
         ),
         ("FAKE_VERSION", "0.15.0", "too old"),
     ];
@@ -312,4 +313,70 @@ fn incompatible_flags_are_rejected() {
             .failure()
             .stderr(predicate::str::contains("bwa-mem3 mode"));
     }
+}
+
+#[test]
+fn memory_error_names_the_budget_the_user_gave() {
+    let s = setup();
+    prep(&s)
+        .env("FAKE_EXIT", "3")
+        .args(["--bwamem3_max_memory", "8G"])
+        .arg(&s.genome)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "the --bwamem3_max_memory you gave (8G)",
+        ))
+        .stderr(predicate::str::contains("detected RAM").not());
+}
+
+#[test]
+fn a_failed_build_writes_no_genomic_composition() {
+    let s = setup();
+    prep(&s)
+        .env("FAKE_EXIT", "3")
+        .arg("--genomic_composition")
+        .arg(&s.genome)
+        .assert()
+        .failure();
+    assert!(!s.genome.join("genomic_nucleotide_frequencies.txt").exists());
+}
+
+#[test]
+fn parallel_one_is_bwamem3s_thread_count() {
+    let s = setup();
+    prep(&s)
+        .args(["--parallel", "1"])
+        .arg(&s.genome)
+        .assert()
+        .success();
+    let argv = fs::read_to_string(&s.argv).unwrap();
+    assert!(argv.starts_with("index --meth -t 1 "), "{argv}");
+}
+
+#[test]
+fn a_read_only_genome_folder_names_the_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup();
+    fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = prep(&s).arg(&s.genome).assert().failure();
+    fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o755)).unwrap();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains(&format!("{}/Bwamem3_Index.partial.", s.genome.display())),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_previous_index_left_by_an_interrupted_rebuild_is_named() {
+    let s = setup();
+    let old = s.genome.join("Bwamem3_Index.old.999999");
+    fs::create_dir(&old).unwrap();
+    prep(&s)
+        .arg(&s.genome)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("interrupted rebuild"));
+    assert!(old.is_dir());
 }
