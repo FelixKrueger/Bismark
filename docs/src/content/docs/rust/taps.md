@@ -33,8 +33,7 @@ bismark --taps --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 An index built by hand (`bwa-mem3 index --meth genome.fa`) also works: pass the FASTA path it was
 built from as `--five_base_index` (the option name is shared with the 5-Base mode), and keep it out
 of the top level of the `--genome` folder. `--five_base_index` also takes a `Bwamem3_Index/` folder
-from another genome. Sequence lines must not contain spaces, tabs or other whitespace (CRLF line
-ends are fine): bwa-mem3 cannot load an index built from them, so genome preparation rejects them.
+from another genome folder built from the same FASTA. Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine.
 The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
 are the same as for `--illumina_5base --bwamem3`; see
 [bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and

@@ -101,16 +101,10 @@ pub fn build(
     max_memory: Option<&str>,
     logger: &Logger,
 ) -> Result<PathBuf, GenomePrepError> {
-    let pid = std::process::id();
-    for note in leftover_notes(genome_folder, pid)? {
+    for note in leftover_notes(genome_folder)? {
         logger.note(&note);
     }
-    let partial = genome_folder.join(format!("{PARTIAL_PREFIX}{pid}"));
-    // A folder with this run's PID is from a killed earlier run.
-    if partial.exists() {
-        fs::remove_dir_all(&partial).map_err(at(&partial))?;
-    }
-    fs::create_dir(&partial).map_err(at(&partial))?;
+    let partial = create_partial(genome_folder)?;
 
     if let Err(e) = stage_and_index(
         files,
@@ -124,32 +118,58 @@ pub fn build(
         let _ = fs::remove_dir_all(&partial);
         return Err(e);
     }
-    publish(&partial, genome_folder, logger).map_err(|e| GenomePrepError::Bwamem3Failed {
-        genome: genome_folder.to_path_buf(),
-        detail: format!(
-            "{e}. The new index is complete in {}: move it to {} by hand (a re-run with the same \
-             process id would delete it)",
-            partial.display(),
-            genome_folder.join(INDEX_DIR).display()
-        ),
+    let dest = genome_folder.join(INDEX_DIR);
+    publish(&partial, &dest, logger).map_err(|detail| GenomePrepError::Bwamem3NotPublished {
+        partial: partial.clone(),
+        dest,
+        detail,
     })
 }
 
-/// Notes on other runs' `.partial.*` and interrupted rebuilds' `.old.*` folders (never touched).
-fn leftover_notes(genome_folder: &Path, pid: u32) -> Result<Vec<String>, GenomePrepError> {
-    let own_partial = format!("{PARTIAL_PREFIX}{pid}");
-    let own_old = format!("{OLD_PREFIX}{pid}");
-    let have_index = fs::symlink_metadata(genome_folder.join(INDEX_DIR)).is_ok();
+/// Create `<genome>/Bwamem3_Index.partial.<random>` (unique even when PIDs repeat, as in containers).
+fn create_partial(genome_folder: &Path) -> Result<PathBuf, GenomePrepError> {
+    use std::hash::{BuildHasher, Hasher};
+    let mut last = None;
+    for attempt in 0..16u32 {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u32(std::process::id());
+        h.write_u32(attempt);
+        h.write_u128(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        let path = genome_folder.join(format!("{PARTIAL_PREFIX}{:016x}", h.finish()));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some((path, e)),
+            Err(e) => return Err(at(&path)(e)),
+        }
+    }
+    let (path, e) = last.expect("at least one attempt");
+    Err(at(&path)(e))
+}
+
+/// `true` if `dir` holds a finished, pruned index (what `publish` moves into place).
+fn is_complete_build(dir: &Path) -> bool {
+    fs::symlink_metadata(dir.join("tmp")).is_err()
+        && fs::symlink_metadata(dir.join(INDEX_PREFIX_NAME)).is_err()
+        && BWAMEM3_INDEX_SUFFIXES
+            .iter()
+            .all(|s| dir.join(format!("{INDEX_PREFIX_NAME}.{s}")).is_file())
+}
+
+/// Notes on earlier runs' `.partial.*` and interrupted rebuilds' `.old.*` folders (never touched).
+fn leftover_notes(genome_folder: &Path) -> Result<Vec<String>, GenomePrepError> {
     let mut notes = Vec::new();
     for entry in fs::read_dir(genome_folder)
         .map_err(at(genome_folder))?
         .filter_map(|e| e.ok())
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let partial = name.starts_with(PARTIAL_PREFIX) && name != own_partial;
-        // `publish` replaces this run's own `.old` only when `Bwamem3_Index/` exists.
-        let old = name.starts_with(OLD_PREFIX) && !(name == own_old && have_index);
-        if !partial && !old {
+        let partial = name.starts_with(PARTIAL_PREFIX);
+        if !partial && !name.starts_with(OLD_PREFIX) {
             continue;
         }
         let path = entry.path();
@@ -157,7 +177,13 @@ fn leftover_notes(genome_folder: &Path, pid: u32) -> Result<Vec<String>, GenomeP
             .and_then(|t| SystemTime::now().duration_since(t).ok())
             .map(|d| format!(" (last written {} min ago)", d.as_secs() / 60))
             .unwrap_or_default();
-        notes.push(if partial {
+        notes.push(if partial && is_complete_build(&path) {
+            format!(
+                "Note: {}{age} is a complete bwa-mem3 index that an earlier run could not move \
+                 into place. It is left alone; replace {INDEX_DIR}/ with it, or remove it.",
+                path.display()
+            )
+        } else if partial {
             format!(
                 "Note: {}{age} exists: another bwa-mem3 index build may be running here, or one \
                  was killed. It is left alone; remove it if no build is running.",
@@ -212,23 +238,42 @@ fn stage_and_index(
     prune_and_check(partial, &contigs, genome_folder)
 }
 
-/// Bases on one sequence line (without its `\n` and one trailing `\r`), or the byte that would end up
-/// in the index's `.amb` and stop bwa-mem3 from loading it.
-fn seq_line_len(line: &[u8]) -> Result<u64, String> {
+/// Bases on one sequence line (without its `\n` and one trailing `\r`), or why bwa-mem3 would read
+/// it differently from Bismark. `contig_start`: no base of the current contig has been read yet.
+fn seq_line_len(line: &[u8], contig_start: bool) -> Result<u64, String> {
+    const UNLOADABLE: &str = "which bwa-mem3 writes into the index and then cannot load";
     let line = line.strip_suffix(b"\n").unwrap_or(line);
+    if contig_start && line == b"\r" {
+        return Err(format!(
+            "a line holding only a carriage return (\\r) before the first base, {UNLOADABLE}"
+        ));
+    }
+    if let Some(&c @ (b'+' | b'@')) = line.first() {
+        return Err(format!(
+            "a line starting with `{}`, which bwa-mem3 reads as the start of a FASTQ record, \
+             cutting the contig short",
+            c as char
+        ));
+    }
     let line = line.strip_suffix(b"\r").unwrap_or(line);
-    match line
+    let what = match line
         .iter()
         .find(|&&b| matches!(b, b' ' | b'\t' | b'\r' | 0x0b | 0x0c) || b >= 0x80)
     {
-        None => Ok(line.len() as u64),
-        Some(b' ') => Err("a space".to_string()),
-        Some(b'\t') => Err("a tab".to_string()),
-        Some(b'\r') => Err("a carriage return (\\r) before the end of the line".to_string()),
-        Some(0x0b) => Err("a vertical tab".to_string()),
-        Some(0x0c) => Err("a form feed".to_string()),
-        Some(b) => Err(format!("the non-ASCII byte 0x{b:02x}")),
-    }
+        None => return Ok(line.len() as u64),
+        Some(b' ') => "a space".to_string(),
+        Some(b'\t') => "a tab".to_string(),
+        Some(b'\r') => "a carriage return (\\r) before the end of the line".to_string(),
+        Some(0x0b) => "a vertical tab".to_string(),
+        Some(0x0c) => "a form feed".to_string(),
+        Some(b) => {
+            return Err(format!(
+                "the sequence contains the non-ASCII byte 0x{b:02x}, which Bismark and bwa-mem3 \
+                 count differently, so the aligner would reject the index"
+            ));
+        }
+    };
+    Err(format!("the sequence contains {what}, {UNLOADABLE}"))
 }
 
 /// Put the genome at `<dir>/genome.fa` (a link to a single file, else a decompressed
@@ -273,6 +318,15 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
                 }
             }
             if line[0] == b'>' {
+                let body = line.strip_suffix(b"\n").unwrap_or(&line);
+                if body.strip_suffix(b"\r").unwrap_or(body).contains(&b'\r') {
+                    return Err(GenomePrepError::Validation(format!(
+                        "{}: line {line_no} holds more than one line separated by carriage returns \
+                         (\\r) alone; convert the file to LF or CRLF line ends",
+                        file.display()
+                    )));
+                }
+                reject_empty_contig(contigs.last(), file)?;
                 let name = extract_chromosome_name(&line, file)?;
                 if name.is_empty() {
                     return Err(GenomePrepError::Validation(format!(
@@ -288,11 +342,9 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
                 }
                 contigs.push((name, 0));
             } else if let Some(last) = contigs.last_mut() {
-                last.1 += seq_line_len(&line).map_err(|what| {
+                last.1 += seq_line_len(&line, last.1 == 0).map_err(|problem| {
                     GenomePrepError::Validation(format!(
-                        "{}: contig {}, line {line_no}: the sequence contains {what}; bwa-mem3 \
-                         would write it into the index and then could not load it. Remove \
-                         whitespace and non-ASCII bytes from sequence lines.",
+                        "{}: contig {}, line {line_no}: {problem}.",
                         file.display(),
                         last.0
                     ))
@@ -306,6 +358,7 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
         if first {
             return Err(GenomePrepError::NotFasta(file.clone()));
         }
+        reject_empty_contig(contigs.last(), file)?;
         if let Some(w) = out.as_mut()
             && !last_newline
         {
@@ -316,6 +369,18 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
         w.flush().map_err(at(&target))?;
     }
     Ok(contigs)
+}
+
+/// A contig without bases makes `bwa-mem3 mem --meth` fail at start-up.
+fn reject_empty_contig(contig: Option<&(String, u64)>, file: &Path) -> Result<(), GenomePrepError> {
+    match contig {
+        Some((name, 0)) => Err(GenomePrepError::Validation(format!(
+            "{}: contig {name} has no sequence; bwa-mem3 cannot align against an index with an \
+             empty contig",
+            file.display()
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// `bwa-mem3 index --meth` with its scratch inside `dir`.
@@ -424,22 +489,21 @@ fn move_to(from: &Path, to: &Path) -> Result<(), String> {
         .map_err(|e| format!("could not move {} to {}: {e}", from.display(), to.display()))
 }
 
-/// Move `partial` to `<genome>/Bwamem3_Index/`, swapping out any existing index.
-fn publish(partial: &Path, genome_folder: &Path, logger: &Logger) -> Result<PathBuf, String> {
-    let dest = genome_folder.join(INDEX_DIR);
-    if fs::symlink_metadata(&dest).is_ok() {
+/// Move `partial` to `dest`, swapping out any existing index.
+fn publish(partial: &Path, dest: &Path, logger: &Logger) -> Result<PathBuf, String> {
+    if fs::symlink_metadata(dest).is_ok() {
         logger.note(&format!(
             "Replacing the existing bwa-mem3 index in {}",
             dest.display()
         ));
-        let old = genome_folder.join(format!("{OLD_PREFIX}{}", std::process::id()));
-        if fs::symlink_metadata(&old).is_ok() {
-            fs::remove_dir_all(&old)
-                .map_err(|e| format!("could not remove {}: {e}", old.display()))?;
-        }
-        move_to(&dest, &old)?;
-        if let Err(e) = move_to(partial, &dest) {
-            if let Err(back) = move_to(&old, &dest) {
+        let suffix = partial
+            .file_name()
+            .map(|n| n.to_string_lossy().replacen(PARTIAL_PREFIX, "", 1))
+            .unwrap_or_default();
+        let old = dest.with_file_name(format!("{OLD_PREFIX}{suffix}"));
+        move_to(dest, &old)?;
+        if let Err(e) = move_to(partial, dest) {
+            if let Err(back) = move_to(&old, dest) {
                 return Err(format!(
                     "{e}; {back}; the previous index is in {}",
                     old.display()
@@ -454,7 +518,7 @@ fn publish(partial: &Path, genome_folder: &Path, logger: &Logger) -> Result<Path
             ));
         }
     } else {
-        move_to(partial, &dest)?;
+        move_to(partial, dest)?;
     }
     Ok(dest.join(INDEX_PREFIX_NAME))
 }
@@ -634,7 +698,7 @@ mod tests {
             (b"acgtRY\n", 6),
             (b"\n", 0),
         ] {
-            assert_eq!(seq_line_len(line), Ok(len), "{line:?}");
+            assert_eq!(seq_line_len(line, true), Ok(len), "{line:?}");
         }
         for (line, what) in [
             (&b"AC GT\n"[..], "a space"),
@@ -643,11 +707,20 @@ mod tests {
             (b"AC\rGT\r\n", "carriage return"),
             (b"AC\x0bGT\n", "vertical tab"),
             (b"AC\x0cGT\n", "form feed"),
-            (b"AC\xc3\xa9\n", "0xc3"),
+            (
+                b"AC\xc3\xa9\n",
+                "0xc3, which Bismark and bwa-mem3 count differently",
+            ),
+            (b"+ACGT\n", "starting with `+`"),
+            (b"@ACGT\n", "starting with `@`"),
         ] {
-            let e = seq_line_len(line).unwrap_err();
+            let e = seq_line_len(line, false).unwrap_err();
             assert!(e.contains(what), "{line:?}: {e}");
         }
+        // A lone `\r` line is harmless inside a contig, but bwa-mem3 keeps it as a base at the start.
+        assert_eq!(seq_line_len(b"\r\n", false), Ok(0));
+        let e = seq_line_len(b"\r\n", true).unwrap_err();
+        assert!(e.contains("only a carriage return"), "{e}");
         let g = tempdir().unwrap();
         let p = tempdir().unwrap();
         let bad = g.path().join("bad.fa");
@@ -674,6 +747,40 @@ mod tests {
         );
     }
 
+    #[test]
+    fn genomes_bwamem3_reads_differently_are_rejected() {
+        for (content, want) in [
+            (
+                &b">chr1\nACGT\n>chr2\n>chr3\nAC\n"[..],
+                "contig chr2 has no sequence",
+            ),
+            (b">chr1\nACGT\n>chr2\n", "contig chr2 has no sequence"),
+            (b">chr1\n\n", "contig chr1 has no sequence"),
+            (b">chr1\r\n\r\nACGT\r\n", "only a carriage return"),
+            (b">chr1\n\n\r\nACGT\n", "only a carriage return"),
+            (b">chr1\rACGT\rACGT\r", "separated by carriage returns"),
+            (b">chr1\nACGT\n+CGT\n", "starting with `+`"),
+        ] {
+            let g = tempdir().unwrap();
+            let p = tempdir().unwrap();
+            let fa = g.path().join("g.fa");
+            fs::write(&fa, content).unwrap();
+            let e = stage_input(std::slice::from_ref(&fa), p.path())
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains(want), "{content:?}: {e}");
+        }
+        // A blank CRLF line inside a contig is fine.
+        let g = tempdir().unwrap();
+        let p = tempdir().unwrap();
+        let fa = g.path().join("g.fa");
+        fs::write(&fa, b">chr1\r\nAC\r\n\r\nGT\r\n").unwrap();
+        assert_eq!(
+            stage_input(std::slice::from_ref(&fa), p.path()).unwrap(),
+            contigs(&[("chr1", 4)])
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn unreadable_fasta_is_named() {
@@ -696,33 +803,59 @@ mod tests {
         assert!(e.starts_with(&b.display().to_string()), "{e}");
     }
 
-    fn notes(g: &Path, pid: u32) -> String {
-        leftover_notes(g, pid).unwrap().join("\n")
+    fn notes(g: &Path) -> String {
+        leftover_notes(g).unwrap().join("\n")
+    }
+
+    /// Set the mtime of `path` to `mins` minutes ago.
+    fn age(path: &Path, mins: u64) {
+        let t = SystemTime::now() - std::time::Duration::from_secs(mins * 60);
+        File::open(path).unwrap().set_modified(t).unwrap();
     }
 
     #[test]
-    fn leftover_notes_name_other_runs_and_lone_previous_indexes() {
+    fn leftover_notes_describe_each_kind_of_folder() {
         let g = tempdir().unwrap();
-        fs::create_dir_all(g.path().join("Bwamem3_Index.partial.7/tmp/bwa-meth-x")).unwrap();
-        fs::write(
-            g.path()
-                .join("Bwamem3_Index.partial.7/tmp/bwa-meth-x/seed.fa"),
-            b"",
-        )
-        .unwrap();
-        fs::create_dir(g.path().join("Bwamem3_Index.partial.42")).unwrap();
-        fs::create_dir(g.path().join("Bwamem3_Index.old.42")).unwrap();
+        // A running build: old folder and tmp/, a fresh file deep in tmp/bwa-meth-*.
+        let running = g.path().join("Bwamem3_Index.partial.aaa");
+        fs::create_dir_all(running.join("tmp/bwa-meth-x")).unwrap();
+        fs::write(running.join("tmp/bwa-meth-x/seed.fa"), b"").unwrap();
+        for d in [
+            &running,
+            &running.join("tmp"),
+            &running.join("tmp/bwa-meth-x"),
+        ] {
+            age(d, 120);
+        }
+        // A stale one: everything two hours old.
+        let stale = g.path().join("Bwamem3_Index.partial.bbb");
+        fs::create_dir(&stale).unwrap();
+        age(&stale, 120);
+        // A finished build an earlier run could not move into place.
+        let kept = g.path().join("Bwamem3_Index.partial.ccc");
+        fs::create_dir(&kept).unwrap();
+        all_index_files(&kept, &[("chr1", 4)]);
+        fs::create_dir(g.path().join("Bwamem3_Index.old.ddd")).unwrap();
         fs::write(g.path().join("chr1.fa"), b">c\nA\n").unwrap();
-        let n = notes(g.path(), 42);
-        assert!(n.contains("partial.7 (last written 0 min ago)"), "{n}");
-        assert!(!n.contains("partial.42"), "own partial: {n}");
-        assert!(n.contains("old.42"), "only copy of the previous index: {n}");
-        assert!(!n.contains("chr1"), "{n}");
 
-        fs::create_dir(g.path().join(INDEX_DIR)).unwrap();
-        let n = notes(g.path(), 42);
-        assert!(!n.contains("old.42"), "replaced by publish: {n}");
-        assert!(notes(g.path(), 43).contains("old.42"), "another run's .old");
+        let n = notes(g.path());
+        assert!(
+            n.contains("partial.aaa (last written 0 min ago) exists"),
+            "{n}"
+        );
+        assert!(
+            n.contains("partial.bbb (last written 120 min ago) exists"),
+            "{n}"
+        );
+        assert!(
+            n.contains("partial.ccc") && n.contains("is a complete bwa-mem3 index"),
+            "{n}"
+        );
+        assert!(
+            n.contains("old.ddd") && n.contains("interrupted rebuild"),
+            "{n}"
+        );
+        assert!(!n.contains("chr1"), "{n}");
     }
 
     #[test]
@@ -741,7 +874,7 @@ mod tests {
         let partial = g.path().join("Bwamem3_Index.partial.1");
         fs::create_dir(&partial).unwrap();
         fs::write(partial.join("new"), b"").unwrap();
-        publish(&partial, g.path(), &Logger::new(false)).unwrap();
+        publish(&partial, &dest, &Logger::new(false)).unwrap();
         assert!(dest.join("new").is_file());
         assert_eq!(fs::read_dir(g.path()).unwrap().count(), 1);
     }
@@ -755,10 +888,26 @@ mod tests {
         let partial = g.path().join("Bwamem3_Index.partial.1");
         fs::create_dir(&partial).unwrap();
         fs::write(partial.join("new"), b"").unwrap();
-        let prefix = publish(&partial, g.path(), &Logger::new(false)).unwrap();
+        let prefix = publish(&partial, &dest, &Logger::new(false)).unwrap();
         assert_eq!(prefix, dest.join(INDEX_PREFIX_NAME));
         assert!(dest.join("new").exists() && !dest.join("old").exists());
         let left: Vec<_> = fs::read_dir(g.path()).unwrap().collect();
         assert_eq!(left.len(), 1, "only Bwamem3_Index/ remains");
+    }
+
+    #[test]
+    fn publish_restores_the_old_index_when_the_new_one_cannot_be_moved() {
+        let g = tempdir().unwrap();
+        let dest = g.path().join(INDEX_DIR);
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("old"), b"").unwrap();
+        let missing = g.path().join("Bwamem3_Index.partial.gone");
+        let e = publish(&missing, &dest, &Logger::new(false)).unwrap_err();
+        assert!(
+            e.contains("could not move") && e.contains("partial.gone"),
+            "{e}"
+        );
+        assert!(dest.join("old").is_file(), "previous index put back");
+        assert_eq!(fs::read_dir(g.path()).unwrap().count(), 1, "no .old left");
     }
 }

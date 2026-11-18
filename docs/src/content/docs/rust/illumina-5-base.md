@@ -182,9 +182,8 @@ It is opt-in because it is expensive:
 
 `bismark prepare --bwamem3 <genome>` writes the index to `<genome>/Bwamem3_Index/`, keeping
 only the 7 files bwa-mem3 reads, and the aligner uses it when `--five_base_index` is not given.
-`--five_base_index` also takes such a folder from another genome. Genome preparation rejects
-sequence lines with spaces, tabs or other whitespace (bwa-mem3 cannot load an index built from
-them); CRLF line ends are fine.
+`--five_base_index` also takes such a folder from another genome folder built from the same FASTA.
+Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine.
 For an index built by hand, pass the FASTA path it was built from as `--five_base_index`, and
 keep it out of the top level of the `--genome` folder, so its files are not mistaken for genome
 FASTA. Build either from the same FASTA as the `--genome` folder: Bismark compares the index's
