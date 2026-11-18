@@ -838,6 +838,21 @@ fn resolve_five_base_index(
         let index = if index.is_dir() {
             let prefix = index.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
             if !PathBuf::from(format!("{}.meth.ann", prefix.display())).is_file() {
+                let sub = index.join(crate::genome_prep::bwamem3::INDEX_DIR);
+                let sub_prefix = sub.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+                if PathBuf::from(format!("{}.meth.ann", sub_prefix.display())).is_file() {
+                    let same = std::fs::canonicalize(index).ok().as_deref() == Some(genome_dir);
+                    return Err(AlignerError::Validation(format!(
+                        "--five_base_index {} is a folder; did you mean {}?{}",
+                        index.display(),
+                        sub.display(),
+                        if same {
+                            " (or leave out --five_base_index to use it)"
+                        } else {
+                            ""
+                        }
+                    )));
+                }
                 return Err(AlignerError::Validation(format!(
                     "--five_base_index {} is a folder; pass the index prefix (the FASTA path the \
                      index was built from), or a folder written by `bismark_genome_preparation \
@@ -2461,15 +2476,33 @@ mod tests {
             resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
             Some(dir.join("genome.fa"))
         );
-        let e = expand_taps(&cli_from(&[
-            "--taps",
-            "--five_base_index",
-            g.to_str().unwrap(),
-        ]))
-        .map(|c| resolve_five_base_index(&c, Aligner::BwaMem3, &g))
-        .unwrap()
-        .unwrap_err()
-        .to_string();
+        // A folder that holds Bwamem3_Index/ gets a hint; "leave it out" only for the --genome folder.
+        let folder_err = |folder: &Path, genome: &Path| {
+            expand_taps(&cli_from(&[
+                "--taps",
+                "--five_base_index",
+                folder.to_str().unwrap(),
+            ]))
+            .map(|c| resolve_five_base_index(&c, Aligner::BwaMem3, genome))
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+        };
+        let gc = std::fs::canonicalize(&g).unwrap();
+        let e = folder_err(&g, &gc);
+        assert!(
+            e.contains(&format!("did you mean {}?", dir.display()))
+                && e.contains("leave out --five_base_index"),
+            "{e}"
+        );
+        let other_genome = tempfile::tempdir().unwrap();
+        let e = folder_err(&g, other_genome.path());
+        assert!(
+            e.contains("did you mean") && !e.contains("leave out"),
+            "{e}"
+        );
+        let empty = tempfile::tempdir().unwrap();
+        let e = folder_err(empty.path(), &gc);
         assert!(e.contains("is a folder; pass the index prefix"), "{e}");
 
         // Other engines never pick it up.

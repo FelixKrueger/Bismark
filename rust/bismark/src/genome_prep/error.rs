@@ -84,6 +84,21 @@ pub enum GenomePrepError {
         hint: String,
     },
 
+    /// A complete, checked index could not be moved into place.
+    #[error(
+        "the new bwa-mem3 index is complete in {} but could not be moved into place ({detail}). \
+         Replace {} with it by hand: remove {} if it exists, then rename the new folder to it.",
+        partial.display(), dest.display(), dest.display()
+    )]
+    Bwamem3NotPublished {
+        /// The finished index folder.
+        partial: PathBuf,
+        /// Where it belongs (`<genome>/Bwamem3_Index`).
+        dest: PathBuf,
+        /// Why the move failed.
+        detail: String,
+    },
+
     /// `bwa-mem3 index` failed, or its output is incomplete or does not match the genome.
     #[error("bwa-mem3 could not build the methylation index for {genome}: {detail}")]
     Bwamem3Failed {

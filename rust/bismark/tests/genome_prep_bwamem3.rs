@@ -212,3 +212,49 @@ fn too_small_a_budget_is_a_memory_error() {
         .collect();
     assert_eq!(names, ["spikes.fa"]);
 }
+
+/// A CRLF genome builds, matches a manual build of the same file, and `--taps` aligns against it.
+#[test]
+fn crlf_genome_builds_and_aligns() {
+    if !bwamem3_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (genome prep bwa-mem3 gate)");
+        return;
+    }
+    let crlf = fs::read_to_string(fixture("spikes.fa"))
+        .unwrap()
+        .replace('\n', "\r\n");
+    let genome = TempDir::new().unwrap();
+    fs::write(genome.path().join("spikes.fa"), &crlf).unwrap();
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .arg("--bwamem3")
+        .arg(genome.path())
+        .timeout(Duration::from_secs(300))
+        .assert()
+        .success();
+
+    let manual = TempDir::new().unwrap();
+    let fa = manual.path().join("spikes.fa");
+    fs::write(&fa, &crlf).unwrap();
+    let st = StdCommand::new("bwa-mem3")
+        .args(["index", "--meth"])
+        .arg(&fa)
+        .output()
+        .unwrap();
+    assert!(
+        st.status.success(),
+        "{}",
+        String::from_utf8_lossy(&st.stderr)
+    );
+    for s in SEVEN {
+        assert_eq!(
+            fs::read(genome.path().join(format!("Bwamem3_Index/genome.fa.{s}"))).unwrap(),
+            fs::read(format!("{}.{s}", fa.display())).unwrap(),
+            "genome.fa.{s} differs from the manual build"
+        );
+    }
+
+    let out = TempDir::new().unwrap();
+    taps(genome.path(), None, out.path());
+    assert!(!records(&out.path().join("taps_R1_bismark_bwamem3_pe.bam")).is_empty());
+}

@@ -32,7 +32,9 @@ bismark --taps --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 
 An index built by hand (`bwa-mem3 index --meth genome.fa`) also works: pass the FASTA path it was
 built from as `--five_base_index` (the option name is shared with the 5-Base mode), and keep it out
-of the top level of the `--genome` folder. The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
+of the top level of the `--genome` folder. `--five_base_index` also takes a `Bwamem3_Index/` folder
+from another genome folder built from the same FASTA. Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine.
+The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
 are the same as for `--illumina_5base --bwamem3`; see
 [bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and
 0.17.0 are validated; older versions are rejected and other versions run with a warning.
@@ -49,7 +51,7 @@ ignores it.
 
 | Option | With `--taps` |
 |---|---|
-| `--five_base_index` | the FASTA a `bwa-mem3 index --meth` index was built from; optional when `<genome>/Bwamem3_Index/` (from `bismark prepare --bwamem3`) exists |
+| `--five_base_index` | the FASTA a `bwa-mem3 index --meth` index was built from, or a `Bwamem3_Index/` folder; optional when `<genome>/Bwamem3_Index/` (from `bismark prepare --bwamem3`) exists |
 | `--five_base_baseq N` | accepted: read bases below Phred N are not called (0, the default, is off); `30` matches common TAPS callers |
 | `--five_base_bisulfite_bam` | accepted: re-encodes a TAPS BAM to bisulfite convention, as for 5-Base |
 | `-p` / `--multicore`, `--path_to_bwamem3`, `--upto`, output options | as for `--illumina_5base --bwamem3` |

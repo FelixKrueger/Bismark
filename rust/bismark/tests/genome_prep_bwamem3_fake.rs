@@ -3,7 +3,9 @@
 //! The fake answers `version` with `$FAKE_VERSION` (default `0.17.0`). For `index` it writes the
 //! nine files `bwa-mem3 index --meth` writes, with an `.ann` listing the input's contigs.
 //! `$FAKE_EXIT` (a code, or `kill`), `$FAKE_OMIT` (a suffix not to write) and `$FAKE_ANN_NAME`
-//! (rename the first contig) inject failures; `$FAKE_ARGV_DUMP` receives its argv.
+//! (rename the first contig) inject failures; `$FAKE_LOCK_GENOME` makes the genome folder read-only
+//! after a successful build; `$FAKE_ARGV_DUMP` receives its argv. Every `.ann` contig is
+//! 4 bp long, as in [`setup`]'s genome.
 #![cfg(unix)]
 
 use std::fs;
@@ -37,6 +39,8 @@ awk -v rn="$FAKE_ANN_NAME" '/^>/ { n++; name[n] = substr($1, 2) }
         print n * 4, n, 11
         for (i = 1; i <= n; i++) { print 0, name[i], "(null)"; print (i - 1) * 4, 4, 0 } }' \
   "$in" > "$in.ann"
+[ -n "$FAKE_LOCK_GENOME" ] && chmod 555 ..
+exit 0
 "#;
 
 /// Write an executable script; retry until exec no longer reports text file busy.
@@ -89,6 +93,7 @@ fn prep(s: &Setup) -> Command {
         .env_remove("FAKE_OMIT")
         .env_remove("FAKE_ANN_NAME")
         .env_remove("FAKE_VERSION")
+        .env_remove("FAKE_LOCK_GENOME")
         .arg("--bwamem3");
     c
 }
@@ -359,6 +364,11 @@ fn a_read_only_genome_folder_names_the_path() {
     use std::os::unix::fs::PermissionsExt;
     let s = setup();
     fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o555)).unwrap();
+    if fs::write(s.genome.join("probe"), b"").is_ok() {
+        fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipping: permission bits do not stop this user (root)");
+        return;
+    }
     let out = prep(&s).arg(&s.genome).assert().failure();
     fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o755)).unwrap();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
@@ -379,4 +389,88 @@ fn a_previous_index_left_by_an_interrupted_rebuild_is_named() {
         .success()
         .stderr(predicate::str::contains("interrupted rebuild"));
     assert!(old.is_dir());
+}
+
+#[test]
+fn parallel_zero_fails_before_anything_is_read() {
+    let s = setup();
+    prep(&s)
+        .args(["--parallel", "0"])
+        .arg(&s.genome)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1 or more with --bwamem3"));
+    assert!(!s.argv.exists(), "index ran");
+    assert_eq!(sorted_names(&s.genome), ["chrA.fa", "chrB.fa"]);
+}
+
+/// A complete, checked build survives a failed swap; the error and the next run say where it is.
+#[test]
+fn a_verified_build_is_kept_when_it_cannot_be_moved_into_place() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup();
+    let probe = s.genome.join("probe");
+    fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o555)).unwrap();
+    let root = fs::write(&probe, b"").is_ok();
+    fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o755)).unwrap();
+    if root {
+        fs::remove_file(&probe).unwrap();
+        eprintln!("skipping: permission bits do not stop this user (root)");
+        return;
+    }
+    let old = s.genome.join("Bwamem3_Index");
+    fs::create_dir(&old).unwrap();
+    fs::write(old.join("keep"), b"").unwrap();
+    let out = prep(&s)
+        .env("FAKE_LOCK_GENOME", "1")
+        .arg(&s.genome)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is complete in"))
+        .stderr(predicate::str::contains("Replace"))
+        .stderr(predicate::str::contains("could not build").not());
+    fs::set_permissions(&s.genome, fs::Permissions::from_mode(0o755)).unwrap();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert_eq!(sorted_names(&old), ["keep"], "previous index untouched");
+    let partial: Vec<String> = sorted_names(&s.genome)
+        .into_iter()
+        .filter(|n| n.starts_with("Bwamem3_Index.partial."))
+        .collect();
+    assert_eq!(partial.len(), 1, "{stderr}");
+    assert!(stderr.contains(&partial[0]), "{stderr}");
+    assert_eq!(sorted_names(&s.genome.join(&partial[0])), seven_files());
+
+    // The next run names it as a finished index and leaves it alone.
+    prep(&s)
+        .arg(&s.genome)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("is a complete bwa-mem3 index"));
+    assert!(s.genome.join(&partial[0]).is_dir());
+}
+
+#[test]
+fn whitespace_in_sequence_lines_fails_before_indexing() {
+    for (content, want) in [
+        (&b">chrC\r\nACGT\r\r\n"[..], "a carriage return"),
+        (&b">chrC\nAC GT\n"[..], "a space"),
+        (&b">chrC\nAC\tGT\n"[..], "a tab"),
+    ] {
+        let s = setup();
+        fs::write(s.genome.join("chrC.fa"), content).unwrap();
+        prep(&s)
+            .arg(&s.genome)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "chrC.fa: contig chrC, line 2: the sequence contains {want}"
+            )));
+        assert!(!s.argv.exists(), "{want}: index ran");
+        assert!(
+            sorted_names(&s.genome)
+                .iter()
+                .all(|n| !n.starts_with("Bwamem3_Index")),
+            "{want}"
+        );
+    }
 }
