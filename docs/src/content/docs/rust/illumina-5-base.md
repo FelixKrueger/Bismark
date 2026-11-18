@@ -101,8 +101,8 @@ bismark --illumina_5base --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 
-# bwa-mem3 (methylation-aware; build its index once with `bwa-mem3 index --meth genome.fa`)
-bismark --illumina_5base --bwamem3 --five_base_index /path/to/bwm3/genome.fa \
+# bwa-mem3 (methylation-aware; build its index once with `bismark prepare --bwamem3 /path/to/GRCh38`)
+bismark --illumina_5base --bwamem3 \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
 
@@ -175,16 +175,18 @@ It is opt-in because it is expensive:
 
 | | bwa-mem3 |
 |---|---|
-| Index | `bwa-mem3 index --meth genome.fa`: about 1 h and about 104 GB RAM for GRCh38 |
-| Index on disk | about 23 GB needed for GRCh38; `bwa-mem3 index --meth` writes about 39 GB, and `genome.fa.meth.fa` (6.3 GB) and the plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
+| Index | `bismark prepare --bwamem3 <genome>` (or `bwa-mem3 index --meth genome.fa`): about 1 h and about 104 GB RAM for GRCh38 |
+| Index on disk | about 23 GB for GRCh38, which is what `bismark prepare --bwamem3` keeps; a hand-built `bwa-mem3 index --meth` writes about 39 GB, and its `genome.fa.meth.fa` (6.3 GB) and plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
 | Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
-Pass the FASTA path the index was built from as `--five_base_index`. Build the index from
-the same FASTA as the `--genome` folder: Bismark compares the index's contig names and
-lengths with the genome folder before it starts, and the engine's `@SQ` lines again at run
-time, and stops on any difference. Keep the index outside the `--genome` folder, so its
-files are not mistaken for genome FASTA. The index is loaded once per mate-pair file pair.
+`bismark prepare --bwamem3 <genome>` writes the index to `<genome>/Bwamem3_Index/`, keeping
+only the 7 files bwa-mem3 reads, and the aligner uses it when `--five_base_index` is not given.
+For an index built by hand, pass the FASTA path it was built from as `--five_base_index`, and
+keep it out of the top level of the `--genome` folder, so its files are not mistaken for genome
+FASTA. Build either from the same FASTA as the `--genome` folder: Bismark compares the index's
+contig names and lengths with the genome folder before it starts, and the engine's `@SQ` lines
+again at run time, and stops on any difference. The index is loaded once per mate-pair file pair.
 An index built by nf-core's `bwamem3/index` module or given to nf-core/methylseq as
 `--bwamem3_index` works as it is.
 

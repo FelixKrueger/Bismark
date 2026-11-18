@@ -420,7 +420,45 @@ fn bwamem3_index_fasta_in_the_genome_folder_is_named() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("genome.fa.meth.fa"))
-        .stderr(predicate::str::contains("outside the --genome folder"));
+        .stderr(predicate::str::contains("Bwamem3_Index/"));
+}
+
+/// Without --five_base_index, the index `bismark_genome_preparation --bwamem3` writes is used.
+#[cfg(unix)]
+#[test]
+fn bwamem3_index_in_the_genome_folder_is_found() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let dir = run.genome.path().join("Bwamem3_Index");
+    fs::create_dir(&dir).unwrap();
+    make_stub_bwamem3_index(&dir.join("genome.fa"), &[("chr1", 8)]);
+    let argv = run.out.path().join("argv.txt");
+    for mode in [&["--taps"][..], &["--illumina_5base", "--bwamem3"][..]] {
+        let out = bin()
+            .args(mode)
+            .env("FAKE_ARGV_DUMP", &argv)
+            .arg("--path_to_bwamem3")
+            .arg(run.bins.path())
+            .arg("--genome")
+            .arg(run.genome.path())
+            .arg("--output_dir")
+            .arg(run.out.path())
+            .arg("-1")
+            .arg(&run.r1)
+            .arg("-2")
+            .arg(&run.r2)
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("Using the bwa-mem3 index"))
+            .get_output()
+            .clone();
+        let prefix = fs::canonicalize(&dir).unwrap().join("genome.fa");
+        let args = fs::read_to_string(&argv).unwrap();
+        assert!(
+            args.contains(&prefix.display().to_string()),
+            "{mode:?}: {args}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 /// Every pair lands in one standard report bucket, so they add up to the pairs analysed.

@@ -62,4 +62,34 @@ pub enum GenomePrepError {
         /// Conversion directory whose index build failed.
         dir: PathBuf,
     },
+
+    /// An I/O error on a named path.
+    #[error("{}: {source}", path.display())]
+    IoAt {
+        /// The file or folder the operation was on.
+        path: PathBuf,
+        /// The underlying error.
+        source: std::io::Error,
+    },
+
+    /// `bwa-mem3 index` exited 3: its memory budget is below what the genome needs.
+    #[error(
+        "bwa-mem3 needs more memory than its budget to index {genome} (see its message above). \
+         {hint}"
+    )]
+    Bwamem3Memory {
+        /// Genome folder being indexed.
+        genome: PathBuf,
+        /// Where the budget came from and how to raise it.
+        hint: String,
+    },
+
+    /// `bwa-mem3 index` failed, or its output is incomplete or does not match the genome.
+    #[error("bwa-mem3 could not build the methylation index for {genome}: {detail}")]
+    Bwamem3Failed {
+        /// Genome folder being indexed.
+        genome: PathBuf,
+        /// What went wrong.
+        detail: String,
+    },
 }

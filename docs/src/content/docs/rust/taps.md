@@ -22,18 +22,17 @@ bismark2report, bismark2summary) runs as usual.
 
 ## Running it
 
-Build the bwa-mem3 methylation index once from the same FASTA as the `--genome` folder, and keep
-it outside that folder:
+Build the bwa-mem3 methylation index once into the genome folder; the aligner then finds it there:
 
 ```sh
-bwa-mem3 index --meth /path/to/bwm3/genome.fa
+bismark prepare --bwamem3 --parallel 16 /path/to/GRCh38
 
-bismark --taps --five_base_index /path/to/bwm3/genome.fa \
-        --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
+bismark --taps --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
 
-`--five_base_index` is the FASTA path the index was built from (the option name is shared with
-the 5-Base mode). The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
+An index built by hand (`bwa-mem3 index --meth genome.fa`) also works: pass the FASTA path it was
+built from as `--five_base_index` (the option name is shared with the 5-Base mode), and keep it out
+of the top level of the `--genome` folder. The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
 are the same as for `--illumina_5base --bwamem3`; see
 [bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and
 0.17.0 are validated; older versions are rejected and other versions run with a warning.
@@ -50,7 +49,7 @@ ignores it.
 
 | Option | With `--taps` |
 |---|---|
-| `--five_base_index` | required: the FASTA the `bwa-mem3 index --meth` index was built from |
+| `--five_base_index` | the FASTA a `bwa-mem3 index --meth` index was built from; optional when `<genome>/Bwamem3_Index/` (from `bismark prepare --bwamem3`) exists |
 | `--five_base_baseq N` | accepted: read bases below Phred N are not called (0, the default, is off); `30` matches common TAPS callers |
 | `--five_base_bisulfite_bam` | accepted: re-encodes a TAPS BAM to bisulfite convention, as for 5-Base |
 | `-p` / `--multicore`, `--path_to_bwamem3`, `--upto`, output options | as for `--illumina_5base --bwamem3` |

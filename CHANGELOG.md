@@ -1,6 +1,12 @@
 # Bismark Changelog
 
 
+## Unreleased
+
+### bismark_genome_preparation
+
+- **New `--bwamem3` builds the bwa-mem3 methylation index in `<genome>/Bwamem3_Index/`, where `--taps` and `--illumina_5base --bwamem3` now find it without `--five_base_index` ([#1250](https://github.com/FelixKrueger/Bismark/pull/1250)).**
+
 ## Bismark 3.3.0 (released 2026-11-17)
 
 Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)'s code audit ([#1167](https://github.com/FelixKrueger/Bismark/issues/1167)).

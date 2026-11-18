@@ -251,7 +251,7 @@ fn parse_rammap_version(stdout: &str) -> Option<String> {
 }
 
 /// The leading `x.y.z` of `bwa-mem3 version`'s first non-empty line (`0.16.0`, `0.16.0-dirty`).
-fn parse_bwamem3_version(stdout: &str) -> Option<String> {
+pub(crate) fn parse_bwamem3_version(stdout: &str) -> Option<String> {
     let line = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
     let end = line
         .find(|c: char| !(c.is_ascii_digit() || c == '.'))
@@ -261,7 +261,7 @@ fn parse_bwamem3_version(stdout: &str) -> Option<String> {
 }
 
 /// `true` if `v` is an `x.y.z` at or above [`MIN_BWAMEM3_VERSION`].
-fn bwamem3_version_ok(v: &str) -> bool {
+pub(crate) fn bwamem3_version_ok(v: &str) -> bool {
     let p: Vec<u32> = v.split('.').filter_map(|x| x.parse().ok()).collect();
     p.len() == 3 && (p[0], p[1], p[2]) >= MIN_BWAMEM3_VERSION
 }

@@ -777,7 +777,7 @@ fn same_index_basename(a: &Path, b: &Path) -> bool {
 }
 
 /// The files `bwa-mem3 mem --meth` opens; neither `.meth.fa` nor the plain `.bwt.2bit.64` is among them.
-const BWAMEM3_INDEX_SUFFIXES: [&str; 7] = [
+pub(crate) const BWAMEM3_INDEX_SUFFIXES: [&str; 7] = [
     "amb",
     "ann",
     "pac",
@@ -787,19 +787,92 @@ const BWAMEM3_INDEX_SUFFIXES: [&str; 7] = [
     "meth.bwt.2bit.64",
 ];
 
+/// Where a bwa-mem3 index prefix came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexSource {
+    /// `--five_base_index`.
+    Explicit,
+    /// `<genome>/Bwamem3_Index/`, from `bismark_genome_preparation --bwamem3`.
+    Auto,
+}
+
 /// Fail, naming the first missing file, unless `prefix` is a complete bwa-mem3 meth index.
-fn check_bwamem3_index_files(prefix: &Path) -> Result<()> {
+fn check_bwamem3_index_files(prefix: &Path, source: IndexSource) -> Result<()> {
     for suffix in BWAMEM3_INDEX_SUFFIXES {
         let file = PathBuf::from(format!("{}.{suffix}", prefix.display()));
         if !file.is_file() {
-            return Err(AlignerError::Validation(format!(
-                "bwa-mem3 index file {} is missing. Build the index once with `bwa-mem3 index \
-                 --meth <genome.fa>` and pass that FASTA path as --five_base_index.",
-                file.display()
-            )));
+            return Err(AlignerError::Validation(match source {
+                IndexSource::Explicit => format!(
+                    "bwa-mem3 index file {} is missing. Build the index once with `bwa-mem3 index \
+                     --meth <genome.fa>` and pass that FASTA path as --five_base_index.",
+                    file.display()
+                ),
+                IndexSource::Auto => {
+                    let dir = prefix.parent().unwrap_or(prefix);
+                    format!(
+                        "bwa-mem3 index file {} is missing from {}; rebuild the index with \
+                         `bismark_genome_preparation --bwamem3 {}`.",
+                        file.display(),
+                        dir.display(),
+                        dir.parent().unwrap_or(dir).display()
+                    )
+                }
+            }));
         }
     }
     Ok(())
+}
+
+/// The index this run aligns against: `--five_base_index`, or for bwa-mem3 the one
+/// `bismark_genome_preparation --bwamem3` writes to `<genome>/Bwamem3_Index/`.
+fn resolve_five_base_index(
+    cli: &Cli,
+    aligner: Aligner,
+    genome_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if let Some(index) = &cli.five_base_index {
+        if aligner != Aligner::BwaMem3 {
+            return Ok(Some(index.clone()));
+        }
+        // A folder holding a `bismark_genome_preparation --bwamem3` index stands for its prefix.
+        let index = if index.is_dir() {
+            let prefix = index.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+            if !PathBuf::from(format!("{}.meth.ann", prefix.display())).is_file() {
+                return Err(AlignerError::Validation(format!(
+                    "--five_base_index {} is a folder; pass the index prefix (the FASTA path the \
+                     index was built from), or a folder written by `bismark_genome_preparation \
+                     --bwamem3`.",
+                    index.display()
+                )));
+            }
+            prefix
+        } else {
+            index.clone()
+        };
+        check_bwamem3_index_files(&index, IndexSource::Explicit)?;
+        return Ok(Some(index));
+    }
+    if aligner != Aligner::BwaMem3 {
+        return Ok(None);
+    }
+    let dir = genome_dir.join(crate::genome_prep::bwamem3::INDEX_DIR);
+    if !dir.is_dir() {
+        return Err(AlignerError::Validation(format!(
+            "{} requires --five_base_index <prefix>: the prefix of a bwa-mem3 methylation index, \
+             built once with `bwa-mem3 index --meth <genome.fa>` (pass that FASTA path), or build \
+             one in {} with `bismark_genome_preparation --bwamem3 {}`.",
+            FiveBaseChemistry::of(cli).engine_flags(),
+            dir.display(),
+            genome_dir.display()
+        )));
+    }
+    let prefix = dir.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+    check_bwamem3_index_files(&prefix, IndexSource::Auto)?;
+    eprintln!(
+        "Using the bwa-mem3 index {} (built by bismark_genome_preparation --bwamem3)",
+        prefix.display()
+    );
+    Ok(Some(prefix))
 }
 
 /// Reject a BISULFITE-converted basename for `--five_base_index`.
@@ -1165,11 +1238,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         let env = discovery::index_env_for(aligner);
         discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
     }
-    if aligner == Aligner::BwaMem3
-        && let Some(index) = cli.five_base_index.as_deref()
-    {
-        check_bwamem3_index_files(index)?;
-    }
+    let five_base_index = resolve_five_base_index(cli, aligner, &genome.genome_dir)?;
 
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
@@ -1250,7 +1319,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         five_base: cli.illumina_5base,
         five_base_chemistry: chem,
         five_base_deconvolution: cli.five_base_deconvolution,
-        five_base_index: cli.five_base_index.clone(),
+        five_base_index,
         five_base_umi_len: cli.five_base_umi_len,
         five_base_baseq: cli.five_base_baseq,
         five_base_min_mapq: cli.five_base_min_mapq,
@@ -1601,15 +1670,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
                     .into(),
             ));
         }
+        // The index is resolved after genome discovery (`resolve_five_base_index`).
         if cli.bwamem3 {
-            if cli.five_base_index.is_none() {
-                return Err(AlignerError::Validation(format!(
-                    "{} requires --five_base_index <prefix>: the prefix of \
-                     a bwa-mem3 methylation index, built once with `bwa-mem3 index --meth \
-                     <genome.fa>` (pass that FASTA path).",
-                    FiveBaseChemistry::of(cli).engine_flags()
-                )));
-            }
             return Ok(Aligner::BwaMem3);
         }
         // bowtie2/hisat2 5-Base align the RAW reads to a user-provided UNCONVERTED
@@ -2323,14 +2385,116 @@ mod tests {
     }
 
     #[test]
-    fn taps_missing_index_names_taps() {
-        let taps = cli_from(&["--taps"]);
-        let e = resolve_aligner(&expand_taps(&taps).unwrap())
+    fn bwamem3_missing_index_names_the_mode() {
+        let (_t, g, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            g.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+        for (mode, name) in [
+            (&["--taps"][..], "--taps requires"),
+            (
+                &["--illumina_5base", "--bwamem3"][..],
+                "--illumina_5base --bwamem3 requires",
+            ),
+        ] {
+            let mut v: Vec<&str> = mode.to_vec();
+            v.extend_from_slice(&["--genome", g, "-1", r1, "-2", r2]);
+            let e = resolve(&cli_from(&v), "c".into()).unwrap_err().to_string();
+            assert!(
+                e.starts_with(name)
+                    && e.contains("--five_base_index")
+                    && e.contains("bwa-mem3 index --meth")
+                    && e.contains("bismark_genome_preparation --bwamem3")
+                    && e.contains("Bwamem3_Index"),
+                "{mode:?}: {e}"
+            );
+        }
+    }
+
+    fn stub_bwamem3_index(prefix: &Path) {
+        for s in BWAMEM3_INDEX_SUFFIXES {
+            std::fs::write(format!("{}.{s}", prefix.display()), b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn bwamem3_index_found_in_the_genome_folder() {
+        let (_t, g, _r1, _r2) = fasta_only_genome_and_reads();
+        let dir = g.join("Bwamem3_Index");
+        std::fs::create_dir(&dir).unwrap();
+        stub_bwamem3_index(&dir.join("genome.fa"));
+        for mode in [&["--taps"][..], &["--illumina_5base", "--bwamem3"][..]] {
+            let cli = expand_taps(&cli_from(mode)).unwrap().into_owned();
+            assert_eq!(
+                resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+                Some(dir.join("genome.fa")),
+                "{mode:?}"
+            );
+        }
+
+        // An explicit --five_base_index wins over the genome folder's index.
+        let other = g.parent().unwrap().join("other.fa");
+        stub_bwamem3_index(&other);
+        let cli = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            other.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .into_owned();
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+            Some(other)
+        );
+
+        // The index folder itself stands for its prefix.
+        let cli = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            dir.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .into_owned();
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+            Some(dir.join("genome.fa"))
+        );
+        let e = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            g.to_str().unwrap(),
+        ]))
+        .map(|c| resolve_five_base_index(&c, Aligner::BwaMem3, &g))
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("is a folder; pass the index prefix"), "{e}");
+
+        // Other engines never pick it up.
+        let cli = cli_from(&["--illumina_5base"]);
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::Minimap2, &g).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn partial_genome_folder_index_names_the_file_and_the_rebuild() {
+        let (_t, g, _r1, _r2) = fasta_only_genome_and_reads();
+        let dir = g.join("Bwamem3_Index");
+        std::fs::create_dir(&dir).unwrap();
+        stub_bwamem3_index(&dir.join("genome.fa"));
+        std::fs::remove_file(dir.join("genome.fa.meth.bwt.2bit.64")).unwrap();
+        let cli = expand_taps(&cli_from(&["--taps"])).unwrap().into_owned();
+        let e = resolve_five_base_index(&cli, Aligner::BwaMem3, &g)
             .unwrap_err()
             .to_string();
         assert!(
-            e.starts_with("--taps requires --five_base_index")
-                && e.contains("bwa-mem3 index --meth"),
+            e.contains("genome.fa.meth.bwt.2bit.64")
+                && e.contains("bismark_genome_preparation --bwamem3")
+                && !e.contains("--five_base_index"),
             "{e}"
         );
     }
@@ -2693,11 +2857,13 @@ mod tests {
         for s in all {
             std::fs::write(format!("{}.{s}", p.display()), b"").unwrap();
         }
-        assert!(check_bwamem3_index_files(&p).is_ok());
+        assert!(check_bwamem3_index_files(&p, IndexSource::Explicit).is_ok());
         for missing in all {
             let f = format!("{}.{missing}", p.display());
             std::fs::remove_file(&f).unwrap();
-            let e = check_bwamem3_index_files(&p).unwrap_err().to_string();
+            let e = check_bwamem3_index_files(&p, IndexSource::Explicit)
+                .unwrap_err()
+                .to_string();
             assert!(
                 e.contains(&format!("g.fa.{missing}")) && e.contains("bwa-mem3 index --meth"),
                 "{e}"
@@ -2721,12 +2887,10 @@ mod tests {
             .to_string();
         assert!(e.contains("only supported as a 5-Base engine"), "{e}");
 
-        let e = resolve_aligner(&cli_from(&["--illumina_5base", "--bwamem3"]))
-            .unwrap_err()
-            .to_string();
-        assert!(
-            e.contains("--five_base_index") && e.contains("bwa-mem3 index --meth"),
-            "{e}"
+        // Without --five_base_index the engine still resolves; the index is checked later.
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base", "--bwamem3"])).unwrap(),
+            Aligner::BwaMem3
         );
 
         for other in ["--bowtie2", "--hisat2", "--minimap2", "--rammap"] {
