@@ -1,4 +1,4 @@
-# Expected --taps counts on this fixture (bwa-mem3 0.16.0 and 0.17.0, x86_64); calls counted from XM/XG with samtools+awk.
+# Expected --taps counts on this fixture (bwa-mem3 0.16.0 and 0.17.0, x86_64; bwa-mem4 4.5.0, arm64); calls counted from XM/XG with samtools+awk.
 report	Sequence pairs analysed in total:	6316
 report	Number of paired-end alignments with a unique best hit:	6303
 report	Sequence pairs with no alignments under any condition:	13

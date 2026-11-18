@@ -42,7 +42,7 @@ LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 USER root
 
 # Pinned external tools (byte-identity requires these exact versions).
-# bwa-mem3 is the --bwamem3 5-Base engine, pinned to the version Bismark validates.
+# bwa-mem4 is the --bwamem4 5-Base engine, pinned to the version Bismark validates.
 # No samtools: the Rust suite does its own BAM/SAM/CRAM I/O (pure-Rust noodles;
 # --samtools_path is accepted-but-ignored), and nf-core/methylseq's Bismark modules
 # were audited (2026-07-08, methylseq 4.2.0) to never invoke samtools in this image —
@@ -51,7 +51,7 @@ RUN micromamba install -y -n base -c bioconda -c conda-forge \
       bowtie2=2.5.5 \
       hisat2=2.2.2 \
       minimap2=2.31 \
-      bwa-mem3=0.17.0 \
+      bwa-mem4=4.5.0 \
     && micromamba clean --all --yes
 ENV PATH=/opt/conda/bin:$PATH
 

@@ -1,6 +1,6 @@
 ---
 title: "TAPS"
-description: "How to align and call TAPS (TET-assisted pyridine borane sequencing) libraries with bismark --taps: bwa-mem3 placement on the unconverted genome, Bismark's inverted-polarity calls, read-end trimming and what is validated."
+description: "How to align and call TAPS (TET-assisted pyridine borane sequencing) libraries with bismark --taps: bwa-mem4 placement on the unconverted genome, Bismark's inverted-polarity calls, read-end trimming and what is validated."
 ---
 
 TAPS (TET-assisted pyridine borane sequencing) converts **methylated** cytosine to thymine and
@@ -9,8 +9,8 @@ reads keep their full complexity and align to the **unconverted** genome, and Bi
 methylation at **inverted polarity**: a read `T` at a genomic `C` is methylated (`Z`), a read `C`
 is unmethylated (`z`).
 
-`--taps` runs the 5-Base calling path with [bwa-mem3](https://github.com/fg-labs/bwa-mem3) in its
-TAPS mode (`mem --meth=taps`) as the only engine. bwa-mem3 places the reads; Bismark makes the
+`--taps` runs the 5-Base calling path with [bwa-mem4](https://github.com/IPNP-BIPN/bwa-mem4) in its
+TAPS mode (`mem --meth=taps`) as the only engine. bwa-mem4 places the reads; Bismark makes the
 calls, writes the BAM and the report, and everything downstream (deduplication, the extractor,
 bismark2report, bismark2summary) runs as usual.
 
@@ -22,26 +22,27 @@ bismark2report, bismark2summary) runs as usual.
 
 ## Running it
 
-Build the bwa-mem3 methylation index once from the same FASTA as the `--genome` folder, and keep
+Build the methylation index once from the same FASTA as the `--genome` folder, and keep
 it outside that folder:
 
 ```sh
-bwa-mem3 index --meth /path/to/bwm3/genome.fa
+bwa-mem4 index --meth /path/to/bwm4/genome.fa
 
-bismark --taps --five_base_index /path/to/bwm3/genome.fa \
+bismark --taps --five_base_index /path/to/bwm4/genome.fa \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
 
 `--five_base_index` is the FASTA path the index was built from (the option name is shared with
-the 5-Base mode). The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
-are the same as for `--illumina_5base --bwamem3`; see
-[bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and
-0.17.0 are validated; older versions are rejected and other versions run with a warning.
+the 5-Base mode). The index requirements, memory, runtime and the bwa-mem4 options Bismark fixes
+are the same as for `--illumina_5base --bwamem4`; see
+[bwa-mem4 (`--bwamem4`)](/Bismark/rust/illumina-5-base/#bwa-mem4---bwamem4). An index built by
+`bwa-mem3 index --meth` works too. bwa-mem4 4.5.0 is validated; older versions are rejected and
+other versions run with a warning.
 
-Output names are those of a bwa-mem3 5-Base run (`*_bismark_bwamem3_pe.bam`,
-`*_bismark_bwamem3_PE_report.txt`). The run identifies itself as TAPS: the start-up notice, the
-`@PG` lines (`--taps` in Bismark's, `--meth=taps` in bwa-mem3's) and a
-`Library chemistry: TAPS (mC->T)` line in the report, after the bwa-mem3 version. MultiQC reads
+Output names are those of a bwa-mem4 5-Base run (`*_bismark_bwamem4_pe.bam`,
+`*_bismark_bwamem4_PE_report.txt`). The run identifies itself as TAPS: the start-up notice, the
+`@PG` lines (`--taps` in Bismark's, `--meth=taps` in bwa-mem4's) and a
+`Library chemistry: TAPS (mC->T)` line in the report, after the bwa-mem4 version. MultiQC reads
 the report as before and does not show the chemistry. A read whose dovetail overhang bases are
 not called carries an `mk:B:I` tag (the bases masked at its 5' and 3' end); the extractor
 ignores it.
@@ -50,15 +51,15 @@ ignores it.
 
 | Option | With `--taps` |
 |---|---|
-| `--five_base_index` | required: the FASTA the `bwa-mem3 index --meth` index was built from |
+| `--five_base_index` | required: the FASTA the `bwa-mem4 index --meth` (or `bwa-mem3 index --meth`) index was built from |
 | `--five_base_baseq N` | accepted: read bases below Phred N are not called (0, the default, is off); `30` matches common TAPS callers |
 | `--five_base_bisulfite_bam` | accepted: re-encodes a TAPS BAM to bisulfite convention, as for 5-Base |
-| `-p` / `--multicore`, `--path_to_bwamem3`, `--upto`, output options | as for `--illumina_5base --bwamem3` |
+| `-p` / `--multicore`, `--path_to_bwamem4`, `--upto`, output options | as for `--illumina_5base --bwamem4` |
 | `--nucleotide_coverage` | accepted: runs bam2nuc on the BAM, which counts the genomic sequence under each alignment, so the chemistry does not matter |
-| `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap` | rejected: TAPS aligns with bwa-mem3 only |
+| `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap` | rejected: TAPS aligns with bwa-mem4 only |
 | `--illumina_5base` | rejected: a different chemistry label for the same path |
 | `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`, `--five_base_umi_qname`, `--five_base_emit_multiplicity`, `--five_base_umi_len`, `--five_base_min_mapq` | rejected: validated for Illumina 5-Base only |
-| Bowtie 2 / minimap2 tuning (`--local`, `--score_min`, `-N`, `-L`, `--minins`, `--maxins`, …) | rejected, as with `--bwamem3` |
+| Bowtie 2 / minimap2 tuning (`--local`, `--score_min`, `-N`, `-L`, `--minins`, `--maxins`, …) | rejected, as with `--bwamem4` |
 
 ## Read-end trimming
 
@@ -76,7 +77,7 @@ If you already have [rastair](https://github.com/bsbludwig/rastair) trims, `--nO
 can trim OT and OB differently.
 
 ```sh
-bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark_bwamem3_pe.bam
+bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark_bwamem4_pe.bam
 ```
 
 ## Validation
@@ -88,22 +89,25 @@ from data that is not public.
 
 ### What CI checks on every change
 
-- **bwa-mem3 mode.** bwa-mem3 0.16.0 and 0.17.0 map `--meth=taps` and `--meth=5base` to the same
-  chemistry ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.17.0/src/meth_opts.cpp#L18-L21)),
-  and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem3`.
+- **bwa-mem4 mode.** bwa-mem4 maps `--meth=taps` and `--meth=5base` to the same chemistry
+  ([`docs/meth-mode.md`](https://github.com/IPNP-BIPN/bwa-mem4/blob/v4.5.0/docs/meth-mode.md)), as
+  bwa-mem3 0.16.0 and 0.17.0 do
+  ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.17.0/src/meth_opts.cpp#L18-L21)),
+  and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem4`.
 - **Spike-in controls.** 6,316 public TAPS read pairs on the CpG-methylated lambda and the
   unmodified 2 kb controls, from the mouse ES cell TAPS library of Liu et al. (2019), GEO
   [GSE112520](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE112520), as packaged for
   nf-core/methylseq in [nf-core/test-datasets#2370](https://github.com/nf-core/test-datasets/pull/2370).
   Untrimmed, `--taps` calls lambda CpGs 96.6% methylated on both strands and the unmodified control
   0.3–0.4%, with non-CpG contexts at most 0.6% (lambda CHG; CHH and the unmodified control below
-  0.3%). The gate (`aligner_taps_bwamem3`) runs on amd64 and arm64 and also checks the exact report
-  and call counts.
+  0.3%). The gate (`aligner_taps_bwamem4`) runs on amd64 and arm64 and also checks the exact report
+  and call counts, which bwa-mem3 0.16.0 and 0.17.0 gave too.
 
 ### The full public TAPS library
 
 The whole TAPS library of the same study, GSM3454335 (SRR8145389–92, 455.5 million read pairs,
-PE 80 bp), was aligned with `--taps --five_base_baseq 30` to UCSC mm9 plus the two controls,
+PE 80 bp), was aligned with `--taps --five_base_baseq 30` (with bwa-mem3, before the engine moved
+to bwa-mem4) to UCSC mm9 plus the two controls,
 deduplicated and kept at MAPQ ≥ 20. 96.8% of pairs aligned uniquely and 90.9% were left after
 deduplication. The calls were compared with the authors' per-strand CpG calls
 (`GSM3454335_TAPS_mm9_CpG_blk.bed.gz`), on the 20.1 million CpGs with coverage ≥ 10 in their file.
@@ -141,8 +145,8 @@ not a test of Bismark: the bisulfite library is shallow, and TAPS also counts 5h
 ### Coverage in CpG-dense regions
 
 CpG-dense, heavily methylated regions are hard for aligners that score every methylated CpG as a
-mismatch (see [Illumina 5-Base](/Bismark/rust/illumina-5-base/)). bwa-mem3's methylation-aware mode
-does not. The table compares Bismark's coverage with the authors' calls by CpG density (CpGs in a
+mismatch (see [Illumina 5-Base](/Bismark/rust/illumina-5-base/)). The methylation-aware mode of
+bwa-mem3, which bwa-mem4 ports, does not. The table compares Bismark's coverage with the authors' calls by CpG density (CpGs in a
 151 bp window), for CpGs at least 80% methylated. Each value is Bismark's coverage relative to its
 genome-wide mean, divided by the same ratio for the authors' calls, so 1.00 means the same coverage
 profile.
@@ -156,7 +160,7 @@ profile.
 | Bismark coverage 0, no MAPQ filter | 0.0% | 0.0% | 0.01% | 0.07% | 0.5% |
 
 Without a MAPQ filter Bismark covers the densest methylated CpGs as well as the authors' calls do,
-so bwa-mem3 places those reads; the drop at MAPQ ≥ 20 comes from the filter, which removes the
+so the engine places those reads; the drop at MAPQ ≥ 20 comes from the filter, which removes the
 low-MAPQ reads there. Dropping the filter keeps them but adds some noise from reads that map to
 several places (r 0.993 → 0.992). In these cells, mean methylation agrees with the authors' within
 about 1 point either way.
@@ -239,11 +243,11 @@ Bismark section is filled in as for 5-Base. None of them shows the chemistry.
 ### Reproduce
 
 ```sh
-bwa-mem3 index --meth mm9_taps_spikes.fa       # mm9 chr*.fa + the two controls from genome_taps.fa
+bwa-mem4 index --meth mm9_taps_spikes.fa       # mm9 chr*.fa + the two controls from genome_taps.fa
 bismark --taps --five_base_index mm9_taps_spikes.fa --genome mm9_taps/ --five_base_baseq 30 \
         -1 TAPS_R1.fq.gz -2 TAPS_R2.fq.gz
-deduplicate_bismark -p --bam TAPS_R1_bismark_bwamem3_pe.bam
-samtools view -b -q 20 -o TAPS_q20.bam TAPS_R1_bismark_bwamem3_pe.deduplicated.bam
+deduplicate_bismark -p --bam TAPS_R1_bismark_bwamem4_pe.bam
+samtools view -b -q 20 -o TAPS_q20.bam TAPS_R1_bismark_bwamem4_pe.deduplicated.bam
 bismark_methylation_extractor -p --bedGraph --gzip TAPS_q20.bam
 bismark_methylation_extractor -p --ignore 2 --ignore_r2 5 --bedGraph --gzip TAPS_q20.bam
 ```

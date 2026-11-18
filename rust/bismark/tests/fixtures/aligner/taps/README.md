@@ -1,6 +1,6 @@
 # TAPS spike-in fixture
 
-Public TAPS read pairs for `tests/aligner_taps_bwamem3.rs` (`--taps` through the real bwa-mem3).
+Public TAPS read pairs for `tests/aligner_taps_bwamem4.rs` (`--taps` through the real bwa-mem4).
 
 | File | Contents |
 |---|---|

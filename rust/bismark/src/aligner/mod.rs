@@ -2090,9 +2090,6 @@ impl Drop for EngineChild {
     }
 }
 
-/// The bwa-mem3 environment variable that would override `--meth-seed-prune`.
-const BWAMEM3_SEED_PRUNE_ENV: &str = "BWAMEM3_METH_SEED_PRUNE";
-
 /// Effective 5-Base options with single-instance threading and input ordering.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
     let n = five_base_threads(
@@ -2110,7 +2107,7 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
         // base string carries a resolved `-t {p}` (#1074 C2).
         Aligner::Minimap2 | Aligner::Rammap => replace_minimap2_threads(&config.aligner_options, n),
-        Aligner::BwaMem3 => format!("{} -t {n}", config.aligner_options),
+        Aligner::BwaMem4 => format!("{} -t {n}", config.aligner_options),
     }
 }
 
@@ -2146,7 +2143,7 @@ fn replace_minimap2_threads(opts: &str, n: usize) -> String {
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
 /// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`;
-/// bwa-mem3: `mem <opts> <prefix> r1 r2`. `reads` is always 2 (5-Base is paired-end).
+/// bwa-mem4: `mem <opts> <prefix> r1 r2`. `reads` is always 2 (5-Base is paired-end).
 fn five_base_build_argv(
     config: &RunConfig,
     opts: &str,
@@ -2170,11 +2167,11 @@ fn five_base_build_argv(
             args.push(reads[1].as_os_str().to_owned());
         }
         // `mem <opts> <prefix> r1 r2`: the options already begin with the `mem` subcommand.
-        Aligner::BwaMem3 => {
+        Aligner::BwaMem4 => {
             let idx = config
                 .five_base_index
                 .as_ref()
-                .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+                .expect("five_base_index is required for bwa-mem4 5-Base (guarded)");
             args.push(idx.as_os_str().to_owned());
             args.push(reads[0].as_os_str().to_owned());
             args.push(reads[1].as_os_str().to_owned());
@@ -2296,8 +2293,8 @@ fn five_base_read_sq_header<R: BufRead>(reader: &mut R) -> Result<Vec<(String, u
     Ok(sq)
 }
 
-/// Record the bwa-mem3 run as its own `@PG` (`PP:Bismark`); its ID must not contain "Bismark".
-fn add_bwamem3_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &str) {
+/// Record the bwa-mem4 run as its own `@PG` (`PP:Bismark`); its ID must not contain "Bismark".
+fn add_bwamem4_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &str) {
     use noodles_sam::header::record::value::Map;
     use noodles_sam::header::record::value::map::Program;
     use noodles_sam::header::record::value::map::program::tag::{
@@ -2306,10 +2303,10 @@ fn add_bwamem3_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &s
     let index = config
         .five_base_index
         .as_ref()
-        .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+        .expect("five_base_index is required for bwa-mem4 5-Base (guarded)");
     let mut prog = Map::<Program>::default();
     let fields = prog.other_fields_mut();
-    fields.insert(NAME, bstr::BString::from("bwa-mem3"));
+    fields.insert(NAME, bstr::BString::from("bwa-mem4"));
     fields.insert(PREVIOUS_PROGRAM_ID, bstr::BString::from("Bismark"));
     fields.insert(
         VERSION,
@@ -2317,12 +2314,12 @@ fn add_bwamem3_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &s
     );
     fields.insert(
         COMMAND_LINE,
-        bstr::BString::from(format!("bwa-mem3 {opts} {} <R1> <R2>", index.display())),
+        bstr::BString::from(format!("bwa-mem4 {opts} {} <R1> <R2>", index.display())),
     );
     header
         .programs_mut()
         .as_mut()
-        .insert(bstr::BString::from("bwa-mem3"), prog);
+        .insert(bstr::BString::from("bwa-mem4"), prog);
 }
 
 /// The genome folder's contigs as `(name, length)`, in `@SQ` order.
@@ -2454,7 +2451,7 @@ fn five_base_emit_record(
 // #787 Illumina 5-Base PAIRED-END driver. Opt-in, never-silent, concordance-gated
 // (NOT byte-identical: Perl Bismark has no 5-Base oracle). It does NOT convert the
 // reads: one engine runs in PE mode against the unconverted genome (minimap2 on the
-// FASTA; bowtie2/hisat2/bwa-mem3 on `--five_base_index`);
+// FASTA; bowtie2/hisat2/bwa-mem4 on `--five_base_index`);
 // the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
 // byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
 // ===========================================================================
@@ -2469,36 +2466,30 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
     }) {
         return Err(AlignerError::Validation(format!(
-            "{} in the genome folder is a bwa-mem3 index file, not genome; keep the bwa-mem3 index \
+            "{} in the genome folder is a bwa-mem4 index file, not genome; keep the bwa-mem4 index \
              outside the --genome folder",
             f.display()
         )));
     }
-    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
-        eprintln!(
-            "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
-             --meth-seed-prune=spec30)."
-        );
-    }
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
-    if config.aligner == Aligner::BwaMem3 {
+    if config.aligner == Aligner::BwaMem4 {
         let index = config
             .five_base_index
             .as_ref()
-            .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+            .expect("five_base_index is required for bwa-mem4 5-Base (guarded)");
         check_contigs_match(
             &genome_contigs(&genome),
             &read_bwa_ann(index)?,
-            "bwa-mem3 index",
+            "bwa-mem4 index",
         )?;
     }
     let mut header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
     let fb_opts = five_base_aligner_options(config);
-    if config.aligner == Aligner::BwaMem3 {
-        add_bwamem3_pg(&mut header, config, &fb_opts);
+    if config.aligner == Aligner::BwaMem4 {
+        add_bwamem4_pg(&mut header, config, &fb_opts);
     }
     // Only minimap2 reads the genome FASTA; the other engines align against an index.
     let (ref_path, ref_tmp) = if config.aligner == Aligner::Minimap2 {
@@ -2535,10 +2526,10 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 library: config.library,
             },
         )?;
-        if config.aligner == Aligner::BwaMem3 {
+        if config.aligner == Aligner::BwaMem4 {
             writeln!(
                 report,
-                "bwa-mem3 version: {}",
+                "bwa-mem4 version: {}",
                 config.detected_aligner.version
             )?;
             if config.five_base_chemistry == config::FiveBaseChemistry::Taps {
@@ -2674,8 +2665,6 @@ fn five_base_align_and_call_pe(
     let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
     let child = std::process::Command::new(bin)
         .args(&args)
-        // The variable overrides bwa-mem3's --meth-seed-prune flag.
-        .env_remove(BWAMEM3_SEED_PRUNE_ENV)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -2696,13 +2685,13 @@ fn five_base_align_and_call_pe(
     })?;
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
-    if config.aligner == Aligner::BwaMem3 {
+    if config.aligner == Aligner::BwaMem4 {
         let sq = five_base_read_sq_header(&mut sam)
             .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
         if sq.is_empty() {
             return Err(engine.failure("ended before writing its SAM header"));
         }
-        check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
+        check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem4 output header")?;
     }
 
     let mut r1 = open_reader(read_1)?;
@@ -8783,7 +8772,7 @@ mod tests {
         }
     }
 
-    /// A UMI the engine aligned instead of soft-clipping is never called: bwa-mem3 scores a
+    /// A UMI the engine aligned instead of soft-clipping is never called: bwa-mem4 scores a
     /// read T at a genomic C as free, so it can extend into a UMI.
     #[test]
     fn five_base_umi_prefix_is_never_called() {
@@ -9970,7 +9959,7 @@ mod tests {
             ReadFormat::FastQ
         ));
         assert!(!inprocess_rammap_selected(
-            Aligner::BwaMem3,
+            Aligner::BwaMem4,
             false,
             ReadFormat::FastQ
         ));
@@ -10306,8 +10295,8 @@ mod tests {
         c.five_base = true;
         c.aligner_options = match aligner {
             Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
-            Aligner::BwaMem3 => {
-                crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Illumina5Base)
+            Aligner::BwaMem4 => {
+                crate::aligner::options::bwamem4_options(config::FiveBaseChemistry::Illumina5Base)
             }
             _ => "-q --score-min L,0,-0.6 --maxins 800".into(),
         };
@@ -10342,27 +10331,27 @@ mod tests {
         assert_eq!(ann, vec![("chr1".to_string(), 8), ("chr2".to_string(), 10)]);
 
         let genome = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 10)];
-        assert!(check_contigs_match(&genome, &ann, "bwa-mem3 index").is_ok());
+        assert!(check_contigs_match(&genome, &ann, "bwa-mem4 index").is_ok());
 
         let same_names = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 11)];
-        let e = check_contigs_match(&same_names, &ann, "bwa-mem3 index")
+        let e = check_contigs_match(&same_names, &ann, "bwa-mem4 index")
             .unwrap_err()
             .to_string();
         assert!(e.contains("chr2:10") && e.contains("chr2:11"), "{e}");
 
         let renamed = vec![("1".to_string(), 8u64), ("2".to_string(), 10)];
-        assert!(check_contigs_match(&renamed, &ann, "bwa-mem3 index").is_err());
+        assert!(check_contigs_match(&renamed, &ann, "bwa-mem4 index").is_err());
 
         std::fs::write(format!("{}.ann", p.display()), "18 2 11\n0 chr1\n").unwrap();
         assert!(read_bwa_ann(&p).is_err());
     }
 
     #[test]
-    fn taps_bwamem3_options_append_threads() {
-        let mut c = five_base_stub(config::Aligner::BwaMem3);
+    fn taps_bwamem4_options_append_threads() {
+        let mut c = five_base_stub(config::Aligner::BwaMem4);
         c.five_base_chemistry = config::FiveBaseChemistry::Taps;
         c.aligner_options =
-            crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Taps);
+            crate::aligner::options::bwamem4_options(config::FiveBaseChemistry::Taps);
         c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
         let opts = five_base_aligner_options(&c);
         assert!(opts.starts_with("mem --meth=taps "), "{opts}");
@@ -10370,8 +10359,8 @@ mod tests {
     }
 
     #[test]
-    fn bwamem3_options_append_threads_and_argv_is_prefix_then_mates() {
-        let mut c = five_base_stub(config::Aligner::BwaMem3);
+    fn bwamem4_options_append_threads_and_argv_is_prefix_then_mates() {
+        let mut c = five_base_stub(config::Aligner::BwaMem4);
         c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
         let opts = five_base_aligner_options(&c);
         assert!(opts.starts_with("mem --meth=5base"), "{opts}");
@@ -10419,14 +10408,14 @@ mod tests {
     }
 
     #[test]
-    fn taps_notice_names_taps_and_bwamem3() {
-        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps);
+    fn taps_notice_names_taps_and_bwamem4() {
+        let n = five_base_notice(Aligner::BwaMem4, config::FiveBaseChemistry::Taps);
         assert!(
             n.starts_with("Note: --taps is the TAPS (mC->T) mode"),
             "{n}"
         );
         assert!(
-            n.contains("aligned with bwa-mem3 to the UNCONVERTED genome"),
+            n.contains("aligned with bwa-mem4 to the UNCONVERTED genome"),
             "{n}"
         );
         assert!(
@@ -10441,7 +10430,7 @@ mod tests {
             "{n}"
         );
         assert!(
-            five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Illumina5Base)
+            five_base_notice(Aligner::BwaMem4, config::FiveBaseChemistry::Illumina5Base)
                 .contains("concordance-validated vs DRAGEN")
         );
     }
@@ -10452,7 +10441,7 @@ mod tests {
             config::Aligner::Minimap2,
             config::Aligner::Bowtie2,
             config::Aligner::Hisat2,
-            config::Aligner::BwaMem3,
+            config::Aligner::BwaMem4,
         ] {
             let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base);
             assert!(

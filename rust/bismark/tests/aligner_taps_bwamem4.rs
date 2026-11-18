@@ -1,6 +1,6 @@
-//! `--taps` through the REAL bwa-mem3 on public TAPS spike-in reads (nf-core/test-datasets #2370;
-//! see `tests/fixtures/aligner/taps/README.md`). Runs only with `BISMARK_TEST_BWAMEM3=1`; then a
-//! missing `bwa-mem3` or fixture fails the test.
+//! `--taps` through the REAL bwa-mem4 on public TAPS spike-in reads (nf-core/test-datasets #2370;
+//! see `tests/fixtures/aligner/taps/README.md`). Runs only with `BISMARK_TEST_BWAMEM4=1`; then a
+//! missing `bwa-mem4` or fixture fails the test.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,18 +11,18 @@ use std::time::Duration;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-fn bwamem3_enabled() -> bool {
-    if std::env::var_os("BISMARK_TEST_BWAMEM3").is_none() {
+fn bwamem4_enabled() -> bool {
+    if std::env::var_os("BISMARK_TEST_BWAMEM4").is_none() {
         return false;
     }
-    let ok = StdCommand::new("bwa-mem3")
+    let ok = StdCommand::new("bwa-mem4")
         .arg("version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
     assert!(
         ok,
-        "BISMARK_TEST_BWAMEM3 is set but `bwa-mem3 version` does not run"
+        "BISMARK_TEST_BWAMEM4 is set but `bwa-mem4 version` does not run"
     );
     true
 }
@@ -156,8 +156,8 @@ fn fraction(calls: &Calls, contig: &str, strands: &[char], context: char) -> f64
 
 #[test]
 fn taps_spike_ins_polarity_counts_and_identity() {
-    if !bwamem3_enabled() {
-        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (TAPS gate)");
+    if !bwamem4_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM4 unset (TAPS gate)");
         return;
     }
     let genome = TempDir::new().unwrap();
@@ -165,14 +165,14 @@ fn taps_spike_ins_polarity_counts_and_identity() {
     let idx = TempDir::new().unwrap();
     let fa = idx.path().join("spikes.fa");
     fs::copy(fixture("spikes.fa"), &fa).unwrap();
-    let st = StdCommand::new("bwa-mem3")
+    let st = StdCommand::new("bwa-mem4")
         .args(["index", "--meth"])
         .arg(&fa)
         .output()
         .unwrap();
     assert!(
         st.status.success(),
-        "bwa-mem3 index --meth failed: {}",
+        "bwa-mem4 index --meth failed: {}",
         String::from_utf8_lossy(&st.stderr)
     );
 
@@ -180,12 +180,12 @@ fn taps_spike_ins_polarity_counts_and_identity() {
     run(&["--taps"], genome.path(), &fa, taps.path());
     let five = TempDir::new().unwrap();
     run(
-        &["--illumina_5base", "--bwamem3"],
+        &["--illumina_5base", "--bwamem4"],
         genome.path(),
         &fa,
         five.path(),
     );
-    let bam = |d: &Path| d.join("taps_R1_bismark_bwamem3_pe.bam");
+    let bam = |d: &Path| d.join("taps_R1_bismark_bwamem4_pe.bam");
 
     // --meth=taps and --meth=5base give the same records.
     let taps_records = records(&bam(taps.path()));
@@ -194,9 +194,9 @@ fn taps_spike_ins_polarity_counts_and_identity() {
 
     // The real engine ran, in TAPS mode.
     let rep =
-        fs::read_to_string(taps.path().join("taps_R1_bismark_bwamem3_PE_report.txt")).unwrap();
+        fs::read_to_string(taps.path().join("taps_R1_bismark_bwamem4_PE_report.txt")).unwrap();
     assert!(
-        rep.contains("Bismark was run with bwa-mem3 against the unconverted genome"),
+        rep.contains("Bismark was run with bwa-mem4 against the unconverted genome"),
         "{rep}"
     );
     assert!(rep.contains("mem --meth=taps "), "{rep}");
@@ -207,8 +207,8 @@ fn taps_spike_ins_polarity_counts_and_identity() {
     let text = header_text(&bam(taps.path()));
     assert!(
         text.lines()
-            .any(|l| l.starts_with("@PG\tID:bwa-mem3\t")
-                && l.contains("\tCL:bwa-mem3 mem --meth=taps ")),
+            .any(|l| l.starts_with("@PG\tID:bwa-mem4\t")
+                && l.contains("\tCL:bwa-mem4 mem --meth=taps ")),
         "{text}"
     );
     assert!(

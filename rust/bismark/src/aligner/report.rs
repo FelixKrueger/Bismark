@@ -372,7 +372,7 @@ mod tests {
             Aligner::Bowtie2,
             Aligner::Hisat2,
             Aligner::Minimap2,
-            Aligner::BwaMem3,
+            Aligner::BwaMem4,
         ] {
             let h = ReportHeader {
                 sequence_file: "r_1.fq",

@@ -14,7 +14,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 
 ### bismark (aligner)
 
-- **New `--bwamem3` adds bwa-mem3 (0.16.0 and 0.17.0 validated) as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209), [#1240](https://github.com/FelixKrueger/Bismark/pull/1240)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem3---bwamem3).**
+- **New `--bwamem4` adds bwa-mem4 4.5.0 as a methylation-aware Illumina 5-Base engine that keeps CpG-dense methylated regions covered ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)); see the [5-Base guide](docs/src/content/docs/rust/illumina-5-base.md#bwa-mem4---bwamem4).** bwa-mem4 gives the same alignments as bwa-mem3 0.16.0, which this engine first used, and reads an index built by `bwa-mem4 index --meth` or `bwa-mem3 index --meth`. bwa-mem3 0.17.0 gives the same records as 0.16.0 under Bismark's options, and `--taps` runs on bwa-mem4 too.
 - **Illumina 5-Base runs now reject "proper" pairs that are on one strand, on two contigs or pointing apart, for every engine ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **Illumina 5-Base no longer calls methylation in inline UMIs or in the bases of dovetailed pairs that run past the mate's 5' end ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
 - **`--five_base_duplex`, `--five_base_consensus` and `--five_base_deconvolution` now skip those bases too, read from a new `mk:B:I` tag ([#1211](https://github.com/FelixKrueger/Bismark/issues/1211); contributed by [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)).**
@@ -24,7 +24,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 - **`--five_base_deconvolution` and `--five_base_duplex` now call a CpG cytosine only from a C or T (G or A on the minus strand) at or above `--five_base_baseq`, as the methylation call does, so an `N` no longer counts as unmethylated ([#1237](https://github.com/FelixKrueger/Bismark/issues/1237)).**
 - **In the mate overlap, `--five_base_deconvolution` and `--five_base_duplex` now take R2's base at a CpG where R1 has an `N`, a base below `--five_base_baseq` or a deletion; elsewhere in the overlap R1 still wins ([#1238](https://github.com/FelixKrueger/Bismark/issues/1238)).**
 - **Illumina 5-Base stops cleanly with `--upto`, and fails naming the engine and its exit status when the engine crashes or its output and the FASTQ files differ in length ([#1209](https://github.com/FelixKrueger/Bismark/pull/1209)).**
-- **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem3 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
+- **New `--taps` aligns paired-end, directional TAPS libraries with bwa-mem4 in its TAPS mode and calls them on the 5-Base path ([#1225](https://github.com/FelixKrueger/Bismark/pull/1225)); see the [TAPS guide](docs/src/content/docs/rust/taps.md).**
 - **Unaligned CRAM is accepted as read input like a uBAM ([#1204](https://github.com/FelixKrueger/Bismark/pull/1204)).**
 - **Outputs are written under a `.partial` name and renamed when complete, so a failed run leaves no half-written BAM or report under its final name ([#1212](https://github.com/FelixKrueger/Bismark/pull/1212), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213)).**
 - **`--nucleotide_coverage` now runs bam2nuc on each final BAM, as Perl did, instead of being accepted and ignored ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213), [#1215](https://github.com/FelixKrueger/Bismark/pull/1215)).**
@@ -62,7 +62,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 
 ### bismark2summary
 
-- **minimap2, rammap and bwa-mem3 BAMs are found and `--help` says so, and the HTML timestamp is local time as in Perl ([#1196](https://github.com/FelixKrueger/Bismark/pull/1196), [#1209](https://github.com/FelixKrueger/Bismark/pull/1209), [#1230](https://github.com/FelixKrueger/Bismark/pull/1230), [#1171](https://github.com/FelixKrueger/Bismark/pull/1171)).**
+- **minimap2, rammap and bwa-mem4 BAMs are found and `--help` says so, and the HTML timestamp is local time as in Perl ([#1196](https://github.com/FelixKrueger/Bismark/pull/1196), [#1209](https://github.com/FelixKrueger/Bismark/pull/1209), [#1230](https://github.com/FelixKrueger/Bismark/pull/1230), [#1171](https://github.com/FelixKrueger/Bismark/pull/1171)).**
 
 ### Scripts
 

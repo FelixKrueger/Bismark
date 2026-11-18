@@ -5,7 +5,7 @@
 //! Perl `bismark2summary:152-367`:
 //!
 //! - **Discovery** (`:152-205`): explicit `@ARGV` verbatim, else Perl's
-//!   four globs (plus mm2/rammap/bwamem3) in a fixed order, each sorted with Perl's
+//!   four globs (plus mm2/rammap/bwamem4) in a fixed order, each sorted with Perl's
 //!   **case-folded** glob collation (spike-confirmed: case-fold-primary, raw-bytes-secondary,
 //!   locale/platform-invariant — `SPIKE_glob_sort_order.md`).
 //! - **Derivation** (`:251-367`): `.bam` strip, `_pe` ⇒ PE, and the
@@ -23,7 +23,7 @@ use crate::summary::error::BismarkSummaryError;
 /// The auto-detect glob suffixes. The first four are Perl's fixed order
 /// (`bismark2summary:159-197`): SE-bt2, PE-bt2, SE-hisat2, PE-hisat2. The
 /// minimap2 (`mm2`) and rammap outputs follow (`Aligner::token`), then the
-/// paired-end-only bwa-mem3 5-Base output; Perl's bismark2summary predates them.
+/// paired-end-only bwa-mem4 5-Base output; Perl's bismark2summary predates them.
 const GLOB_SUFFIXES: [&str; 9] = [
     "bismark_bt2.bam",
     "bismark_bt2_pe.bam",
@@ -33,7 +33,7 @@ const GLOB_SUFFIXES: [&str; 9] = [
     "bismark_mm2_pe.bam",
     "bismark_rammap.bam",
     "bismark_rammap_pe.bam",
-    "bismark_bwamem3_pe.bam",
+    "bismark_bwamem4_pe.bam",
 ];
 
 /// Per-BAM derived report filenames (relative strings; resolved against the
@@ -300,10 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn glob_discovery_finds_bwamem3_5_base_bams_last() {
+    fn glob_discovery_finds_bwamem4_5_base_bams_last() {
         let dir = tempfile::tempdir().unwrap();
         let make = |n: &str| File::create(dir.path().join(n)).unwrap();
-        make("b_bismark_bwamem3_pe.bam");
+        make("b_bismark_bwamem4_pe.bam");
         make("m_bismark_mm2_pe.bam");
         make("p_bismark_bt2_pe.bam");
 
@@ -313,7 +313,7 @@ mod tests {
             vec![
                 "p_bismark_bt2_pe.bam",
                 "m_bismark_mm2_pe.bam",
-                "b_bismark_bwamem3_pe.bam",
+                "b_bismark_bwamem4_pe.bam",
             ]
         );
     }
