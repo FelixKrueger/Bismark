@@ -209,7 +209,10 @@ fn stage_input(files: &[PathBuf], dir: &Path) -> Result<Contigs, GenomePrepError
     let mut seen = HashSet::new();
     let mut line = Vec::new();
     for file in files {
-        let mut reader = open_fasta(file)?;
+        let mut reader = open_fasta(file).map_err(|e| match e {
+            GenomePrepError::Io(source) => at(file)(source),
+            other => other,
+        })?;
         let mut first = true;
         let mut last_newline = true;
         loop {
@@ -581,6 +584,23 @@ mod tests {
             stage_input(&[fa, b], p.path()).unwrap(),
             contigs(&[("chr1", 6), ("chr2", 1)])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_fasta_is_named() {
+        use std::os::unix::fs::PermissionsExt;
+        let g = tempdir().unwrap();
+        let p = tempdir().unwrap();
+        let a = g.path().join("a.fa");
+        let b = g.path().join("b.fa");
+        fs::write(&a, b">chrA\nAC\n").unwrap();
+        fs::write(&b, b">chrB\nGT\n").unwrap();
+        fs::set_permissions(&b, fs::Permissions::from_mode(0o000)).unwrap();
+        let r = stage_input(&[a, b.clone()], p.path());
+        fs::set_permissions(&b, fs::Permissions::from_mode(0o644)).unwrap();
+        let e = r.unwrap_err().to_string();
+        assert!(e.starts_with(&b.display().to_string()), "{e}");
     }
 
     #[test]
