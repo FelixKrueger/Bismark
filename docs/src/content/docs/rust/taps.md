@@ -81,8 +81,10 @@ bismark_methylation_extractor -p --ignore_r2 20 --bedGraph --gzip sample_bismark
 
 ## Validation
 
-`--taps` is concordance-validated, not byte-identical (Perl Bismark has no TAPS mode). All numbers
-below come from public data and can be reproduced with the commands at the end of this section.
+`--taps` is concordance-validated, not byte-identical (Perl Bismark has no TAPS mode). The CI
+gate and the GSE112520 results come from public data and can be reproduced with the commands at
+the end of this section. The [Watchmaker Genomics results](#watchmaker-genomics-taps-data) come
+from data that is not public.
 
 ### What CI checks on every change
 
@@ -158,6 +160,76 @@ so bwa-mem3 places those reads; the drop at MAPQ ≥ 20 comes from the filter, w
 low-MAPQ reads there. Dropping the filter keeps them but adds some noise from reads that map to
 several places (r 0.993 → 0.992). In these cells, mean methylation agrees with the authors' within
 about 1 point either way.
+
+### Watchmaker Genomics TAPS data
+
+Watchmaker Genomics shared TAPS libraries (PE 151 bp) with their own methylation calls from
+[rastair](https://github.com/bsbludwig/rastair), so Bismark could be compared with a production
+TAPS pipeline. The data is not public; the numbers are quoted with their permission.
+
+Bismark ran with `--taps --five_base_baseq 30`, deduplication, MAPQ ≥ 20 per pair and
+`--ignore_r2 20`, which matches the rastair pipeline's base-quality, MAPQ and read 2 trim settings.
+That pipeline trims adapters with cutadapt and aligns with plain `bwa mem`. Calls were compared per
+strand, only at CpGs where rastair's genotype is reference/reference, so a `C>T` SNP cannot read as
+methylation.
+
+**NA12878.** 618.7 million read pairs, 98.9% aligned uniquely; 51.3 million CpGs with rastair
+coverage ≥ 10.
+
+| Compared with rastair | Untrimmed | `--ignore_r2 20` |
+|---|---|---|
+| rastair's CpGs found in Bismark's output | 99.96% | 99.95% |
+| Pearson r of per-CpG methylation, + / − strand | 0.9958 / 0.9958 | **0.9986 / 0.9985** |
+| Coverage correlation, + / − strand | 0.88 / 0.86 | 0.88 / 0.86 |
+| Genome-wide CpG methylation, Bismark / rastair | 49.07% / 49.58% | 49.84% / 49.58% |
+| CpG-methylated lambda, + / − strand (rastair 97.3% / 97.1%) | 96.2% / 96.1% | 97.6% / 97.6% |
+| Unmodified 2 kb control, + / − strand (rastair 0.27% / 0.27%) | 0.27% / 0.29% | 0.27% / 0.28% |
+
+**False positives.** An unconverted NA12878 library (49.9 million pairs) reads unmethylated
+everywhere, so every methylated call is a false positive. Bismark's rate on 42.9 million CpGs is
+0.196%, against rastair's 0.166% on the same CpGs; CHG and CHH are 0.053% and 0.059%. Base-quality
+filtering changes it by about 0.01 points. On NA12878's chrM reads, which are essentially
+unmethylated, the CpG rate is 0.30% (rastair's pipeline gives 0.32% for all contexts, Bismark 0.32%),
+excluding chrM 7337 and 14831, where NA12878 carries a homoplasmic `G>A` against rCRS that TAPS reads as a fully methylated
+CpG.
+
+**Other sample types**, all with the same settings:
+
+| Sample | Read pairs | Aligned uniquely | Pearson r, + / − strand | Genome-wide CpG, Bismark / rastair |
+|---|---|---|---|---|
+| Breast, normal tissue | 693.8 M | 98.3% | 0.9965 / 0.9965 | 72.71% / 71.96% |
+| Breast, tumour | 589.9 M | 98.6% | 0.9974 / 0.9974 | 74.78% / 74.08% |
+| FFPE | 491.7 M | 96.8% | 0.9954 / 0.9954 | 63.75% / 62.34% |
+| FFPE, unconverted | 396.9 M | 97.7% | — | false positives 0.356% / 0.185% |
+
+**Short inserts.** The FFPE false-positive excess comes from short fragments, not damaged read
+ends: heavier read-end trimming hardly changes it (0.34–0.35%). By insert size, on the unconverted
+libraries:
+
+| Insert size | FFPE share of pairs | FFPE false positives | NA12878 share | NA12878 false positives |
+|---|---|---|---|---|
+| < 150 bp | 40% | 0.60% | 1.2% | 0.52% |
+| 150–250 bp | 47% | 0.30% | 16% | 0.17% |
+| 250–400 bp | 12% | 0.18% | 59% | 0.13% |
+| ≥ 400 bp | 0.7% | 0.16% | 23% | 0.13% |
+
+From 250 bp up Bismark matches rastair (0.185% FFPE, 0.166% NA12878). In short fragments the mates
+overlap: where they disagree, the extractor keeps read 1's call, while rastair keeps the base with
+the higher quality. That difference is the likely cause, but it has not been tested yet.
+
+**CpG-dense regions.** Against rastair's bwa-mem alignments, Bismark's relative coverage (as in
+[the table above](#coverage-in-cpg-dense-regions), CpGs at least 80% methylated, MAPQ ≥ 20) rises
+with CpG density:
+
+| CpGs per 151 bp | 1–2 | 6–9 | 10–14 | ≥ 15 |
+|---|---|---|---|---|
+| NA12878 | 0.99 | 1.03 | 1.08 | 1.06 |
+| Breast, normal / tumour | 0.99 / 0.99 | 1.04 / 1.03 | 1.09 / 1.06 | 1.07 / 1.05 |
+| FFPE | 0.99 | 1.06 | 1.14 | 1.11 |
+
+Plain `bwa mem` scores every methylated CpG as a mismatch, so it loses reads in the densest
+methylated regions; bwa-mem3's methylation-aware mode keeps them. In the 10–14 bin Bismark also
+reads more methylation (NA12878 39.5% against 36.8%).
 
 ### Reports
 
