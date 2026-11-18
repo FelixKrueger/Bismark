@@ -62,4 +62,24 @@ pub enum GenomePrepError {
         /// Conversion directory whose index build failed.
         dir: PathBuf,
     },
+
+    /// `bwa-mem3 index` exited 3: its memory budget is below what the genome needs.
+    #[error(
+        "bwa-mem3 needs more memory than its budget to index {genome} (see its message above). \
+         Its budget is the detected RAM less a reserve; raise it with --bwamem3_max_memory, or run \
+         on a machine with more memory."
+    )]
+    Bwamem3Memory {
+        /// Genome folder being indexed.
+        genome: PathBuf,
+    },
+
+    /// `bwa-mem3 index` failed, or its output is incomplete or does not match the genome.
+    #[error("bwa-mem3 could not build the methylation index for {genome}: {detail}")]
+    Bwamem3Failed {
+        /// Genome folder being indexed.
+        genome: PathBuf,
+        /// What went wrong.
+        detail: String,
+    },
 }

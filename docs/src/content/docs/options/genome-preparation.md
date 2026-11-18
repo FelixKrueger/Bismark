@@ -39,9 +39,17 @@ A full list of options can also be viewed by typing: `bismark prepare --help`
 
 This will create bisulfite indexes for use with minimap2 (https://github.com/lh3/minimap2). This is recommended only for specialist applications such as EM-seq with ONT (Oxford Nanopore Technologies) or PacBio reads. (Default: OFF).
 
+- `--bwamem3`
+
+  Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`, bwa-mem3 0.16.0 or later) of the unconverted genome in `<genome_folder>/Bwamem3_Index/`, for `bismark --taps` and `bismark --illumina_5base --bwamem3`, which find it there without `--five_base_index`. No bisulfite-converted genome is written. A human genome takes about 1 h, about 104 GB of RAM and up to 70 GB of free disk while building; the finished index is about 23 GB. Does not work in conjunction with `--single_fasta`, `--slam`, `--large-index` or `--combined_genome`. (Default: OFF).
+
+- `--bwamem3_max_memory SIZE`
+
+  With `--bwamem3`: the memory budget passed to bwa-mem3 as `--max-memory` (e.g. `120G`). By default bwa-mem3 uses the detected RAM (or container limit) less a reserve, and stops before writing anything if that is not enough.
+
 - `--parallel INT`
 
-Use several threads for each indexing process to speed up the genome preparation step. Remember that the indexing is run twice in parallel already (for the top and bottom strand separately), so e.g. `--parallel 4` will use 8 threads in total. Please also see `--large-index` for parallel processing of VERY LARGE genomes (e.g. the axolotl)
+Use several threads for each indexing process to speed up the genome preparation step. Remember that the indexing is run twice in parallel already (for the top and bottom strand separately), so e.g. `--parallel 4` will use 8 threads in total. With `--bwamem3` there is one indexer and `--parallel` sets its thread count; without it, bwa-mem3 uses all cores. Please also see `--large-index` for parallel processing of VERY LARGE genomes (e.g. the axolotl)
 
 - `--single_fasta`
 
@@ -70,6 +78,22 @@ Force generated index to be 'large', even if reference has fewer than 4 billion 
 This script is supposed to convert a specified reference genome into two different bisulfite converted versions and index them for alignments with Bowtie 2 (default), HISAT2 or minimap2. The first bisulfite genome will have all Cs converted to Ts (C->T), and the other one will have all Gs converted to As (G->A).
 Both bisulfite genomes will be stored in subfolders within the reference genome folder containing the unconverted reference sequence (in FastA format). Once the bisulfite
 conversion has been completed, the program will fork and launch two simultaneous instances of the Bowtie 2, HISAT2 or minimap2 indexer (`bowtie2-build` or `hisat2-build` or `minimap2 -d`, respectively). Here is the structure of the reference genome folder after successful indexing (with Bowtie2 in this case):
+
+With `--bwamem3`, the folder holds only the 7 index files `bwa-mem3 mem --meth` reads:
+
+```
+├── Bwamem3_Index
+│   ├── genome.fa.amb
+│   ├── genome.fa.ann
+│   ├── genome.fa.meth.amb
+│   ├── genome.fa.meth.ann
+│   ├── genome.fa.meth.bwt.2bit.64
+│   ├── genome.fa.meth.pac
+│   └── genome.fa.pac
+└── reference_sequence.fa
+```
+
+With Bowtie 2:
 
 ```
 ├── Bisulfite_Genome

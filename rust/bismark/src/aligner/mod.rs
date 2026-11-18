@@ -2217,7 +2217,7 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
 
 /// `(name, length)` per contig from a BWA `.ann`: a `<len> <n_seqs> <seed>` header line, then
 /// `<gi> <name> [comment]` and `<offset> <len> <n_ambs>` per contig.
-fn read_bwa_ann(prefix: &Path) -> Result<Vec<(String, u64)>> {
+pub(crate) fn read_bwa_ann(prefix: &Path) -> Result<Vec<(String, u64)>> {
     let path = PathBuf::from(format!("{}.ann", prefix.display()));
     let bad =
         || AlignerError::Validation(format!("{} is not a valid BWA .ann file", path.display()));
@@ -2469,8 +2469,9 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             .is_some_and(|n| n.to_string_lossy().ends_with(".meth.fa"))
     }) {
         return Err(AlignerError::Validation(format!(
-            "{} in the genome folder is a bwa-mem3 index file, not genome; keep the bwa-mem3 index \
-             outside the --genome folder",
+            "{} in the genome folder is a bwa-mem3 index file, not genome; keep bwa-mem3 index \
+             files out of the top level of the --genome folder (`bismark_genome_preparation \
+             --bwamem3` puts them in Bwamem3_Index/)",
             f.display()
         )));
     }

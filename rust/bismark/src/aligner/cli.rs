@@ -67,7 +67,8 @@ pub struct Cli {
     #[arg(long = "rammap", visible_alias = "ram")]
     pub rammap: bool,
     /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware). Needs
-    /// --illumina_5base and a `bwa-mem3 index --meth` index given as --five_base_index.
+    /// --illumina_5base and a `bwa-mem3 index --meth` index: `<genome>/Bwamem3_Index/` from
+    /// `bismark_genome_preparation --bwamem3`, or one given as --five_base_index.
     /// Implied by `--taps`.
     #[arg(long = "bwamem3")]
     pub bwamem3: bool,
@@ -109,13 +110,14 @@ pub struct Cli {
     /// (the 5-Base library is paired-end); single-end input is rejected. Aligns with
     /// minimap2 (`-x sr`) against the raw genome FASTA by default; bowtie2/hisat2 via
     /// `--five_base_index`; `--bwamem3` (methylation-aware) via a bwa-mem3 meth index
-    /// given as `--five_base_index`. NOT byte-identical (Perl Bismark has no 5-Base oracle);
+    /// (`<genome>/Bwamem3_Index/` or `--five_base_index`). NOT byte-identical (Perl Bismark has no 5-Base oracle);
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
     /// `[TAPS]` TAPS (mC->T) mode: paired-end, directional reads aligned with bwa-mem3
-    /// (`--meth=taps`) to the UNCONVERTED genome; needs `--five_base_index`, the FASTA a
-    /// `bwa-mem3 index --meth` index was built from. Uses the Illumina 5-Base calling path
+    /// (`--meth=taps`) to the UNCONVERTED genome; needs a `bwa-mem3 index --meth` index:
+    /// `<genome>/Bwamem3_Index/` from `bismark_genome_preparation --bwamem3`, or the FASTA path
+    /// given as `--five_base_index`. Uses the Illumina 5-Base calling path
     /// (5mC and 5hmC both read as methylated); see the TAPS guide.
     #[arg(long = "taps")]
     pub taps: bool,
@@ -137,7 +139,8 @@ pub struct Cli {
     /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
     /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` or `--taps` it is instead
-    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from.
+    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from; optional when
+    /// `<genome>/Bwamem3_Index/` (from `bismark_genome_preparation --bwamem3`) exists.
     #[arg(long = "five_base_index", value_name = "BASENAME")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI

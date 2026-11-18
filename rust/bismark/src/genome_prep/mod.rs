@@ -19,7 +19,11 @@
 //!    (concurrently, mirroring Perl's `fork`).
 //! 4. **(opt) Step IV** — `--combined_genome`: also write a single combined
 //!    CT+GA reference + build a combined index (Bismark-Rust extension).
+//!
+//! `--bwamem3` replaces Steps II–IV with a bwa-mem3 methylation index of the
+//! unconverted genome (see [`bwamem3`]).
 
+pub mod bwamem3;
 pub mod cli;
 pub mod combined;
 pub mod composition;
