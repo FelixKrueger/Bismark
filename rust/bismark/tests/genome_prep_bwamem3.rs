@@ -187,6 +187,56 @@ fn single_gz_genome_matches_a_manual_build() {
     }
 }
 
+/// Sidecars next to a user's `genome.fa` never reach the index or the alignments.
+#[test]
+fn sidecars_beside_the_genome_are_ignored() {
+    if !bwamem3_enabled() {
+        eprintln!("skipping: BISMARK_TEST_BWAMEM3 unset (genome prep bwa-mem3 gate)");
+        return;
+    }
+    const MARK: &str = "BISMARK_SIDECAR_MARKER";
+    let genome = TempDir::new().unwrap();
+    let g = genome.path();
+    fs::copy(fixture("spikes.fa"), g.join("genome.fa")).unwrap();
+    fs::write(
+        g.join("genome.fa.alt"),
+        format!("{MARK}\t0\t*\t0\t0\t*\t*\t0\t0\t*\t*\n"),
+    )
+    .unwrap();
+    fs::write(g.join("genome.fa.hdr"), format!("@CO\t{MARK}\n")).unwrap();
+    fs::write(g.join("genome.dict"), format!("@HD\tVN:1.6\n@CO\t{MARK}\n")).unwrap();
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .arg("--bwamem3")
+        .arg(g)
+        .timeout(Duration::from_secs(300))
+        .assert()
+        .success();
+    let mut names: Vec<String> = fs::read_dir(g.join("Bwamem3_Index"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let mut want: Vec<String> = SEVEN.iter().map(|s| format!("genome.fa.{s}")).collect();
+    want.sort();
+    assert_eq!(names, want);
+
+    let out = TempDir::new().unwrap();
+    taps(g, None, out.path());
+    let mut bam = Vec::new();
+    std::io::Read::read_to_end(
+        &mut flate2::read::MultiGzDecoder::new(
+            fs::File::open(out.path().join("taps_R1_bismark_bwamem3_pe.bam")).unwrap(),
+        ),
+        &mut bam,
+    )
+    .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&bam).contains(MARK),
+        "sidecar content reached the BAM"
+    );
+}
+
 /// bwa-mem3's memory pre-check still exits 3, which Bismark reports as a memory error.
 #[test]
 fn too_small_a_budget_is_a_memory_error() {

@@ -177,6 +177,7 @@ The per-tool crate/version columns are the historical/frozen record: since the P
 
 Reverse-chronological log of the main Rust-rewrite shipping events. One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
+- **2026-11-19** — `bismark` aligner + genome prep **bwa-mem3 0.18.0 pin** (`plans/11182026_bwamem3-018/`) — CI and the container move to bwa-mem3 0.18.0; 0.16.0, 0.17.0 and 0.18.0 are validated (identical BAMs, raw SAMs and extractor output for `--taps` and `--illumina_5base --bwamem3` on avx512bw; `--taps` also on avx2 and NEON); `bismark prepare --bwamem3` passes `--meth-only` on 0.18.0+ and refuses any index file beyond the seven.
 - **2026-11-18** — `bismark_genome_preparation` **`--bwamem3`** (`plans/11182026_genome-prep-bwamem3/`) — builds the pruned bwa-mem3 methylation index in `<genome>/Bwamem3_Index/`; `--taps` and `--illumina_5base --bwamem3` use it when `--five_base_index` is absent.
 - **2026-11-17** — `bismark` aligner **bwa-mem3 0.17.0 pin** (`plans/11162026_bwamem3-017-pin/`) — CI and the container move to bwa-mem3 0.17.0; 0.16.0 and 0.17.0 are both validated (identical BAMs, reports and extractor output for `--taps` and `--illumina_5base --bwamem3` on AVX-512; `--taps` also on AVX2 and NEON).
 - **2026-11-16** — `bismark` aligner **5-Base pass fixes** (`plans/11142026_5base-prs-fixups/`) — duplex, consensus and deconvolution skip UMI and dovetail-overhang bases and count R2 in paired-end runs (#1211, #1220, #1222; @BenjaminDEMAILLE); lane-1 NA12878 re-check vs DRAGEN in `validation/VALIDATION_REAL_DATA.md`.

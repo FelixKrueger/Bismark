@@ -20,7 +20,7 @@ Biotechnology 37, 424–429, GEO [GSE112520](https://www.ncbi.nlm.nih.gov/geo/qu
 ## Selection
 
 All 12,417 pairs were aligned with bwa-mem3 0.16.0 to `genome_taps.fa` (mm10 chr19 + the two spike-ins) using
-Bismark's option string with `--meth=taps`; bwa-mem3 0.17.0 gives the same records. A pair is kept when both of its primary records (`-F 0x904`) are on
+Bismark's option string with `--meth=taps`; bwa-mem3 0.17.0 and 0.18.0 give the same records. A pair is kept when both of its primary records (`-F 0x904`) are on
 `bacteriophage_lambda_CpG` or `2kb_3_Unmodified`. `spikes.fa` is `samtools faidx genome_taps.fa
 bacteriophage_lambda_CpG 2kb_3_Unmodified`.
 

@@ -175,8 +175,8 @@ It is opt-in because it is expensive:
 
 | | bwa-mem3 |
 |---|---|
-| Index | `bismark prepare --bwamem3 <genome>` (or `bwa-mem3 index --meth genome.fa`): about 1 h and about 104 GB RAM for GRCh38 |
-| Index on disk | about 23 GB for GRCh38, which is what `bismark prepare --bwamem3` keeps; a hand-built `bwa-mem3 index --meth` writes about 39 GB, and its `genome.fa.meth.fa` (6.3 GB) and plain `genome.fa.bwt.2bit.64` (10.4 GB) can be deleted |
+| Index | `bismark prepare --bwamem3 <genome>` (or `bwa-mem3 index --meth --meth-only genome.fa` with bwa-mem3 0.18.0+, `--meth` alone before): about 1 h and about 104 GB RAM for GRCh38 |
+| Index on disk | about 23 GB for GRCh38: the 7 files `bismark prepare --bwamem3` keeps, and all that bwa-mem3 0.18.0's `--meth-only` writes. A plain `bwa-mem3 index --meth` also writes `genome.fa.bwt.2bit.64` (10.4 GB), and 0.16.0/0.17.0 also `genome.fa.meth.fa` (6.3 GB); both can be deleted. Rebuilding into an existing prefix with 0.18.0 needs `--force` |
 | Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
@@ -196,7 +196,7 @@ Bismark fixes every bwa-mem3 option that affects placement (`--meth-scoring neut
 --meth-context all --meth-seed-prune=spec30`), because bwa-mem3's defaults have changed
 between releases, and it ignores `$BWAMEM3_METH_SEED_PRUNE`. The Bowtie 2 and minimap2
 tuning options and `--local` are rejected with `--bwamem3`; `-p`/`--multicore` set its
-threads. Versions before 0.16.0 are rejected; 0.16.0 and 0.17.0 are validated, and other
+threads. Versions before 0.16.0 are rejected; 0.16.0, 0.17.0 and 0.18.0 are validated, and other
 versions run with a warning. The BAM records the bwa-mem3 version and command line in a
 `@PG ID:bwa-mem3` line, and the report states the version.
 
