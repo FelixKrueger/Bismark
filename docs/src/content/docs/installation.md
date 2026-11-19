@@ -21,11 +21,7 @@ mamba install -c bioconda -c conda-forge bismark
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (0.18.0 is the pinned version). Install it from bioconda for any of the install routes below; the container image already includes it:
-
-```bash
-mamba install -c bioconda -c conda-forge bwa-mem3
-```
+`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need bwa-mem3, which no install route except the container includes; see [Dependencies](#dependencies).
 
 ### Install with Homebrew (macOS / Linux)
 
@@ -35,11 +31,11 @@ Bismark is in [Homebrew core](https://formulae.brew.sh/formula/bismark), with a 
 brew install bismark
 ```
 
-Homebrew pulls in **Bowtie 2** and **minimap2** automatically, and the formula tracks new releases (so `brew install bismark` stays current). Unlike the bioconda package it does **not** install HISAT2 — that formula isn't in homebrew-core — so if you use the `--hisat2` aligner, install it separately (e.g. `brew install brewsci/bio/hisat2`).
+Homebrew pulls in **Bowtie 2** and **minimap2** automatically, and the formula tracks new releases (so `brew install bismark` stays current). Unlike the bioconda package it does **not** install HISAT2 — that formula isn't in homebrew-core — so if you use the `--hisat2` aligner, install it separately (e.g. `brew install brewsci/bio/hisat2`). Homebrew has no bwa-mem3 formula either; install it from bioconda (see [Dependencies](#dependencies)).
 
 ### Install from source with `cargo`
 
-Installs the single `bismark` binary (all tools, via subcommands + classic-name aliases) into `~/.cargo/bin` in one command (requires a Rust toolchain — see Prerequisites):
+Installs `bismark` and the eleven classic tool names into `~/.cargo/bin` in one command (requires a Rust toolchain — see Prerequisites). They are all the same program, so `bismark <subcommand>` and the classic names both work:
 
 ```bash
 cargo install bismark
@@ -51,9 +47,11 @@ For the latest development build instead of the published release:
 cargo install --git https://github.com/FelixKrueger/Bismark --branch master --locked bismark
 ```
 
+The release binaries and the container image also include the in-process rammap backend for `--rammap` and BINSEQ (`.vbq`/`.cbq`) input. A plain `cargo install bismark` leaves both out (`--rammap` then runs an external `rammap` binary, and BINSEQ input is rejected); add them with `cargo install bismark --features rammap-inprocess,binseq-input`.
+
 **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; re-running `cargo install bismark` is a no-op unless a newer version is published — add `--force` to reinstall in place.
 
-**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3`. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` (see [Dependencies](#dependencies)). No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Prebuilt binaries (no toolchain)
 
@@ -78,6 +76,14 @@ Bismark requires [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISA
 --path_to_bowtie2 </../../bowtie2> or
 --path_to_hisat2 </../../hisat2>
 ```
+
+`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The container image includes it; with every other install route, including bioconda and Homebrew, install it from bioconda:
+
+```bash
+mamba install -c bioconda -c conda-forge bwa-mem3
+```
+
+If it is not on your `PATH`, give the folder that holds it with `--path_to_bwamem3`.
 
 ## Legacy: the Perl Bismark
 
