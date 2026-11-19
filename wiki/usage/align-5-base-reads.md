@@ -9,22 +9,22 @@ updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: dbd7c27
+    commit: a0059f4
 ---
 
 # Align 5-Base reads
@@ -74,7 +74,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 
 ## Which pairs are kept
 
-A pair is written only when both mates are mapped and flagged proper, lie on one contig, are on opposite strands, and the reverse mate ends after the forward mate starts (`five_base_pair_geometry` in `aligner/mod.rs`). MAPQ is not filtered. Pairs that fail the last three tests are counted under "Proper pairs rejected" and as pairs with no alignment. Secondary and supplementary records are skipped. Every pair must come back from the engine, in FASTQ order, and the run fails when R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`).
+A pair is written only when both mates are mapped and flagged proper, lie on one contig, are on opposite strands, and the reverse mate ends after the forward mate starts (`five_base_pair_geometry` in `aligner/mod.rs`). MAPQ is not filtered. A pair whose R1 is not flagged proper, or with an unmapped mate, counts as no alignment. A pair whose R2 is not flagged proper, or whose mates are on different contigs, on one strand, or point apart, is counted under "Proper pairs rejected" and as no alignment (`five_base_emit_pe_record`). Secondary and supplementary records are skipped. Every pair must come back from the engine, in FASTQ order, and the run fails when R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`).
 
 ## Bases that are not called
 
@@ -88,7 +88,7 @@ All three are in `aligner/mod.rs`. They change `XM`, so the extractor and `--fiv
 
 ## Optional outputs
 
-Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`). `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning (`run_pe_five_base`).
+Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`). `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone`).
 
 ## Links
 

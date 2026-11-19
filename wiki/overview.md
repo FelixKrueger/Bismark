@@ -9,28 +9,28 @@ updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: dbd7c27
+    commit: a0059f4
 ---
 
 # Bismark overview
@@ -62,7 +62,7 @@ The developer gave this order. Most workflows run these steps:
 **Limits in the code.**
 
 - Reads are FastQ (default) or FastA; `--pbat` accepts only FastQ and no `--gzip` (`resolve_library` in `aligner/config.rs`).
-- minimap2 and rammap align single-end reads only, except minimap2 in 5-Base runs; paired-end input, including a positional paired uBAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
+- minimap2 and rammap align single-end reads only, except minimap2 in 5-Base runs; paired-end input, including a positional paired uBAM, unaligned CRAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
 - Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
 - `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`). With Bowtie 2 it caps inserts at 800 bp unless `-X` is given, and rejects an `-I` above the cap (`build_five_base_aligner_options` in `aligner/options.rs`). `--bwamem3` works only with `--illumina_5base`, and needs bwa-mem3 0.16.0 or newer and a bwa-mem3 index: `<genome>/Bwamem3_Index/` from `bismark prepare --bwamem3`, or `--five_base_index` (`resolve_aligner` and `resolve_five_base_index` in `aligner/config.rs`, `detect_aligner` in `aligner/aligner.rs`).
 - 5-Base runs with minimap2, Bowtie 2 or HISAT2 align the raw reads to the unconverted genome with the engine's normal scoring, so each methylated CpG is a mismatch (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` and `default_linear_score` in `aligner/options.rs`). The developer measured that CpG-dense, heavily methylated regions are under-covered and under-called with minimap2 and Bowtie 2. `--bwamem3` runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`), and the developer measured that it covers them; see [troubleshooting.md](troubleshooting.md).

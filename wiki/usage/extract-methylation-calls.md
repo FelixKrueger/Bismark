@@ -5,38 +5,38 @@ description: Turn a Bismark BAM into per-cytosine call files and an M-bias table
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-11-06
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/overlap.rs
-    commit: da431b7
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
-    commit: da431b7
+    commit: a0059f4
 ---
 
 # Extract methylation calls
@@ -72,7 +72,7 @@ All four default to 0. Soft-clipped bases count as read positions (`extract_call
 
 ## Paired-end overlap
 
-For paired-end input, calls from read 2 that overlap read 1 are dropped by default, so a cytosine is counted once per fragment. `--include_overlap` keeps them; it is accepted only together with an explicit `-p` (`Cli::validate` in `extractor/cli.rs`). Coordinate-sorted paired-end input is rejected, because mates must be next to each other; coordinate-sorted single-end input is fine (`extract_pe_parallel` in `extractor/parallel.rs`).
+For paired-end input, calls from read 2 that overlap read 1 are dropped by default, so a cytosine is counted once per fragment. `--include_overlap` keeps them. It is rejected with `-s` or on a file that is auto-detected as single-end (`Cli::validate` in `extractor/cli.rs`, `process_one_file` in `extractor/mod.rs`). Coordinate-sorted paired-end input is rejected, because mates must be next to each other; coordinate-sorted single-end input is fine (`extract_pe_parallel` in `extractor/parallel.rs`).
 
 ## BAMs from other aligners
 
@@ -102,6 +102,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 | Option | Effect |
 |---|---|
 | `-o <dir>` | Output folder (default: current folder), created if missing |
+| `--cram_ref <fasta>` | Reference FASTA (with `.fai`) to decode CRAM input; required for CRAM, ignored for BAM and SAM |
 | `--parallel <n>` | Worker threads (default 1); `0` is rejected |
 | `--no_header` | No version line at the top of each call file |
 | `--mbias_off` | Skip the M-bias table |
@@ -116,5 +117,4 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 
 ## Open questions
 
-- `--include_overlap` is rejected when single-end/paired-end is auto-detected, even for paired-end input. Whether that is intended is not in the code.
 - The doc comment on `--parallel` in `extractor/cli.rs` says raising it does not speed up BAM extraction; no code measures this.

@@ -5,26 +5,26 @@ description: Build the bedGraph, the .bismark.cov.gz coverage file and the genom
 tags: [bedgraph, coverage, cytosine-report, coverage2cytosine]
 page_id: make-coverage-and-cytosine-reports
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/downstream_filenames.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/cli.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/filename.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/cli.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: f6a21fd
+    commit: a0059f4
 ---
 
 # Make coverage and cytosine reports
@@ -41,7 +41,7 @@ bismark extract --gzip --bedGraph --cytosine_report --genome_folder /data/genome
 
 - `--cytosine_report` turns on `--bedGraph` too, and needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
 - The extractor calls the bedGraph and cytosine-report code directly; no second program starts (`run_downstream_chain` in `extractor/downstream_filenames.rs`).
-- Without `--CX`, only the CpG call files feed the bedGraph. If there are none, the extractor prints a warning and skips both steps.
+- Without `--CX`, only the CpG call files feed the bedGraph. If there are none, the extractor prints a warning and skips both steps. A run with no calls at all still writes an empty bedGraph, coverage file and cytosine report (`run_downstream_chain` in `extractor/downstream_filenames.rs`).
 
 Outputs, for an input `sample.deduplicated.bam` (`derive_bedgraph_filename`, `derive_coverage_filename`, `derive_cytosine_filename`):
 
@@ -87,7 +87,7 @@ bismark cov2cyt --genome_folder /data/genomes/GRCh38/ -o sample sample.bismark.c
 | `-o <name>` | Output basename (required) |
 | `--genome_folder <dir>` / `--genome` | Genome FASTA folder (required) |
 | `--CX` | All contexts |
-| `--coverage_threshold <n>` | Minimum coverage to report a position (default 0, report all) |
+| `--coverage_threshold <n>` | Minimum coverage to report a position (default 0, report all; 1 with `--nome-seq` or `--drach`, set in `Cli::validate` in `coverage2cytosine/cli.rs`) |
 | `--merge_CpGs` | Pool the two strands of each CpG into one line |
 | `--gzip` | Gzip the report and `.cov` outputs |
 | `--gc`, `--nome-seq`, `--drach`, `--ffs` | GpC, NOMe-seq, DRACH and extended-context reports |

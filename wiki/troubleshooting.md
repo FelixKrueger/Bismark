@@ -9,49 +9,49 @@ updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: dbd7c27
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/bwamem3.rs
-    commit: dbd7c27
+    commit: a0059f4
 ---
 
 # Troubleshooting
@@ -86,8 +86,8 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 ## Coverage
 
 - The deduplication report gives the share removed ([reference/run-reports.md](reference/run-reports.md)). For RRBS, amplicon and implicon data the developer says to skip deduplication.
-- Paired-end extraction counts an overlapping region once: read 2 calls inside read 1's span are dropped unless `--include_overlap` (with `-p`) is given (`Cli::validate` in `extractor/cli.rs`).
-- `--cutoff` (bedGraph and `.cov`, default 1) and `--coverage_threshold` (cytosine report, default 0) drop low-coverage positions.
+- Paired-end extraction counts an overlapping region once: read 2 calls inside read 1's span are dropped unless `--include_overlap` is given (paired-end input only; `process_one_file` in `extractor/mod.rs`).
+- `--cutoff` (bedGraph and `.cov`, default 1) and `--coverage_threshold` (cytosine report) drop low-coverage positions.
 - The cytosine report lists every cytosine, including uncovered ones with counts `0 0`, unless `--coverage_threshold` is set.
 
 ## 5-Base: low coverage at methylated CpG islands
@@ -112,9 +112,9 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 |---|---|---|
 | `the Bowtie 2 index of the C->T-converted genome seems to be faulty` | An index file is missing (`FaultyIndex` in `aligner/error.rs`) | Run `bismark prepare` for the same aligner: [usage/prepare-a-genome.md](usage/prepare-a-genome.md) |
 | `failed to execute Bowtie 2 properly` | The aligner is not on `PATH` (`AlignerNotWorking`) | Install it, or pass `--path_to_bowtie2 <dir>` |
-| `input BAM is coordinate-sorted` | Dedup or paired-end extraction got a sorted BAM (`UnsortedInput` in `io/error.rs`) | Use the BAM straight from the aligner, or name-sort it |
+| `input BAM is coordinate-sorted` | Paired-end dedup or paired-end extraction got a coordinate-sorted BAM (`UnsortedInput` in `io/error.rs`) | Use the BAM straight from the aligner, or name-sort it |
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
-| `--include_overlap requires --paired-end` | Overlap option without `-p` | Add `-p` |
+| `--include_overlap requires --paired-end` | `--include_overlap` with `-s`, or on a file auto-detected as single-end (`process_one_file` in `extractor/mod.rs`) | Drop `--include_overlap`: single-end reads have no read 2 |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
 | `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
 | `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
