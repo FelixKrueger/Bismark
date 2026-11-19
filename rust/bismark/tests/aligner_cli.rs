@@ -1010,6 +1010,130 @@ fn inputs_sharing_an_output_name_are_rejected() {
     }
 }
 
+/// Run the aligner on `reads` (fake Bowtie 2 from `bins`) and expect the name-collision error.
+#[cfg(unix)]
+fn assert_rejected_as_collision(bins: &Path, reads: &[PathBuf]) {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let (temp, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .args(reads)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("would both write"));
+    assert_eq!(fs::read_dir(outdir.path()).unwrap().count(), 0);
+}
+
+/// Binary inputs are compared under the name they decode to (#1260).
+#[cfg(unix)]
+#[test]
+fn binary_inputs_sharing_an_output_name_are_rejected() {
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let dir = TempDir::new().unwrap();
+    let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    // Detection reads the magic bytes, so a BAM named `.cram` is handled as a uBAM.
+    for (fixture, dst) in [
+        ("tg_se_trimgalore.bam", a.join("s.bam")),
+        ("tg_se_trimgalore.bam", b.join("s.cram")),
+        ("tg_pe_trimgalore.bam", a.join("p.bam")),
+        ("tg_pe_trimgalore.bam", b.join("p.cram")),
+    ] {
+        fs::copy(ubam_fixture(fixture), dst).unwrap();
+    }
+    fs::write(b.join("s.fq"), b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+
+    assert_rejected_as_collision(bins.path(), &[a.join("s.bam"), b.join("s.cram")]);
+    assert_rejected_as_collision(bins.path(), &[a.join("s.bam"), b.join("s.fq")]);
+    assert_rejected_as_collision(bins.path(), &[a.join("p.bam"), b.join("p.cram")]);
+}
+
+/// A BINSEQ input collides with a FastQ of the same stem (#1260).
+#[cfg(all(unix, feature = "binseq-input"))]
+#[test]
+fn vbq_and_fastq_sharing_an_output_name_are_rejected() {
+    use bismark::aligner::binseq::SequencingRecordBuilder;
+    use bismark::aligner::binseq::write::{BinseqWriterBuilder, Format};
+
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let dir = TempDir::new().unwrap();
+    let vbq = dir.path().join("s.vbq");
+    let mut w = BinseqWriterBuilder::new(Format::Vbq)
+        .quality(true)
+        .headers(true)
+        .build(fs::File::create(&vbq).unwrap())
+        .unwrap();
+    let rec = SequencingRecordBuilder::default()
+        .s_header(b"r1")
+        .s_seq(b"ACGTAC")
+        .s_qual(b"FFFFFF")
+        .build()
+        .unwrap();
+    assert!(w.push(rec).unwrap());
+    w.finish().unwrap();
+    let fq = dir.path().join("s.fq.gz");
+    let mut gz = flate2::write::GzEncoder::new(
+        fs::File::create(&fq).unwrap(),
+        flate2::Compression::default(),
+    );
+    std::io::Write::write_all(&mut gz, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    gz.finish().unwrap();
+
+    assert_rejected_as_collision(bins.path(), &[vbq, fq]);
+}
+
+/// A uBAM and a FastQ with different stems both align, each to its own output (#1260).
+#[cfg(unix)]
+#[test]
+fn binary_and_fastq_with_distinct_names_both_align() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let dir = TempDir::new().unwrap();
+    let (temp, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let bam = dir.path().join("s.bam");
+    fs::copy(ubam_fixture("tg_se_trimgalore.bam"), &bam).unwrap();
+    let fq = dir.path().join("t.fq");
+    fs::write(&fq, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        // macOS FIFOs fail this fake Bowtie 2.
+        .arg("--no_stream_converted")
+        .arg(&bam)
+        .arg(&fq)
+        .assert()
+        .success();
+    for name in [
+        "s_bismark_bt2.bam",
+        "s_bismark_bt2_SE_report.txt",
+        "t_bismark_bt2.bam",
+        "t_bismark_bt2_SE_report.txt",
+    ] {
+        assert!(outdir.path().join(name).exists(), "missing {name}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn missing_index_errors() {

@@ -4161,6 +4161,22 @@ fn basename(read_file: &str) -> String {
         .unwrap_or_else(|| read_file.to_string())
 }
 
+/// The `<stripped-stem>` that [`derive_output_path`] gives `read`. A binary input in a single-end
+/// layout is named off its decoded `<stem>.fastq` / `<stem>_1.fastq` (see [`InputDecoder`]).
+pub(crate) fn output_stem(read: &str, single_end_layout: bool) -> Result<String> {
+    let path = Path::new(read);
+    if single_end_layout && let Some(dec) = ALT_INPUT_DECODERS.iter().find(|d| d.detect(path)) {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("reads");
+        let decoded = if dec.is_paired(path)? {
+            format!("{stem}_1.fastq")
+        } else {
+            format!("{stem}.fastq")
+        };
+        return Ok(strip_fastq_suffix(&decoded));
+    }
+    Ok(strip_fastq_suffix(&basename(read)))
+}
+
 /// Derive an output path: `(<prefix>.)<stripped-stem><default_suffix>` (or
 /// `<basename><basename_suffix>` when `-B` is set), under `output_dir`. Mirrors
 /// the report/BAM naming (Perl 1559–1638). NB: the `--unmapped`/`--ambiguous`
@@ -10537,5 +10553,88 @@ mod tests {
         );
         assert!(five_base_check_cigar_covers_read("p", "R2", "2S2M", 4).is_ok());
         assert!(five_base_check_cigar_covers_read("p", "R2", "4Z", 4).is_err());
+    }
+
+    /// `output_stem` must name a binary input the way its transcoder does (#1260).
+    fn assert_output_stem_matches_transcode(dec: &dyn InputDecoder, input: &Path) {
+        let sub = input.parent().unwrap().join("decoded");
+        let decoded = if dec.is_paired(input).unwrap() {
+            dec.transcode_pe(input, &sub).unwrap().0
+        } else {
+            dec.transcode_se(input, &sub).unwrap()
+        };
+        let from_transcode = strip_fastq_suffix(&decoded.file_name().unwrap().to_string_lossy());
+        assert_eq!(
+            output_stem(input.to_str().unwrap(), true).unwrap(),
+            from_transcode
+        );
+    }
+
+    #[test]
+    fn output_stem_matches_ubam_transcode_names() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/aligner");
+        for (fixture, name, stem) in [
+            (
+                "tg_se_trimgalore.bam",
+                "s.trimmed.unaligned.bam",
+                "s.trimmed.unaligned",
+            ),
+            (
+                "tg_pe_trimgalore.bam",
+                "p.trimmed.unaligned.bam",
+                "p.trimmed.unaligned_1",
+            ),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let input = dir.path().join(name);
+            std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            assert_output_stem_matches_transcode(&UbamDecoder, &input);
+            assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
+        }
+    }
+
+    #[cfg(feature = "binseq-input")]
+    #[test]
+    fn output_stem_matches_vbq_transcode_name() {
+        use crate::aligner::binseq::SequencingRecordBuilder;
+        use crate::aligner::binseq::write::{BinseqWriterBuilder, Format};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let input = dir.path().join("s.trimmed.vbq");
+        let mut w = BinseqWriterBuilder::new(Format::Vbq)
+            .quality(true)
+            .headers(true)
+            .build(std::fs::File::create(&input).unwrap())
+            .unwrap();
+        let rec = SequencingRecordBuilder::default()
+            .s_header(b"r1")
+            .s_seq(b"ACGTAC")
+            .s_qual(b"FFFFFF")
+            .build()
+            .unwrap();
+        assert!(w.push(rec).unwrap());
+        w.finish().unwrap();
+        assert_output_stem_matches_transcode(&BinseqDecoder, &input);
+        assert_eq!(
+            output_stem(input.to_str().unwrap(), true).unwrap(),
+            "s.trimmed"
+        );
+    }
+
+    #[test]
+    fn output_stem_plain_fastq_and_paired_layout() {
+        assert_eq!(output_stem("/x/s.fq.gz", true).unwrap(), "s");
+        let dir = tempfile::TempDir::new().unwrap();
+        let bam = dir.path().join("s.bam");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/aligner/tg_se_trimgalore.bam"),
+            &bam,
+        )
+        .unwrap();
+        let bam = bam.to_str().unwrap();
+        assert_eq!(output_stem(bam, true).unwrap(), "s");
+        // `-1/-2` inputs are never decoded.
+        assert_eq!(output_stem(bam, false).unwrap(), "s.bam");
     }
 }

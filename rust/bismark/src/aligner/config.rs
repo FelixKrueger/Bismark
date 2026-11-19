@@ -1948,24 +1948,20 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
     Ok(ReadLayout::SingleEnd { reads })
 }
 
-/// Fail when two inputs (or pairs) would write the same output files, which would
-/// otherwise silently overwrite the first one's results. Outputs are named off the read
-/// (R1) file's name minus its FastQ suffix, or `--basename` for every input.
+/// Fail when two inputs (or pairs) would write the same output name ([`crate::aligner::output_stem`]).
 fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
-    let reads = match layout {
-        ReadLayout::SingleEnd { reads } => reads,
-        ReadLayout::PairedEnd { mates1, .. } => mates1,
+    let (reads, single_end_layout) = match layout {
+        ReadLayout::SingleEnd { reads } => (reads, true),
+        ReadLayout::PairedEnd { mates1, .. } => (mates1, false),
     };
+    if reads.len() < 2 {
+        return Ok(());
+    }
     let mut seen: Vec<(String, &String)> = Vec::new();
     for read in reads {
         let name = match &cli.basename {
             Some(b) => b.clone(),
-            None => crate::aligner::strip_fastq_suffix(
-                &Path::new(read)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy(),
-            ),
+            None => crate::aligner::output_stem(read, single_end_layout)?,
         };
         if let Some((_, first)) = seen.iter().find(|(n, _)| *n == name) {
             return Err(AlignerError::Validation(format!(
