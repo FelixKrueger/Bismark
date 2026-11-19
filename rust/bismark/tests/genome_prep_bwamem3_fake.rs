@@ -1,6 +1,6 @@
 //! Hermetic `bismark_genome_preparation --bwamem3` tests against a fake `bwa-mem3` script.
 //!
-//! The fake answers `version` with `$FAKE_VERSION` (default `0.17.0`). For `index` it writes the
+//! The fake answers `version` with `$FAKE_VERSION` (default `0.18.0`). For `index` it writes the
 //! nine files `bwa-mem3 index --meth` writes, or with `--meth-only` the seven (rejected below
 //! 0.18.0, as the real binary does), with an `.ann` listing the input's contigs.
 //! `$FAKE_EXIT` (a code, or `kill`), `$FAKE_OMIT` (a suffix not to write), `$FAKE_EXTRA` (a suffix
@@ -27,14 +27,14 @@ const SEVEN: [&str; 7] = [
 ];
 
 const FAKE: &str = r#"#!/bin/sh
-if [ "$1" = version ]; then echo "${FAKE_VERSION:-0.17.0}"; echo "Compiler: gcc"; exit 0; fi
+if [ "$1" = version ]; then echo "${FAKE_VERSION:-0.18.0}"; echo "Compiler: gcc"; exit 0; fi
 [ -n "$FAKE_ARGV_DUMP" ] && echo "$@" > "$FAKE_ARGV_DUMP"
 mo=; for a in "$@"; do in=$a; [ "$a" = --meth-only ] && mo=1; done
 [ "$FAKE_EXIT" = kill ] && kill -9 $$
 [ -n "$FAKE_EXIT" ] && exit "$FAKE_EXIT"
 files="amb pac bwt.2bit.64 meth.amb meth.ann meth.pac meth.bwt.2bit.64 meth.fa"
 if [ -n "$mo" ]; then
-  case "${FAKE_VERSION:-0.17.0}" in 0.16.*|0.17.*) echo "unrecognized option '--meth-only'" >&2; exit 1;; esac
+  case "${FAKE_VERSION:-0.18.0}" in 0.16.*|0.17.*) echo "unrecognized option '--meth-only'" >&2; exit 1;; esac
   files="amb pac meth.amb meth.ann meth.pac meth.bwt.2bit.64"
 fi
 for s in $files; do
@@ -140,7 +140,7 @@ fn builds_the_pruned_index_and_nothing_else() {
 
     let argv = fs::read_to_string(&s.argv).unwrap();
     let prefix = format!(
-        "index --meth -t 4 --max-memory 8G --tmp-dir {}/Bwamem3_Index.partial.",
+        "index --meth --meth-only -t 4 --max-memory 8G --tmp-dir {}/Bwamem3_Index.partial.",
         s.genome.display()
     );
     assert!(
@@ -194,7 +194,7 @@ fn without_parallel_bwamem3_picks_its_threads() {
     prep(&s).arg(&s.genome).assert().success();
     let argv = fs::read_to_string(&s.argv).unwrap();
     assert!(
-        argv.starts_with("index --meth --tmp-dir ") && !argv.contains("-t "),
+        argv.starts_with("index --meth --meth-only --tmp-dir ") && !argv.contains("-t "),
         "{argv}"
     );
 }
@@ -289,11 +289,13 @@ fn old_version_fails_before_writing() {
 fn unvalidated_version_warns() {
     let s = setup();
     prep(&s)
-        .env("FAKE_VERSION", "0.18.0")
+        .env("FAKE_VERSION", "0.19.0")
         .arg(&s.genome)
         .assert()
         .success()
-        .stderr(predicate::str::contains("detected bwa-mem3 0.18.0"));
+        .stderr(predicate::str::contains(
+            "detected bwa-mem3 0.19.0; Bismark is validated against 0.16.0, 0.17.0 and 0.18.0.",
+        ));
 }
 
 #[test]
@@ -407,7 +409,7 @@ fn parallel_one_is_bwamem3s_thread_count() {
         .assert()
         .success();
     let argv = fs::read_to_string(&s.argv).unwrap();
-    assert!(argv.starts_with("index --meth -t 1 "), "{argv}");
+    assert!(argv.starts_with("index --meth --meth-only -t 1 "), "{argv}");
 }
 
 #[test]

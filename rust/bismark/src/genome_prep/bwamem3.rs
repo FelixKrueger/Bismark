@@ -13,6 +13,7 @@ use std::time::SystemTime;
 
 use crate::aligner::aligner::{
     MIN_BWAMEM3_VERSION, VALIDATED_BWAMEM3_VERSIONS, bwamem3_version_ok, parse_bwamem3_version,
+    validated_bwamem3_versions,
 };
 use crate::aligner::config::BWAMEM3_INDEX_SUFFIXES;
 use crate::genome_prep::convert::open_fasta;
@@ -94,7 +95,7 @@ pub(crate) fn check_version(bin: &Path, logger: &Logger) -> Result<String, Genom
     if !VALIDATED_BWAMEM3_VERSIONS.contains(&version.as_str()) {
         logger.note(&format!(
             "Warning: detected bwa-mem3 {version}; Bismark is validated against {}.",
-            VALIDATED_BWAMEM3_VERSIONS.join(" and ")
+            validated_bwamem3_versions()
         ));
     }
     Ok(version)

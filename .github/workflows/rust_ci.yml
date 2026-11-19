@@ -157,13 +157,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Install bwa-mem3 0.17.0 (bioconda)
+      - name: Install bwa-mem3 0.18.0 (bioconda)
         uses: mamba-org/setup-micromamba@f457c30a868e4760d3a6fcea5f25dc655b8edf39 # v3.2.1
         with:
           environment-name: bwm3
-          create-args: -c conda-forge -c bioconda bwa-mem3=0.17.0
+          create-args: -c conda-forge -c bioconda bwa-mem3=0.18.0
           cache-environment: true
-          cache-environment-key: bwm3-0.17.0-${{ runner.arch }}
+          cache-environment-key: bwm3-0.18.0-${{ runner.arch }}
           init-shell: none
       - name: Put only bwa-mem3 on PATH
         run: |

@@ -196,7 +196,7 @@ Bismark fixes every bwa-mem3 option that affects placement (`--meth-scoring neut
 --meth-context all --meth-seed-prune=spec30`), because bwa-mem3's defaults have changed
 between releases, and it ignores `$BWAMEM3_METH_SEED_PRUNE`. The Bowtie 2 and minimap2
 tuning options and `--local` are rejected with `--bwamem3`; `-p`/`--multicore` set its
-threads. Versions before 0.16.0 are rejected; 0.16.0 and 0.17.0 are validated, and other
+threads. Versions before 0.16.0 are rejected; 0.16.0, 0.17.0 and 0.18.0 are validated, and other
 versions run with a warning. The BAM records the bwa-mem3 version and command line in a
 `@PG ID:bwa-mem3` line, and the report states the version.
 

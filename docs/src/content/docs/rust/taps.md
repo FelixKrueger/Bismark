@@ -36,8 +36,8 @@ of the top level of the `--genome` folder. `--five_base_index` also takes a `Bwa
 from another genome folder built from the same FASTA. Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine.
 The index requirements, memory, runtime and the bwa-mem3 options Bismark fixes
 are the same as for `--illumina_5base --bwamem3`; see
-[bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0 and
-0.17.0 are validated; older versions are rejected and other versions run with a warning.
+[bwa-mem3 (`--bwamem3`)](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3). bwa-mem3 0.16.0,
+0.17.0 and 0.18.0 are validated; older versions are rejected and other versions run with a warning.
 
 Output names are those of a bwa-mem3 5-Base run (`*_bismark_bwamem3_pe.bam`,
 `*_bismark_bwamem3_PE_report.txt`). The run identifies itself as TAPS: the start-up notice, the
@@ -89,8 +89,8 @@ from data that is not public.
 
 ### What CI checks on every change
 
-- **bwa-mem3 mode.** bwa-mem3 0.16.0 and 0.17.0 map `--meth=taps` and `--meth=5base` to the same
-  chemistry ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.17.0/src/meth_opts.cpp#L18-L21)),
+- **bwa-mem3 mode.** bwa-mem3 0.16.0, 0.17.0 and 0.18.0 map `--meth=taps` and `--meth=5base` to the same
+  chemistry ([`src/meth_opts.cpp`](https://github.com/fg-labs/bwa-mem3/blob/v0.18.0/src/meth_opts.cpp#L18-L21)),
   and a `--taps` run produces the same BAM records as `--illumina_5base --bwamem3`.
 - **Spike-in controls.** 6,316 public TAPS read pairs on the CpG-methylated lambda and the
   unmodified 2 kb controls, from the mouse ES cell TAPS library of Liu et al. (2019), GEO

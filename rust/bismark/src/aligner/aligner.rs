@@ -28,10 +28,19 @@ pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
 
 /// The bwa-mem3 version CI and the container install for the 5-Base `--bwamem3` engine.
-pub const PINNED_BWAMEM3_VERSION: &str = "0.17.0";
+pub const PINNED_BWAMEM3_VERSION: &str = "0.18.0";
 
 /// The bwa-mem3 versions the 5-Base engine is validated against; others warn.
-pub const VALIDATED_BWAMEM3_VERSIONS: &[&str] = &["0.16.0", "0.17.0"];
+pub const VALIDATED_BWAMEM3_VERSIONS: &[&str] = &["0.16.0", "0.17.0", "0.18.0"];
+
+/// [`VALIDATED_BWAMEM3_VERSIONS`] as a list for messages: `0.16.0, 0.17.0 and 0.18.0`.
+pub(crate) fn validated_bwamem3_versions() -> String {
+    match VALIDATED_BWAMEM3_VERSIONS.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
 
 /// The first bwa-mem3 release with `--meth=5base`.
 pub const MIN_BWAMEM3_VERSION: (u32, u32, u32) = (0, 16, 0);
@@ -193,7 +202,7 @@ pub fn detect_aligner(
         eprintln!(
             "Warning: detected bwa-mem3 {version}; Bismark's {} engine is validated against {}.",
             chem.label(),
-            VALIDATED_BWAMEM3_VERSIONS.join(" and ")
+            validated_bwamem3_versions()
         );
     } else if !validated {
         eprintln!(
@@ -343,8 +352,9 @@ mod tests {
     #[test]
     fn bwamem3_detection_metadata() {
         assert_eq!(binary_name(Aligner::BwaMem3), "bwa-mem3");
-        assert_eq!(pinned_version(Aligner::BwaMem3), "0.17.0");
-        assert_eq!(VALIDATED_BWAMEM3_VERSIONS, ["0.16.0", "0.17.0"]);
+        assert_eq!(pinned_version(Aligner::BwaMem3), "0.18.0");
+        assert_eq!(VALIDATED_BWAMEM3_VERSIONS, ["0.16.0", "0.17.0", "0.18.0"]);
+        assert_eq!(validated_bwamem3_versions(), "0.16.0, 0.17.0 and 0.18.0");
         assert!(VALIDATED_BWAMEM3_VERSIONS.contains(&PINNED_BWAMEM3_VERSION));
         assert_eq!(path_flag(Aligner::BwaMem3), "--path_to_bwamem3");
         assert_eq!(Aligner::BwaMem3.token(), "bwamem3");
