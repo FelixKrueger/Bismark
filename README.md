@@ -42,7 +42,7 @@ mamba install -c bioconda -c conda-forge bismark
 cargo install bismark
 
 # 3. Container image (nothing to install; drop-in for nf-core/methylseq)
-docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.0.0
+docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.3.0
 
 # 4. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases
@@ -51,7 +51,7 @@ docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, 
 brew install bismark
 ```
 
-**External tools on your `PATH`:** an aligner — [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) (default), or optionally [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) or [minimap2](https://lh3.github.io/minimap2/minimap2.html). **No Samtools needed** — all BAM/SAM/CRAM I/O is pure-Rust. The container bundles the aligners for you. See [`rust/README.md`](rust/README.md#installing) for details and per-tool installs.
+**External tools on your `PATH`:** an aligner — [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/) (default), or optionally [HISAT2](https://ccb.jhu.edu/software/hisat2/index.shtml) or [minimap2](https://lh3.github.io/minimap2/minimap2.html). `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (0.18.0 is the pinned version): `mamba install -c bioconda bwa-mem3`. **No Samtools needed** — all BAM/SAM/CRAM I/O is pure-Rust. The container bundles all four aligners for you. See [`rust/README.md`](rust/README.md#installing) for details and per-tool installs.
 
 > The default bioconda `bismark` package is now the Rust suite (v3.0.0+); `mamba install bismark=0.25.1` still gets the legacy Perl.
 

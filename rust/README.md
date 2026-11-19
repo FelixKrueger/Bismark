@@ -88,7 +88,7 @@ Compiling the suite from source is a non-trivial one-time build.
 
 - **Rust** — latest stable recommended (`rustup update`). The workspace MSRV is **1.89**; the one-command install above was verified on **cargo 1.95** (older cargo may not resolve packages inside the `rust/` subdirectory).
 - A working **C linker** (`cc`) for a few transitive build dependencies.
-- **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**. `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
+- **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**; `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need **bwa-mem3** 0.16.0 or later (`mamba install -c bioconda bwa-mem3`). `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
 - Ensure **`~/.cargo/bin` is on your `PATH`** to run the installed binaries.
 
 ### Legacy: the Perl Bismark (v0.25.1)

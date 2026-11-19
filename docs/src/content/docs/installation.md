@@ -11,7 +11,7 @@ There are five ways to install the Rust suite.
 
 ### Install with `conda` / `mamba` (bioconda)
 
-The simplest option — one command installs the `bismark` suite **and** its alignment backends (Bowtie 2, HISAT2, minimap2), so nothing else needs to be on your `PATH`:
+The simplest option — one command installs the `bismark` suite **and** its alignment backends Bowtie 2, HISAT2 and minimap2:
 
 ```bash
 conda install -c bioconda -c conda-forge bismark
@@ -20,6 +20,12 @@ mamba install -c bioconda -c conda-forge bismark
 ```
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
+
+`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (0.18.0 is the pinned version). Install it from bioconda for any of the install routes below; the container image already includes it:
+
+```bash
+mamba install -c bioconda -c conda-forge bwa-mem3
+```
 
 ### Install with Homebrew (macOS / Linux)
 
@@ -47,7 +53,7 @@ cargo install --git https://github.com/FelixKrueger/Bismark --branch master --lo
 
 **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; re-running `cargo install bismark` is a no-op unless a newer version is published — add `--force` to reinstall in place.
 
-**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3`. No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Prebuilt binaries (no toolchain)
 
