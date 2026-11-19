@@ -7,7 +7,7 @@
 ## Usage
 
 - `usage/install.md`: The four ways to get the bismark binary, and the external aligners each one needs.
-- `usage/prepare-a-genome.md`: Build the C-to-T and G-to-A converted genome and its indexes once, before the first alignment.
+- `usage/prepare-a-genome.md`: Build the C-to-T and G-to-A converted genome and its indexes, or a bwa-mem3 methylation index, once before the first alignment.
 - `usage/align-reads.md`: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, and see how the converted reads reach the aligner.
 - `usage/align-5-base-reads.md`: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem3, which pairs Bismark keeps, which bases it does not call, and the optional 5-Base outputs.
 - `usage/align-taps-reads.md`: Run TAPS data with --taps, what it turns on, the options it accepts and rejects, and how the run names itself.

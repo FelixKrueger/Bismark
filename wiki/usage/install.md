@@ -5,23 +5,23 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-17
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: 3fcbe21
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
-    commit: d1dd2e8
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: 3fcbe21
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 3fcbe21
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
-    commit: d1dd2e8
+    commit: dbd7c27
 ---
 
 # Install Bismark
@@ -35,8 +35,8 @@ Bismark is one binary, `bismark`, that holds all 12 tools. The developer says pe
 | Channel | Command | Notes |
 |---|---|---|
 | Bioconda | `mamba install -c bioconda -c conda-forge bismark` | The developer gave this channel. The recipe is not in this repo. |
-| crates.io | `cargo install bismark` | One crate, `bismark` (`rust/bismark/Cargo.toml`). The `rammap-inprocess` and `binseq-input` features are off by default; add `--features rammap-inprocess,binseq-input` to get them. |
-| Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2, minimap2 2.31 and bwa-mem3 0.17.0, and builds with both optional features (`Dockerfile`). |
+| crates.io | `cargo install bismark` | One crate, `bismark` (`rust/bismark/Cargo.toml`). It installs `bismark` and the 11 classic names as 12 executables, each the same program (one file per name in `rust/bismark/src/bin/`). The `rammap-inprocess` and `binseq-input` features are off by default; add `--features rammap-inprocess,binseq-input` to get them. |
+| Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2, minimap2 2.31 and bwa-mem3 0.18.0, and builds with both optional features (`Dockerfile`). |
 | Prebuilt binaries | GitHub release assets | Built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin` (`release.yml`). |
 | nf-core/methylseq | Pipeline modules | The developer gave this channel. The container's `bismark --version` prints the `Bismark Version: v<version>` line that methylseq parses (`docker/bismark-canonical-wrapper.sh`). The image build reads that version from the binary's own `--version`, and fails if it cannot (`Dockerfile`). |
 
@@ -61,3 +61,4 @@ BAM, SAM and CRAM reading and writing is built into the binary. `bismark dedup` 
 ## Open questions
 
 - Whether a `cargo install` without the optional features should be the documented default is not in the code.
+- Which aligners the Bioconda package installs is set by the recipe, which is not in this repo. The developer says it does not include bwa-mem3 yet, and plans to add it after the 3.3.0 release; until then `--bwamem3` and `--taps` users install it with `mamba install -c bioconda -c conda-forge bwa-mem3`.
