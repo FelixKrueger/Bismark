@@ -439,7 +439,10 @@ fn run_index(run: &IndexRun, dir: &Path, genome_folder: &Path) -> Result<(), Gen
         }),
         _ => Err(GenomePrepError::Bwamem3Failed {
             genome: genome_folder.to_path_buf(),
-            detail: format!("`bwa-mem3 index --meth` {status}"),
+            detail: format!(
+                "`bwa-mem3 index --meth{}` {status}",
+                if run.meth_only { " --meth-only" } else { "" }
+            ),
         }),
     }
 }
@@ -496,7 +499,7 @@ fn prune_and_check(
     if !unexpected.is_empty() {
         unexpected.sort();
         return Err(failed(format!(
-            "bwa-mem3 wrote files Bismark does not expect in the index: {}",
+            "the new index folder holds files Bismark does not expect: {}",
             unexpected.join(", ")
         )));
     }
@@ -703,7 +706,7 @@ mod tests {
         for v in ["0.18.0", "0.18.1", "0.19.0", "1.0.0"] {
             assert!(bwamem3_has_meth_only(v), "{v}");
         }
-        for v in ["0.16.0", "0.17.0", "0.17.0-abc", "0.18", "unknown", ""] {
+        for v in ["0.16.0", "0.17.0", "0.18", "0.18.x", "unknown", ""] {
             assert!(!bwamem3_has_meth_only(v), "{v}");
         }
     }

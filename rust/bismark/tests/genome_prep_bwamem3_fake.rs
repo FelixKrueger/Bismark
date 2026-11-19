@@ -4,8 +4,9 @@
 //! nine files `bwa-mem3 index --meth` writes, or with `--meth-only` the seven (rejected below
 //! 0.18.0, as the real binary does), with an `.ann` listing the input's contigs.
 //! `$FAKE_EXIT` (a code, or `kill`), `$FAKE_OMIT` (a suffix not to write), `$FAKE_EXTRA` (a suffix
-//! to write as well) and `$FAKE_ANN_NAME` (rename the first contig) inject failures; `$FAKE_LOCK_GENOME` makes the genome folder read-only
-//! after a successful build; `$FAKE_ARGV_DUMP` receives its argv. Every `.ann` contig is
+//! to write as well) and `$FAKE_ANN_NAME` (rename the first contig) inject failures;
+//! `$FAKE_LOCK_GENOME` makes the genome folder read-only after a successful build;
+//! `$FAKE_ARGV_DUMP` receives its argv. Every `.ann` contig is
 //! 4 bp long, as in [`setup`]'s genome.
 #![cfg(unix)]
 
@@ -172,6 +173,22 @@ fn bwamem3_0_18_0_builds_with_meth_only() {
     );
 }
 
+/// Dev builds report `<x.y.z>-<sha>`; the triple decides `--meth-only`.
+#[test]
+fn dev_build_versions_follow_their_release() {
+    for (version, meth_only) in [("0.17.0-abc1234", false), ("0.18.0-abc1234", true)] {
+        let s = setup();
+        prep(&s)
+            .env("FAKE_VERSION", version)
+            .arg(&s.genome)
+            .assert()
+            .success();
+        assert_eq!(sorted_names(&s.genome.join("Bwamem3_Index")), seven_files());
+        let argv = fs::read_to_string(&s.argv).unwrap();
+        assert_eq!(argv.contains("--meth-only"), meth_only, "{version}: {argv}");
+    }
+}
+
 /// Before 0.18.0, the full build runs and is pruned to the seven files.
 #[test]
 fn bwamem3_0_17_0_builds_then_prunes() {
@@ -237,7 +254,7 @@ fn failures_keep_the_existing_index() {
         (
             "FAKE_EXTRA",
             "alt",
-            "does not expect in the index: genome.fa.alt",
+            "files Bismark does not expect: genome.fa.alt",
         ),
     ];
     for (var, value, want) in cases {
