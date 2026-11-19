@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage = "https://felixkrueger.github.io/Bismark/"
 authors.workspace = true
 readme = "README.md"
 keywords = ["bisulfite", "methylation", "bismark", "sequencing", "bioinformatics"]

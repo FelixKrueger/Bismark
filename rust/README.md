@@ -20,7 +20,7 @@ During the beta the host binaries carried an `_rs` suffix (`deduplicate_bismark_
 ## Architecture decisions
 
 - **BAM/SAM/CRAM I/O via pure-Rust `noodles`** — no `rust-htslib` (no htslib C build-time dep), no `samtools` subprocess (no external runtime dep).
-- **One cargo workspace** with a binary crate per Bismark tool plus the shared `bismark-io` library. Library+binary split per crate so pure logic is unit-testable.
+- **One crate, `bismark`:** a library that holds every tool, plus one thin binary per tool name, so pure logic is unit-testable.
 - **Byte-equal output to Perl Bismark v0.25.1**, apart from the version string, is a CI gate for the tools we have validated.
 - Edition 2024; MSRV pinned in the workspace manifest.
 
@@ -50,7 +50,7 @@ docker pull ghcr.io/felixkrueger/bismark:3.3.0       # pinned
 The tools use their **canonical** names (`bismark`, `deduplicate_bismark`, …), so the image is a drop-in for pipelines such as nf-core/methylseq. (The `bismark` command in the container is a thin version-probe wrapper that reports the suite version in methylseq's expected format, then execs the real aligner; every other tool is the real binary.)
 
 > **nf-core/methylseq drop-in — one known limitation + one behavior note** (the CLI surface is
-> otherwise conformance-tested against methylseq 4.2.0; see each crate's `tests/methylseq_conformance.rs`):
+> otherwise conformance-tested against methylseq 4.2.0; see the `rust/bismark/tests/*_methylseq_conformance.rs` tests):
 > - **`--local` alignment** (`params.local_alignment` / `--local`) is supported for **Bowtie 2 and
 >   HISAT2** (byte-identical to Perl `--local`; HISAT2-local drops `--no-softclip` + uses the L-form
 >   `--score-min L,0,-0.2` + the local `ln()` MAPQ, faithful to Perl). **minimap2-`--local` is rejected
@@ -88,7 +88,7 @@ Compiling the suite from source is a non-trivial one-time build.
 
 - **Rust** — latest stable recommended (`rustup update`). The workspace MSRV is **1.89**; the one-command install above was verified on **cargo 1.95** (older cargo may not resolve packages inside the `rust/` subdirectory).
 - A working **C linker** (`cc`) for a few transitive build dependencies.
-- **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**. `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
+- **Alignment backends on `PATH`** — only the aligner and genome-preparation tools shell out to an external program: **Bowtie 2** + `bowtie2-build` (default), or optionally **HISAT2** + `hisat2-build`, or **minimap2**; `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need **bwa-mem3** 0.16.0 or later (`mamba install -c bioconda -c conda-forge bwa-mem3`). `cargo install` builds the Rust tools, not these backends. *(No `samtools` is required — BAM/SAM I/O is pure-Rust `noodles`.)*
 - Ensure **`~/.cargo/bin` is on your `PATH`** to run the installed binaries.
 
 ### Legacy: the Perl Bismark (v0.25.1)

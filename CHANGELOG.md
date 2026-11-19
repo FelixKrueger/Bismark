@@ -75,6 +75,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 
 ### Documentation
 
+- **The TAPS guide adds the Watchmaker Genomics results and explains the extra false-positive calls in short fragments, with what MAPQ and `filter_non_conversion` filtering costs ([#1248](https://github.com/FelixKrueger/Bismark/pull/1248), [#1254](https://github.com/FelixKrueger/Bismark/pull/1254)).**
 - **The docs drop or correct flags the binary rejects, mark `--buffer_size`, `--scaffolds` and `--ample_memory` as ignored, give the real `--ambig_bam` file name and say aligner output goes to the current directory by default ([#1189](https://github.com/FelixKrueger/Bismark/pull/1189)–[#1192](https://github.com/FelixKrueger/Bismark/pull/1192)).**
 
 
