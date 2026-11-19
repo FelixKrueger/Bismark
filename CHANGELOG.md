@@ -30,6 +30,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 - **`--nucleotide_coverage` now runs bam2nuc on each final BAM, as Perl did, instead of being accepted and ignored ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1213](https://github.com/FelixKrueger/Bismark/pull/1213), [#1215](https://github.com/FelixKrueger/Bismark/pull/1215)).**
 - **`--old_flag`, `--rg_id` and `--rg_sample` are rejected instead of ignored, and minimap2 and rammap runs reject `-D`/`-R` ([#1200](https://github.com/FelixKrueger/Bismark/pull/1200), [#1186](https://github.com/FelixKrueger/Bismark/pull/1186), [#1201](https://github.com/FelixKrueger/Bismark/pull/1201)).**
 - **Two inputs that would write the same output name, such as `--basename` with several files, now stop the run before anything is written ([#1199](https://github.com/FelixKrueger/Bismark/pull/1199)).**
+- **The output-name check covers uBAM, CRAM and BINSEQ inputs, so `s.bam` with `s.cram` or `s.fq.gz` stops the run before anything is written ([#1261](https://github.com/FelixKrueger/Bismark/pull/1261)).**
 - **`--multicore` fails on paired-end mate files of different lengths, and its subset files and uBAM/BINSEQ transcode directories carry the run's process id so runs sharing a temp dir no longer overwrite each other ([#1183](https://github.com/FelixKrueger/Bismark/pull/1183), [#1185](https://github.com/FelixKrueger/Bismark/pull/1185)).**
 - **`--combined_index` runs fail when the read names of the two streams go out of step, instead of reporting every later read as unaligned and exiting 0 ([#1184](https://github.com/FelixKrueger/Bismark/pull/1184)).**
 - **An alignment that runs past the chromosome end is counted as a read whose genomic sequence could not be extracted, as in Perl, instead of crashing the run ([#1187](https://github.com/FelixKrueger/Bismark/pull/1187)).**
@@ -43,6 +44,7 @@ Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAIL
 ### bismark extract (methylation extractor)
 
 - **`--include_overlap` now works on a paired-end BAM detected without `-p`, the parallel pipeline stops at the first error, and `--cytosine_report` reads the coverage from memory instead of re-reading the `.cov.gz` ([#1195](https://github.com/FelixKrueger/Bismark/pull/1195), [#1169](https://github.com/FelixKrueger/Bismark/pull/1169), [#1194](https://github.com/FelixKrueger/Bismark/pull/1194)).**
+- **CRAM input gets the same bedGraph, coverage and cytosine-report names as BAM input (`sample.bedGraph.gz`, not `sample.crambedGraph.gz`) ([#1261](https://github.com/FelixKrueger/Bismark/pull/1261)).**
 
 ### bismark2bedGraph
 

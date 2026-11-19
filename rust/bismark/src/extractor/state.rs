@@ -227,11 +227,11 @@ impl ExtractState {
         // **Phase G rev 2 (code-review A L1 fix), preserved**: pass the RAW
         // input filename (un-stripped), NOT `self.input_basename` (which
         // `pipeline::derive_basename` already stripped of `.bam`/`.sam`/
-        // `.cram`). `downstream_filenames::derive_bedgraph_filename` mirrors
-        // Perl `:325-330` which only path-splits + strips literal `gz`/`sam`/
-        // `bam`/`txt` — feeding it the already-stripped basename would produce
-        // `…deduplicatedbedGraph` instead of `…deduplicated.bedGraph`, breaking
-        // byte-identity on every real `.bam` input.
+        // `.cram`). `downstream_filenames::derive_bedgraph_filename` strips the
+        // literal `gz`/`sam`/`bam`/`cram`/`txt` itself — feeding it the already-
+        // stripped basename would produce `…deduplicatedbedGraph` instead of
+        // `…deduplicated.bedGraph`, breaking byte-identity on every real `.bam`
+        // input.
         if config.bedgraph {
             let raw_filename = derive_raw_filename_for_downstream(&self.input_path);
             // Phase 3a (F2): take the in-memory aggregator and materialize its
@@ -270,8 +270,8 @@ impl ExtractState {
 /// Extract the RAW input filename (un-stripped) for the downstream chain's
 /// filename derivation. Mirrors Perl `bismark_methylation_extractor:325` which
 /// does `my $out = (split (/\//, $filename))[-1];` — i.e. path-split only, no
-/// extension stripping. The subsequent `s/gz$//`, `s/sam$//`, `s/bam$//`,
-/// `s/txt$//` pipeline lives in
+/// extension stripping. The subsequent `gz`/`sam`/`bam`/`cram`/`txt` strip
+/// pipeline lives in
 /// [`crate::extractor::downstream_filenames::derive_bedgraph_filename`].
 ///
 /// **Phase G rev 2 (code-review A L1 fix), preserved**: separated from

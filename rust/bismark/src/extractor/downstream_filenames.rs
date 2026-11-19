@@ -13,8 +13,8 @@
 //! 1. **Filename derivation** (`derive_bedgraph_filename` /
 //!    `derive_coverage_filename` / `derive_cytosine_filename`) — mirrors Perl
 //!    `bismark_methylation_extractor:325-330, :392-399, :419-420` to compute
-//!    the output basenames the downstream tools should use. These are
-//!    byte-identity-load-bearing (see the trailing-dot quirk below).
+//!    the output basenames the downstream tools should use. BAM/SAM names
+//!    must stay byte-identical to Perl (see the trailing-dot quirk below).
 //! 2. **Argv construction** (`build_bismark2bedgraph_argv` /
 //!    `build_coverage2cytosine_argv`) — emits the flags + positionals that the
 //!    **Rust** `crate::bedgraph::Cli` / `crate::coverage2cytosine::Cli`
@@ -23,11 +23,11 @@
 //!
 //! ## Byte-identity invariant (filenames)
 //!
-//! Perl `:325-330` strips the **literal** trailing letters `gz`, `sam`, `bam`,
-//! `txt` (no leading dot). Chained extensions therefore preserve a trailing
-//! dot: `foo.bam.gz` → `foo.bam.bedGraph`. No-extension inputs produce no
-//! leading dot: `foo` → `foobedGraph`. The `derive_*` functions below mirror
-//! Perl's regex pipeline step-by-step.
+//! The **literal** trailing letters `gz`, `sam`, `bam`, `cram`, `txt` are
+//! stripped (no leading dot), as in Perl's M-bias chain (`:633-637`); Perl's
+//! bedGraph chain (`:325-330`) lacks `cram`. Chained extensions therefore
+//! preserve a trailing dot: `foo.bam.gz` → `foo.bam.bedGraph`. No-extension
+//! inputs produce no leading dot: `foo` → `foobedGraph`.
 //!
 //! ## c2c cov-path gotcha (Phase 2 NEW-1)
 //!
@@ -50,28 +50,32 @@ use crate::extractor::error::BismarkExtractorError;
 
 /// Derive the bedGraph output filename from the input basename.
 ///
-/// Mirrors Perl `bismark_methylation_extractor:325-330` step-by-step:
+/// Mirrors Perl `bismark_methylation_extractor:325-330` step-by-step, plus a
+/// `cram` strip that Perl's bedGraph chain lacks:
 ///
 /// ```text
 /// $out = basename($input);
 /// $out =~ s/gz$//;   # strip literal "gz"  (no leading dot)
 /// $out =~ s/sam$//;  # strip literal "sam"
 /// $out =~ s/bam$//;  # strip literal "bam"
+/// $out =~ s/cram$//; # strip literal "cram" (not in Perl's bedGraph chain)
 /// $out =~ s/txt$//;  # strip literal "txt"
 /// $out =~ s/$/bedGraph/;  # append "bedGraph"
 /// ```
 ///
-/// Trailing-dot preservation is load-bearing for chained-extension inputs:
+/// Chained-extension inputs keep their trailing dot:
 ///
 /// | Input | Output |
 /// |-------|--------|
 /// | `foo.bam` | `foo.bedGraph` |
 /// | `foo.bam.gz` | **`foo.bam.bedGraph`** (trailing dot preserved) |
+/// | `foo.cram` | `foo.bedGraph` |
+/// | `foo.cram.gz` | **`foo.cram.bedGraph`** (trailing dot preserved) |
 /// | `foo` (no ext) | **`foobedGraph`** (no leading dot) |
 /// | `sample.fastq_bismark_bt2_pe.deduplicated.bam` | `sample.fastq_bismark_bt2_pe.deduplicated.bedGraph` |
 pub fn derive_bedgraph_filename(input_basename: &str) -> String {
     let mut s = input_basename.to_string();
-    for ext in &["gz", "sam", "bam", "txt"] {
+    for ext in &["gz", "sam", "bam", "cram", "txt"] {
         if let Some(stripped) = s.strip_suffix(ext) {
             s = stripped.to_string();
         }
@@ -444,6 +448,32 @@ mod tests {
     #[test]
     fn derive_bedgraph_filename_foo_sam() {
         assert_eq!(derive_bedgraph_filename("foo.sam"), "foo.bedGraph");
+    }
+
+    #[test]
+    fn derive_bedgraph_filename_foo_cram() {
+        let bg = derive_bedgraph_filename("foo.cram");
+        assert_eq!(bg, "foo.bedGraph");
+        assert_eq!(derive_coverage_filename(&bg), "foo.bismark.cov.gz");
+        assert_eq!(derive_cytosine_filename(&bg, false), "foo.CpG_report.txt");
+    }
+
+    #[test]
+    fn derive_bedgraph_filename_strips_cram_letters_without_a_dot() {
+        assert_eq!(derive_bedgraph_filename("foocram"), "foobedGraph");
+    }
+
+    #[test]
+    fn derive_bedgraph_filename_foo_cram_gz_preserves_trailing_dot() {
+        assert_eq!(derive_bedgraph_filename("foo.cram.gz"), "foo.cram.bedGraph");
+    }
+
+    #[test]
+    fn derive_bedgraph_filename_real_bismark_pe_cram_naming() {
+        assert_eq!(
+            derive_bedgraph_filename("sample.fastq_bismark_bt2_pe.deduplicated.cram"),
+            "sample.fastq_bismark_bt2_pe.deduplicated.bedGraph"
+        );
     }
 
     #[test]

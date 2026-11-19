@@ -15,6 +15,7 @@
 //! dependency.
 
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
@@ -280,8 +281,9 @@ fn smoke_pe_explicit_paired_end_flag_works() {
 
 /// #1167 finding 33: CRAM input must extract via `--cram_ref`, with output
 /// byte-identical to the same records as BAM. Covers mode auto-detection
-/// (which peeks the header), the `.cram` basename strip, and CRAM 3.1
-/// decoding on the producer thread's stack.
+/// (which peeks the header), the `.cram` basename strip (split, M-bias,
+/// bedGraph, coverage and cytosine-report names), and CRAM 3.1 decoding on
+/// the producer thread's stack.
 #[test]
 fn smoke_pe_cram_input_matches_bam() {
     let workdir = tempfile::tempdir().unwrap();
@@ -305,6 +307,10 @@ fn smoke_pe_cram_input_matches_bam() {
             .arg(&fasta)
             .arg("--output_dir")
             .arg(out)
+            .arg("--bedGraph")
+            .arg("--cytosine_report")
+            .arg("--genome_folder")
+            .arg(workdir.path())
             // CRAM decode needs a fixed ~1 MiB (debug) / ~2.5 MiB (release) of
             // stack, independent of input size. A debug build fits the 2 MiB
             // default, so shrink the default to catch a producer thread that
@@ -316,7 +322,15 @@ fn smoke_pe_cram_input_matches_bam() {
         for entry in fs::read_dir(out).unwrap() {
             let path = entry.unwrap().path();
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            let mut text = fs::read_to_string(&path).unwrap();
+            let mut text = if name.ends_with(".gz") {
+                let mut t = String::new();
+                flate2::read::MultiGzDecoder::new(fs::File::open(&path).unwrap())
+                    .read_to_string(&mut t)
+                    .unwrap();
+                t
+            } else {
+                fs::read_to_string(&path).unwrap()
+            };
             // The splitting report's first line echoes the input file name.
             if name.ends_with("_splitting_report.txt") {
                 text = text.split_once('\n').unwrap().1.to_string();
@@ -338,11 +352,18 @@ fn smoke_pe_cram_input_matches_bam() {
 
     let from_bam = snapshot(&bam, &bam_dir.join("out"));
     let from_cram = snapshot(&cram, &cram_dir.join("out"));
-    assert!(
-        from_bam.contains_key("CpG_OT_pe.txt"),
-        "expected CpG_OT_pe.txt; got {:?}",
-        from_bam.keys().collect::<Vec<_>>()
-    );
+    for name in [
+        "CpG_OT_pe.txt",
+        "pe.bedGraph.gz",
+        "pe.bismark.cov.gz",
+        "pe.CpG_report.txt",
+    ] {
+        assert!(
+            from_cram.contains_key(name),
+            "expected {name}; got {:?}",
+            from_cram.keys().collect::<Vec<_>>()
+        );
+    }
     assert_eq!(from_bam, from_cram, "CRAM output must match BAM output");
 }
 
