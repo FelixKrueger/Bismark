@@ -9,7 +9,9 @@
 //! `--maxins`/`--maxins 500` → `--quiet`.
 
 use crate::aligner::cli::Cli;
-use crate::aligner::config::{Aligner, GapPenalties, Mm2Preset, ReadFormat, ScoreMinForm};
+use crate::aligner::config::{
+    Aligner, FiveBaseChemistry, GapPenalties, Mm2Preset, ReadFormat, ScoreMinForm,
+};
 use crate::aligner::error::{AlignerError, Result};
 
 /// Build the `aligner_options` string + the (read,ref) gap penalties used later
@@ -107,6 +109,19 @@ pub fn build_aligner_options(
     // rammap is minimap-like: it reuses the identical clean-slate `map-ont`
     // option assembly + `--mm2_*` knobs (design#2/#3), so the same branch fires.
     if matches!(aligner, Aligner::Minimap2 | Aligner::Rammap) {
+        // The clean slate drops the Bowtie 2 effort options; Perl dies on them (7881/7887).
+        for (set, flag) in [
+            (cli.seed_extension_fails.is_some(), "-D"),
+            (cli.reseed_repetitive_seeds.is_some(), "-R"),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "The option '{flag} <int>' is not available with --{}: it is a Bowtie 2 \
+                     seed-effort option.",
+                    aligner.name()
+                )));
+            }
+        }
         return Ok((minimap2_options(cli)?, gp));
     }
     Ok((options, gp))
@@ -257,12 +272,69 @@ fn common_aligner_options(
     Ok((opts, gp))
 }
 
+/// The bwa-mem3 option string for a 5-Base-path chemistry. Every default that has changed between
+/// releases is pinned; `-t` is appended at spawn time.
+pub(crate) fn bwamem3_options(chem: FiveBaseChemistry) -> String {
+    format!(
+        "mem --meth={} --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
+         --meth-tags none -K 100000000",
+        chem.bwamem3_meth()
+    )
+}
+
+/// Bowtie 2 / minimap2 tuning that has no bwa-mem3 equivalent.
+fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
+    let set: [(bool, &str); 15] = [
+        (cli.local, "--local"),
+        (cli.score_min.is_some(), "--score_min"),
+        (cli.seedmms.is_some(), "-N"),
+        (cli.seedlen.is_some(), "-L"),
+        (cli.seed_extension_fails.is_some(), "-D"),
+        (cli.reseed_repetitive_seeds.is_some(), "-R"),
+        (cli.rdg.is_some(), "--rdg"),
+        (cli.rfg.is_some(), "--rfg"),
+        (cli.minins.is_some(), "--minins"),
+        (cli.maxins.is_some(), "--maxins"),
+        (cli.dovetail, "--dovetail"),
+        (cli.no_dovetail, "--no_dovetail"),
+        (cli.nosplice, "--no-spliced-alignment"),
+        (cli.known_splices.is_some(), "--known-splicesite-infile"),
+        (
+            cli.most_valid_alignments.is_some(),
+            "--most_valid_alignments",
+        ),
+    ];
+    let mode = if cli.taps { "--taps" } else { "--bwamem3" };
+    match set.iter().find(|(on, _)| *on) {
+        Some((_, flag)) => Err(AlignerError::Validation(format!(
+            "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
+             insert sizes itself."
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// Resolve tuning options for paired-end alignment to the unconverted genome.
 pub(crate) fn build_five_base_aligner_options(
     cli: &Cli,
     aligner: Aligner,
     format: ReadFormat,
 ) -> Result<(String, GapPenalties)> {
+    if aligner == Aligner::BwaMem3 {
+        reject_bwamem3_tuning(cli)?;
+        if cli.bowtie_threads.is_some_and(|p| p < 2) {
+            return Err(AlignerError::Validation(
+                "Please select a value for -p of 2 or more!".into(),
+            ));
+        }
+        let gp = GapPenalties {
+            deletion_open: 5,
+            deletion_extend: 3,
+            insertion_open: 5,
+            insertion_extend: 3,
+        };
+        return Ok((bwamem3_options(FiveBaseChemistry::of(cli)), gp));
+    }
     let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
     if cli.bowtie_threads.is_some_and(|p| p < 2) {
         return Err(AlignerError::Validation(
@@ -762,6 +834,98 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(err.contains("-p of 2 or more"), "{err}");
+        }
+    }
+
+    fn bwm3(args: &[&str]) -> Result<String> {
+        let mut v = vec![
+            "--illumina_5base",
+            "--bwamem3",
+            "--five_base_index",
+            "/x/g.fa",
+        ];
+        v.extend_from_slice(args);
+        build_five_base_aligner_options(&cli_from(&v), Aligner::BwaMem3, ReadFormat::FastQ)
+            .map(|r| r.0)
+    }
+
+    #[test]
+    fn bwamem3_option_string_is_fixed_and_explicit() {
+        assert_eq!(
+            bwm3(&[]).unwrap(),
+            "mem --meth=5base --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
+             --meth-tags none -K 100000000"
+        );
+        assert_eq!(bwm3(&["--phred64-quals"]).unwrap(), bwm3(&[]).unwrap());
+        assert_eq!(bwm3(&["-p", "8"]).unwrap(), bwm3(&[]).unwrap());
+    }
+
+    /// The bwa-mem3 options a `--taps` run resolves to (through the TAPS expansion).
+    fn taps_opts(args: &[&str]) -> Result<String> {
+        let mut v = vec!["--taps", "--five_base_index", "/x/g.fa"];
+        v.extend_from_slice(args);
+        let cli = crate::aligner::config::expand_taps(&cli_from(&v))
+            .unwrap()
+            .into_owned();
+        build_five_base_aligner_options(&cli, Aligner::BwaMem3, ReadFormat::FastQ).map(|r| r.0)
+    }
+
+    #[test]
+    fn taps_option_string_differs_only_in_meth() {
+        let taps = taps_opts(&[]).unwrap();
+        assert_eq!(
+            taps,
+            "mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 \
+             --meth-tags none -K 100000000"
+        );
+        assert_eq!(
+            taps.replace("--meth=taps", "--meth=5base"),
+            bwm3(&[]).unwrap()
+        );
+    }
+
+    #[test]
+    fn taps_rejects_tuning_naming_taps() {
+        for args in [
+            &["--local"][..],
+            &["--score_min", "L,0,-0.2"],
+            &["-N", "1"],
+            &["--maxins", "600"],
+            &["--dovetail"],
+        ] {
+            let e = taps_opts(args).unwrap_err().to_string();
+            assert!(
+                e.contains("is not supported with --taps") && !e.contains("--bwamem3"),
+                "{args:?}: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn bwamem3_rejects_bowtie2_and_minimap2_tuning() {
+        for args in [
+            &["--local"][..],
+            &["--score_min", "L,0,-0.6"],
+            &["-N", "1"],
+            &["-L", "20"],
+            &["-D", "20"],
+            &["-R", "3"],
+            &["--rdg", "5,3"],
+            &["--rfg", "5,3"],
+            &["-I", "10"],
+            &["-X", "800"],
+            &["--dovetail"],
+            &["--no_dovetail"],
+            &["--no-spliced-alignment"],
+            &["--known-splicesite-infile", "s.txt"],
+            &["--most_valid_alignments", "2"],
+        ] {
+            let e = bwm3(args).unwrap_err().to_string();
+            assert!(e.contains("--bwamem3"), "{args:?}: {e}");
+        }
+        for p in ["0", "1"] {
+            let e = bwm3(&["-p", p]).unwrap_err().to_string();
+            assert!(e.contains("-p of 2 or more"), "{e}");
         }
     }
 

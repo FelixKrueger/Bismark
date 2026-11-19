@@ -749,3 +749,54 @@ fn truncated_bam_is_fatal() {
 
     run(&dir, &["-s", "truncated.bam"]).failure();
 }
+
+fn pairs() -> [RecordBuf; 2] {
+    [rec("p1", 0x41, 100, b"ZZZ"), rec("p1", 0x81, 100, b"ZZZ")]
+}
+
+#[test]
+fn auto_detect_pe_from_first_record_when_pg_has_no_mate_files() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(
+        &input,
+        &header(Some("bismark --genome /g pairs.bam"), Some("unsorted")),
+        &pairs(),
+    );
+    run(&dir, &["input.bam"]).success();
+    let report = std::fs::read_to_string(dir.path().join("input_consistency_report.txt")).unwrap();
+    assert!(
+        report.starts_with("Total paired-end records     -\t1\n"),
+        "got: {report}"
+    );
+}
+
+#[test]
+fn single_end_flag_beats_a_paired_first_record() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(
+        &input,
+        &header(Some("bismark --genome /g pairs.bam"), Some("unsorted")),
+        &pairs(),
+    );
+    run(&dir, &["-s", "input.bam"]).success();
+    let report = std::fs::read_to_string(dir.path().join("input_consistency_report.txt")).unwrap();
+    assert!(
+        report.starts_with("Total single-end records     -\t2\n"),
+        "got: {report}"
+    );
+}
+
+#[test]
+fn no_bismark_pg_stays_single_end_with_paired_records() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("input.bam");
+    write_bam(&input, &header(None, Some("unsorted")), &pairs());
+    run(&dir, &["input.bam"]).success();
+    let report = std::fs::read_to_string(dir.path().join("input_consistency_report.txt")).unwrap();
+    assert!(
+        report.starts_with("Total single-end records     -\t2\n"),
+        "got: {report}"
+    );
+}

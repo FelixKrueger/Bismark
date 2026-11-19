@@ -16,3 +16,17 @@ A typical command could look like this:
 ```
 bismark prepare --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo_sapiens/GRCh38/
 ```
+
+### bwa-mem3 methylation index (`--bwamem3`)
+
+`bismark --taps` and `bismark --illumina_5base --bwamem3` align with bwa-mem3, which converts the
+genome itself, so they need a bwa-mem3 methylation index instead of the bisulfite genomes:
+
+```
+bismark prepare --bwamem3 --parallel 16 /data/genomes/homo_sapiens/GRCh38/
+bismark --taps --genome /data/genomes/homo_sapiens/GRCh38/ -1 R1.fastq.gz -2 R2.fastq.gz
+```
+
+The index is written to `Bwamem3_Index/` in the genome folder, and the aligner uses it when
+`--five_base_index` is not given. A human genome takes about 1 h and about 104 GB of RAM; if
+bwa-mem3 reports that its memory budget is too small, raise it with `--bwamem3_max_memory`.

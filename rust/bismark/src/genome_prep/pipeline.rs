@@ -2,11 +2,13 @@
 //! validation) → Step II (conversion) → Step III (indexing) → Step IV (opt
 //! combined genome).
 
-use crate::genome_prep::cli::{Aligner, Cli};
+use std::path::PathBuf;
+
+use crate::genome_prep::cli::{Aligner, Cli, ResolvedConfig};
 use crate::genome_prep::error::GenomePrepError;
 use crate::genome_prep::logging::Logger;
 use crate::genome_prep::{
-    BISMARK_VERSION, combined, composition, convert, discovery, folders, indexer,
+    BISMARK_VERSION, bwamem3, combined, composition, convert, discovery, folders, indexer,
 };
 
 fn aligner_label(a: Aligner) -> &'static str {
@@ -14,6 +16,7 @@ fn aligner_label(a: Aligner) -> &'static str {
         Aligner::Bowtie2 => "Bowtie 2",
         Aligner::Hisat2 => "HISAT2",
         Aligner::Minimap2 => "Minimap2",
+        Aligner::BwaMem3 => "bwa-mem3",
     }
 }
 
@@ -41,6 +44,9 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
         Some(dir) => Some(indexer::resolve_explicit(dir, config.aligner)?),
         None => None,
     };
+    if config.aligner == Aligner::BwaMem3 {
+        return run_bwamem3(&config, &files, explicit_bin, &logger);
+    }
     let (ct_dir, ga_dir) = folders::create_tree(&config.genome_folder, &logger)?;
 
     // ── Step I.5 — optional genomic composition (Perl runs `get_genomic_frequencies`
@@ -106,6 +112,51 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
         )?;
     }
 
+    logger.note(
+        "\n=========================================\n\nGenome preparation complete. Enjoy!\n",
+    );
+    Ok(())
+}
+
+/// `--bwamem3`: the bwa-mem3 methylation index, then the genomic composition (optional).
+fn run_bwamem3(
+    config: &ResolvedConfig,
+    files: &[PathBuf],
+    explicit_bin: Option<PathBuf>,
+    logger: &Logger,
+) -> Result<(), GenomePrepError> {
+    bwamem3::reject_index_files(files)?;
+    let bin = match explicit_bin {
+        Some(p) => p,
+        None => indexer::discover(config.aligner)?,
+    };
+    let version = bwamem3::check_version(&bin, logger)?;
+    logger.note(&format!("Using bwa-mem3 {version} ({})", bin.display()));
+    logger.note("Bismark Genome Preparation - Step II: Launching the bwa-mem3 indexer");
+    let prefix = bwamem3::build(
+        files,
+        &config.genome_folder,
+        &bin,
+        &version,
+        config.parallel,
+        config.bwamem3_max_memory.as_deref(),
+        logger,
+    )?;
+    logger.note(&format!(
+        "\nbwa-mem3 methylation index written to {}/ (prefix {}).\n\
+         `bismark --taps` and `bismark --illumina_5base --bwamem3` find it with --genome {}",
+        prefix.parent().unwrap_or(&prefix).display(),
+        prefix.display(),
+        config.genome_folder.display()
+    ));
+    if config.genomic_composition {
+        logger.note(
+            "Calculating genomic nucleotide frequencies (this may take several minutes \
+             depending on genome size) ...",
+        );
+        composition::write_genomic_composition(files, &config.genome_folder, logger)?;
+        logger.note("Finished processing genomic nucleotide frequencies\n");
+    }
     logger.note(
         "\n=========================================\n\nGenome preparation complete. Enjoy!\n",
     );

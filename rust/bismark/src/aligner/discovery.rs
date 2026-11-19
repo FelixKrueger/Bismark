@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use crate::aligner::config::Aligner;
 use crate::aligner::error::{AlignerError, Result};
+use crate::genome_prep::discovery::fasta_name_cmp;
 
 /// Which FASTA extension category was found (extension-priority order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,15 +58,6 @@ impl FastaKind {
             FastaKind::FastaGz => name.ends_with(b".fasta.gz"),
         }
     }
-}
-
-/// Compare FASTA file names the way Perl's `<*.fa>` sorts them: **case-insensitively**
-/// (ASCII fold) with the raw bytes as a tiebreak. Must match
-/// `bismark-genome-preparation::discovery::fasta_name_cmp` exactly.
-fn fasta_name_cmp(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    a.to_ascii_lowercase()
-        .cmp(&b.to_ascii_lowercase())
-        .then_with(|| a.cmp(b))
 }
 
 /// Resolved genome indexes + raw FASTA inventory (the input contract for the
@@ -127,6 +119,9 @@ fn index_suffixes(aligner: Aligner, stem: &str, large: bool) -> Vec<String> {
         }
         // rammap is minimap-like — the same single `<stem>.mmi` (no large variant).
         Aligner::Minimap2 | Aligner::Rammap => vec![format!("{stem}.mmi")],
+        Aligner::BwaMem3 => {
+            unreachable!("bwa-mem3 meth indexes are checked by config::check_bwamem3_index_files")
+        }
     }
 }
 
@@ -177,7 +172,7 @@ fn index_env_name(aligner: Aligner) -> Option<&'static str> {
     match aligner {
         Aligner::Bowtie2 => Some("BOWTIE2_INDEXES"),
         Aligner::Hisat2 => Some("HISAT2_INDEXES"),
-        Aligner::Minimap2 | Aligner::Rammap => None,
+        Aligner::Minimap2 | Aligner::Rammap | Aligner::BwaMem3 => None,
     }
 }
 
@@ -230,6 +225,7 @@ pub(crate) fn validate_unconverted_index(
         Aligner::Bowtie2 => "bowtie2-build",
         Aligner::Hisat2 => "hisat2-build",
         Aligner::Minimap2 | Aligner::Rammap => "the aligner's indexer",
+        Aligner::BwaMem3 => "bwa-mem3 index --meth",
     };
     let env_note = match (index_env_name(aligner), index_env, &suppressed_by) {
         (Some(var), None, _) => format!(" (${var} is not set)"),
@@ -365,7 +361,11 @@ pub(crate) fn discover_fastas(genome_dir: &Path) -> Result<(Vec<PathBuf>, FastaK
             .filter(|p| {
                 p.is_file()
                     && p.file_name()
-                        .map(|n| kind.matches(n.as_encoded_bytes()))
+                        // Perl's `<*.fa>` glob skips dotfiles (e.g. macOS `._chr1.fa`).
+                        .map(|n| {
+                            let n = n.as_encoded_bytes();
+                            !n.starts_with(b".") && kind.matches(n)
+                        })
                         .unwrap_or(false)
             })
             .collect();
@@ -695,6 +695,16 @@ mod tests {
         assert_eq!(names, vec!["a.fa".to_string(), "B.fa".to_string()]);
         assert!(g.ct_index_basename.ends_with("CT_conversion/BS_CT"));
         assert!(g.ga_index_basename.ends_with("GA_conversion/BS_GA"));
+    }
+
+    #[test]
+    fn fasta_discovery_skips_dotfiles() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("._chr1.fa"), b"\x00\x05\x16\x07garbage").unwrap();
+        fs::write(tmp.path().join("chr1.fa"), b">chr1\nACGT\n").unwrap();
+        let (fastas, kind) = discover_fastas(tmp.path()).unwrap();
+        assert_eq!(kind, FastaKind::Fa);
+        assert_eq!(fastas, vec![tmp.path().join("chr1.fa")]);
     }
 
     /// v2: a complete `Combined/BS_combined.*.bt2` set is discovered as

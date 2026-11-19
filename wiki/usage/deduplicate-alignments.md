@@ -5,23 +5,26 @@ description: Remove PCR duplicates from a Bismark BAM, when to skip this step, a
 tags: [deduplication, pcr-duplicates, umi, rrbs]
 page_id: deduplicate-alignments
 subject_status: current
-updated: 2026-11-01
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/dedup.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/filename.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: f6a21fd
+    commit: a0059f4
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/mod.rs
+    commit: a0059f4
 ---
 
 # Deduplicate alignments
@@ -43,14 +46,14 @@ For 5-Base runs the aligner can also remove duplicates by UMI during alignment, 
 
 ## Steps
 
-1. Use the BAM straight from the aligner. It must not be coordinate-sorted: the tool stops on `@HD SO:coordinate` (`check_not_coordinate_sorted` in `io/read.rs`).
+1. Use the BAM straight from the aligner. For paired-end input it must not be coordinate-sorted, because mates must be next to each other: the tool stops on `@HD SO:coordinate` (`open_dedup_reader` in `dedup/pipeline.rs`). Coordinate-sorted single-end input is accepted.
 2. Run it:
 
    ```
    bismark dedup --parallel 4 sample_R1_bismark_bt2_pe.bam
    ```
 
-   The tool reads single-end or paired-end from the `@PG` line of the BAM header. Force it with `-s` or `-p`.
+   The tool reads single-end or paired-end from the `@PG` line of the BAM header; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end. Force it with `-s` or `-p`.
 3. Check the removed share in `<name>.deduplication_report.txt`: [reference/run-reports.md](../reference/run-reports.md).
 4. Extract methylation from the `.deduplicated.bam`: [usage/extract-methylation-calls.md](extract-methylation-calls.md).
 
@@ -67,11 +70,12 @@ The key is strand, chromosome, start and end (`DedupKey` in `dedup/dedup.rs`):
 | Option | Effect |
 |---|---|
 | `-s` / `-p` | Force single-end or paired-end |
-| `--parallel <n>` | BGZF compression threads for reading and writing; output is the same for any value. `0` is rejected. |
+| `--parallel <n>` | BGZF compression threads for reading and writing; output is the same for any value. `0` is rejected. With `--sam` or CRAM input it prints a warning and runs single-threaded (`process_one` in `dedup/mod.rs`). |
+| `--cram_ref <fasta>` | Reference for CRAM input; NM and MD are regenerated from it (`fill_md_nm` in `io/read.rs`) |
 | `--sam` | Write SAM instead of BAM |
 | `-o <name>` | Output basename; not allowed with more than one input file |
 | `--output_dir <dir>` | Output folder, created if missing |
-| `--multiple` | Treat all input files as one sample |
+| `--multiple` | Treat all input files as one sample; all must have the same `@SQ` names in the same order (`validate_chr_consistency` in `dedup/pipeline.rs`) |
 | `--barcode`, `--bclconvert` | UMI-aware deduplication |
 
 `--representative` is rejected.
@@ -83,6 +87,7 @@ From `dedup/filename.rs`:
 | Input | Output |
 |---|---|
 | `<stem>.bam` | `<stem>.deduplicated.bam` and `<stem>.deduplication_report.txt` |
+| `<stem>.cram` (with `--cram_ref`) | `<stem>.deduplicated.bam` and `<stem>.deduplication_report.txt` (`derive_output_stem` in `dedup/filename.rs`) |
 | With `--multiple` | `<stem>.multiple.deduplicated.bam` and `<stem>.multiple.deduplication_report.txt` |
 
 ## Links

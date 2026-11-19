@@ -928,17 +928,23 @@ impl Drop for DoneOnDrop {
 const WRAPPER_HINT: &str = "if an aligner wrapper (or another process) reads the input before \
                             the aligner does, use --no_stream_converted";
 
-/// `e` with `--no_stream_converted` (and, for gzipped input, a `gzip -t` check) unless
-/// `e` already names the flag.
-pub(crate) fn with_wrapper_hint(e: AlignerError, gzipped: bool) -> AlignerError {
+/// `e` with `--no_stream_converted` (and the input checks: equal mate counts for
+/// paired-end, `gzip -t` for gzipped input) unless `e` already names the flag.
+pub(crate) fn with_wrapper_hint(e: AlignerError, gzipped: bool, paired: bool) -> AlignerError {
     let msg = e.to_string();
     if msg.contains("--no_stream_converted") {
         return e;
     }
-    let check = if gzipped {
-        " Check the gzipped input with `gzip -t`."
-    } else {
-        ""
+    // The aligner's own stderr (e.g. "fewer reads in file specified with -2") is not
+    // seen here, so name every input fault it may have reported.
+    let check = match (paired, gzipped) {
+        (true, true) => {
+            " Check that R1 and R2 have the same number of reads and that the gzipped input \
+             passes `gzip -t`."
+        }
+        (true, false) => " Check that R1 and R2 have the same number of reads.",
+        (false, true) => " Check the gzipped input with `gzip -t`.",
+        (false, false) => "",
     };
     AlignerError::Validation(format!("{msg} (streamed run; {WRAPPER_HINT}).{check}"))
 }
@@ -1687,18 +1693,27 @@ mod tests {
     #[test]
     fn with_wrapper_hint_adds_the_fix_once() {
         let failed = || AlignerError::Validation("Bowtie 2 failed".into());
-        let hinted = with_wrapper_hint(failed(), false);
+        let hinted = with_wrapper_hint(failed(), false, false);
         let msg = hinted.to_string();
         assert!(
             msg.contains("Bowtie 2 failed (streamed run; if an aligner wrapper"),
             "{msg}"
         );
         assert!(!msg.contains("gzip -t"), "{msg}");
-        assert_eq!(with_wrapper_hint(hinted, true).to_string(), msg);
-        let gz = with_wrapper_hint(failed(), true).to_string();
+        assert_eq!(with_wrapper_hint(hinted, true, true).to_string(), msg);
+        let gz = with_wrapper_hint(failed(), true, false).to_string();
         assert!(
             gz.ends_with("--no_stream_converted). Check the gzipped input with `gzip -t`."),
             "{gz}"
+        );
+        // Paired-end runs also name the mate-count check.
+        let pe = with_wrapper_hint(failed(), true, true).to_string();
+        assert!(
+            pe.ends_with(
+                "Check that R1 and R2 have the same number of reads and that the gzipped \
+                 input passes `gzip -t`."
+            ),
+            "{pe}"
         );
     }
 

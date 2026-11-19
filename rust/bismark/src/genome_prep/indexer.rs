@@ -123,6 +123,7 @@ fn build_command(
                 .arg(format!("{basename}.mmi"))
                 .arg(&file_list);
         }
+        Aligner::BwaMem3 => unreachable!("bwa-mem3 indexes through genome_prep::bwamem3"),
         Aligner::Bowtie2 | Aligner::Hisat2 => {
             cmd.arg("--threads").arg(threads.to_string());
             if large_index {

@@ -361,6 +361,7 @@ sub process_sequence_files {
     
     
     my ($total_CT_conversions,$total_GA_conversions) = (0,0);
+    my $open_line = 0; # the last sequence line printed had no newline
     $verbose and print "Bismark Genome Preparation - Step II: Bisulfite converting reference genome\n\n";
     sleep (1);
     
@@ -424,6 +425,12 @@ sub process_sequence_files {
 	    open (GA_CONVERT,'>',$bisulfite_GA_conversion_filename) or die "Can't write to file $bisulfite_GA_conversion_filename: $!\n";
 	}
 	
+	### a file ending without a newline must not glue this header onto its last line
+	if ($multi_fasta and $open_line){
+	    print CT_CONVERT "\n";
+	    print GA_CONVERT "\n";
+	}
+	$open_line = 0;
 	print CT_CONVERT ">",$chromosome_name,"_CT_converted\n"; # first entry
 	print GA_CONVERT ">",$chromosome_name,"_GA_converted\n"; # first entry
 	### TODO: Change this for GrandSlam
@@ -432,6 +439,7 @@ sub process_sequence_files {
 	    
       ### in case the line is a new fastA header
       if ($_ =~ /^>/){
+		$open_line = 0;
 		### printing out the stats for the previous chromosome
 		$verbose and print join ("\t",$chromosome_name,$chromosome_CT_conversions,$chromosome_GA_conversions),"\n";
 		### resetting the chromosome transliteration counters
@@ -491,6 +499,7 @@ sub process_sequence_files {
 			$chromosome_GA_conversions += $GA_transliterations_performed;
 			
 			print GA_CONVERT $GA_sequence;
+			$open_line = ($sequence !~ /\n\z/);
 			
 		}
     }

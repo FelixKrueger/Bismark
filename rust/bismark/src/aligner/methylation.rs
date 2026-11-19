@@ -70,6 +70,12 @@ pub fn reverse_complement(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// Perl `substr($chr, start, len)`: clamped to the chromosome, empty past its end
+/// (a POS beyond the end then fails the caller's length guard, as in Perl).
+fn substr(chr: &[u8], start: usize, len: usize) -> &[u8] {
+    &chr[start.min(chr.len())..(start + len).min(chr.len())]
+}
+
 /// Parse a CIGAR into `(length, op)` runs (Perl 4303–4306: `split /\D+/` for the
 /// lengths, `split /\d+/` for the ops). Errors on a malformed string.
 pub(crate) fn parse_cigar(cigar: &str) -> Result<Vec<(u32, u8)>> {
@@ -156,7 +162,7 @@ pub fn extract_corresponding_genomic_sequence_single_end(
         if pos < 2 {
             return Ok(edge(non_bis, md_seq, pos, indels)); // chromosome-edge guard
         }
-        non_bis.extend_from_slice(&chr[pos - 2..pos]);
+        non_bis.extend_from_slice(substr(chr, pos - 2, 2));
         // NB: the +2 prepend is NOT added to `genomic_seq_for_md_tag` (Perl 4322).
     }
 
@@ -165,9 +171,9 @@ pub fn extract_corresponding_genomic_sequence_single_end(
         let len = *len as usize;
         match op {
             b'M' => {
-                non_bis.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                non_bis.extend_from_slice(substr(chr, pos, len));
                 if contains_deletion {
-                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                    md_seq.extend_from_slice(substr(chr, pos, len));
                 }
                 pos += len;
             }
@@ -181,7 +187,7 @@ pub fn extract_corresponding_genomic_sequence_single_end(
             }
             b'D' => {
                 if contains_deletion {
-                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                    md_seq.extend_from_slice(substr(chr, pos, len));
                 }
                 pos += len;
                 indels += len as u32; // D only (Perl 4370)
@@ -332,7 +338,7 @@ fn walk_mate(
                 indels,
             });
         }
-        non_bis.extend_from_slice(&chr[pos - 2..pos]);
+        non_bis.extend_from_slice(substr(chr, pos - 2, 2));
     }
 
     // CIGAR walk (Perl 4543–4603 / 4631–4688).
@@ -340,9 +346,9 @@ fn walk_mate(
         let len = *len as usize;
         match op {
             b'M' => {
-                non_bis.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                non_bis.extend_from_slice(substr(chr, pos, len));
                 if contains_deletion {
-                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                    md_seq.extend_from_slice(substr(chr, pos, len));
                 }
                 pos += len;
             }
@@ -354,7 +360,7 @@ fn walk_mate(
             }
             b'D' => {
                 if contains_deletion {
-                    md_seq.extend_from_slice(&chr[pos..(pos + len).min(chr.len())]);
+                    md_seq.extend_from_slice(substr(chr, pos, len));
                 }
                 pos += len;
                 indels += len as u32;
@@ -799,6 +805,30 @@ mod tests {
         let e = extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
         assert!(!e.extracted);
         assert_eq!(c.ct_ga_count, 0);
+    }
+
+    #[test]
+    fn extract_pos_past_chromosome_end_is_short_not_a_panic() {
+        // POS beyond the chromosome (genome FASTA differs from the index): Perl's
+        // substr yields "" so the caller's length guard discards the read.
+        let g = genome_of("chr1", b"ACGTACGT"); // 8 bp
+        let mut c = Counters::default();
+        for (index, cigar) in [(1, "4M"), (1, "2M1D2M"), (0, "4M")] {
+            let b = best("chr1", 20, index, cigar);
+            let e =
+                extract_corresponding_genomic_sequence_single_end(&b, &g, false, &mut c).unwrap();
+            assert_ne!(e.unmodified_genomic_sequence.len(), 4 + 2);
+        }
+        let m = walk_mate(
+            &g.chromosomes["chr1"],
+            20,
+            "2M1D2M",
+            true,
+            true,
+            false,
+            false,
+        );
+        assert!(matches!(m, Ok(MateWalk::Complete { ref non_bis, .. }) if non_bis.is_empty()));
     }
 
     #[test]

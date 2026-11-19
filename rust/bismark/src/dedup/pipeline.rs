@@ -43,6 +43,35 @@ use smallvec::SmallVec;
 /// Concrete writer type returned by `crate::io::open_writer`.
 type Writer = AnyWriter<BufWriter<File>, File>;
 
+/// Open a dedup input, rejecting coordinate-sorted input only for paired-end
+/// (adjacent-mate pairing needs name/unsorted order). SE dedup is
+/// order-independent; Perl runs `test_positional_sorting` only `if ($paired)`
+/// (`deduplicate_bismark:129-131`).
+fn open_dedup_reader(
+    path: &Path,
+    cram_ref: Option<&Path>,
+    is_paired: bool,
+) -> Result<crate::io::AnyReader<std::io::BufReader<File>, File>, crate::io::BismarkIoError> {
+    if is_paired {
+        crate::io::open_reader(path, cram_ref)
+    } else {
+        crate::io::open_reader_without_sort_check(path, cram_ref)
+    }
+}
+
+/// Threaded-BAM counterpart of [`open_dedup_reader`].
+fn open_threaded_dedup_reader(
+    path: &Path,
+    parallel: std::num::NonZero<usize>,
+    is_paired: bool,
+) -> Result<crate::io::ThreadedBamReader, crate::io::BismarkIoError> {
+    if is_paired {
+        crate::io::ThreadedBamReader::from_path(path, parallel)
+    } else {
+        crate::io::ThreadedBamReader::from_path_without_sort_check(path, parallel)
+    }
+}
+
 /// Build a chr-name → interned-u32 map from a SAM header's `@SQ` order.
 ///
 /// Interning is by chr-name **string** (not noodles refID), because in
@@ -83,9 +112,11 @@ fn build_refid_table(header: &Header, intern: &FxHashMap<BString, u32>) -> Vec<u
         .collect()
 }
 
-/// Validate that `header`'s `@SQ` name set equals the reference intern's
-/// name set. Returns an error tagged with `offending_file` if they
-/// disagree (either side has names the other doesn't).
+/// Validate that `header`'s `@SQ` names equal the reference intern's names
+/// **in the same order**. Returns an error tagged with `offending_file` if
+/// either side has names the other doesn't, or if the order differs.
+/// Order matters because every input's records are written unchanged
+/// (raw refID) under file1's header.
 fn validate_chr_consistency(
     offending_file: &Path,
     header: &Header,
@@ -102,13 +133,23 @@ fn validate_chr_consistency(
         .difference(&intern_names)
         .map(|n| format!("{n}"))
         .collect();
-    if missing_chrs.is_empty() && extra_chrs.is_empty() {
-        Ok(())
-    } else {
-        Err(BismarkDedupError::MultipleSqMismatch {
+    if !(missing_chrs.is_empty() && extra_chrs.is_empty()) {
+        return Err(BismarkDedupError::MultipleSqMismatch {
             offending_file: offending_file.to_path_buf(),
             missing_chrs,
             extra_chrs,
+        });
+    }
+    let same_order = header
+        .reference_sequences()
+        .keys()
+        .enumerate()
+        .all(|(i, name)| reference_intern[name] as usize == i);
+    if same_order {
+        Ok(())
+    } else {
+        Err(BismarkDedupError::MultipleSqOrderMismatch {
+            offending_file: offending_file.to_path_buf(),
         })
     }
 }
@@ -308,7 +349,7 @@ pub fn run_single(
     is_paired: bool,
     file_label: String,
 ) -> Result<DedupReport, BismarkDedupError> {
-    let mut reader = crate::io::open_reader(input, cram_ref)?;
+    let mut reader = open_dedup_reader(input, cram_ref, is_paired)?;
     let header = reader.header().clone();
 
     // Zero alignment records (header-only BAM, e.g. nothing aligned) is handled
@@ -325,14 +366,18 @@ pub fn run_single(
     let mut writer = crate::io::open_writer(output, header, cram_ref)?;
     let mut state = DedupState::new();
 
-    if is_paired {
-        stream_pe(records, &refid_table, &mut state, &mut writer)?;
+    let stream_result = if is_paired {
+        stream_pe(records, &refid_table, &mut state, &mut writer)
     } else {
-        stream_se(records, &refid_table, &mut state, &mut writer)?;
-    }
-
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        stream_se(records, &refid_table, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 /// Run dedup on **multiple** input files treated as one combined sample.
@@ -340,8 +385,10 @@ pub fn run_single(
 ///
 /// All inputs must share:
 /// - File format (all BAM, all SAM, or all CRAM — no mixing).
-/// - `@SQ` chromosome **name** sets (order may differ; only the set is
-///   validated). Mismatches produce [`BismarkDedupError::MultipleSqMismatch`].
+/// - `@SQ` chromosome names **in the same order** (records are written with
+///   their raw refID under file1's header). Mismatches produce
+///   [`BismarkDedupError::MultipleSqMismatch`] /
+///   [`BismarkDedupError::MultipleSqOrderMismatch`].
 ///
 /// The first file's header is written to the output. All inputs' records
 /// flow into a single shared [`DedupState`].
@@ -374,7 +421,7 @@ pub fn run_multiple(
     // header for chr-consistency validation before opening the writer.
     let readers: Vec<_> = inputs
         .iter()
-        .map(|p| crate::io::open_reader(p, cram_ref))
+        .map(|p| open_dedup_reader(p, cram_ref, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -411,35 +458,45 @@ pub fn run_multiple(
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    if is_paired {
-        stream_pe(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    } else {
-        stream_se(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    }
-
-    // Stream subsequent files (empty is OK — they just contribute no records).
-    for (i_zero_based, mut reader) in readers_iter.enumerate() {
-        let i = i_zero_based + 1;
-        let records = reader.records();
+    // Single closure so one `?` controls early exit and the
+    // `cleanup_partial_output_on_err` wrapper below unlinks the output on a
+    // mid-stream error (same pattern as `run_multiple_umi`).
+    let stream_result: Result<(), BismarkDedupError> = (|| {
         if is_paired {
-            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_pe(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         } else {
-            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_se(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         }
-    }
 
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        // Stream subsequent files (empty is OK — they just contribute no records).
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records();
+            if is_paired {
+                stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -479,7 +536,7 @@ pub fn run_single_parallel(
     file_label: String,
     parallel: std::num::NonZero<usize>,
 ) -> Result<DedupReport, BismarkDedupError> {
-    let mut reader = crate::io::ThreadedBamReader::from_path(input, parallel)?;
+    let mut reader = open_threaded_dedup_reader(input, parallel, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -492,14 +549,18 @@ pub fn run_single_parallel(
     let mut writer = crate::io::ThreadedBamWriter::from_path(output, header, parallel)?;
     let mut state = DedupState::new();
 
-    if is_paired {
-        stream_pe(records, &refid_table, &mut state, &mut writer)?;
+    let stream_result = if is_paired {
+        stream_pe(records, &refid_table, &mut state, &mut writer)
     } else {
-        stream_se(records, &refid_table, &mut state, &mut writer)?;
-    }
-
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        stream_se(records, &refid_table, &mut state, &mut writer)
+    };
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 /// Run dedup on multiple BAM inputs combined into one sample, with
@@ -535,7 +596,7 @@ pub fn run_multiple_parallel(
     // Open all readers (threaded) and capture their headers up front.
     let mut readers: Vec<crate::io::ThreadedBamReader> = inputs
         .iter()
-        .map(|p| crate::io::ThreadedBamReader::from_path(p, parallel))
+        .map(|p| open_threaded_dedup_reader(p, parallel, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -563,34 +624,44 @@ pub fn run_multiple_parallel(
     let mut first_reader = readers_iter
         .next()
         .expect("inputs.is_empty() checked above; readers has ≥1 element");
-    if is_paired {
-        stream_pe(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    } else {
-        stream_se(
-            first_reader.records(),
-            &refid_tables[0],
-            &mut state,
-            &mut writer,
-        )?;
-    }
-
-    for (i_zero_based, mut reader) in readers_iter.enumerate() {
-        let i = i_zero_based + 1;
-        let records = reader.records();
+    // Single closure so one `?` controls early exit and the
+    // `cleanup_partial_output_on_err` wrapper below unlinks the output on a
+    // mid-stream error (same pattern as `run_multiple_umi`).
+    let stream_result: Result<(), BismarkDedupError> = (|| {
         if is_paired {
-            stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_pe(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         } else {
-            stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            stream_se(
+                first_reader.records(),
+                &refid_tables[0],
+                &mut state,
+                &mut writer,
+            )?;
         }
-    }
 
-    writer.finish()?;
-    Ok(state.into_report(file_label))
+        for (i_zero_based, mut reader) in readers_iter.enumerate() {
+            let i = i_zero_based + 1;
+            let records = reader.records();
+            if is_paired {
+                stream_pe(records, &refid_tables[i], &mut state, &mut writer)?;
+            } else {
+                stream_se(records, &refid_tables[i], &mut state, &mut writer)?;
+            }
+        }
+        Ok(())
+    })();
+    let finish_result = writer.finish();
+    let final_result = match (stream_result, finish_result) {
+        (Ok(()), Ok(())) => Ok(state.into_report(file_label)),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(e.into()),
+    };
+    cleanup_partial_output_on_err(output, final_result)
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -671,35 +742,9 @@ fn compute_se_umi_key(
     refid_table: &[u32],
     umi_mode: UmiMode,
 ) -> Result<UmiDedupKey, BismarkDedupError> {
-    let inner = record.inner();
-    let refid =
-        inner
-            .reference_sequence_id()
-            .ok_or_else(|| BismarkDedupError::MissingReferenceId {
-                qname: qname_lossy(record),
-            })?;
-    let chr_id = *refid_table
-        .get(refid)
-        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
-    let start = u32::try_from(record.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(record),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-    let key_pos = if is_forward(record.record_strand()) {
-        start
-    } else {
-        u32::try_from(record.cigar().reference_end(start as usize))
-            .expect("reference_end fits in u32 per BAM spec")
-    };
+    let k = compute_se_key(record, refid_table)?;
     let umi = require_umi(record, umi_mode)?;
-    Ok(UmiDedupKey::se(
-        record.record_strand(),
-        chr_id,
-        key_pos,
-        umi,
-    ))
+    Ok(UmiDedupKey::se(k.strand, k.chr_id, k.start, umi))
 }
 
 /// Compute the UMI-aware PE dedup key. Mirrors [`compute_pe_key`] but
@@ -712,40 +757,9 @@ fn compute_pe_umi_key(
     refid_table: &[u32],
     umi_mode: UmiMode,
 ) -> Result<UmiDedupKey, BismarkDedupError> {
-    let r1 = pair.r1();
-    let r2 = pair.r2();
-    let refid = r1.inner().reference_sequence_id().ok_or_else(|| {
-        BismarkDedupError::MissingReferenceId {
-            qname: qname_lossy(r1),
-        }
-    })?;
-    let chr_id = *refid_table
-        .get(refid)
-        .ok_or(BismarkDedupError::MissingChrInIntern { refid })?;
-    let r1_start = u32::try_from(r1.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(r1),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-    let r2_start = u32::try_from(r2.alignment_start().ok_or_else(|| {
-        BismarkDedupError::MissingAlignmentStart {
-            qname: qname_lossy(r2),
-        }
-    })?)
-    .expect("alignment_start fits in u32 per BAM spec");
-
-    let (start, end) = if is_forward(pair.pair_strand()) {
-        let end = u32::try_from(r2.cigar().reference_end(r2_start as usize))
-            .expect("reference_end fits in u32 per BAM spec");
-        (r1_start, end)
-    } else {
-        let end = u32::try_from(r1.cigar().reference_end(r1_start as usize))
-            .expect("reference_end fits in u32 per BAM spec");
-        (r2_start, end)
-    };
-    let umi = require_umi(r1, umi_mode)?;
-    Ok(UmiDedupKey::pe(pair.pair_strand(), chr_id, start, end, umi))
+    let k = compute_pe_key(pair, refid_table)?;
+    let umi = require_umi(pair.r1(), umi_mode)?;
+    Ok(UmiDedupKey::pe(k.strand, k.chr_id, k.start, k.end, umi))
 }
 
 /// Stream SE records with UMI-aware keys. Sibling of [`stream_se`].
@@ -815,7 +829,7 @@ pub fn run_single_umi(
     umi_mode: UmiMode,
 ) -> Result<DedupReport, BismarkDedupError> {
     let extractor = umi_extractor_for(umi_mode);
-    let mut reader = crate::io::open_reader(input, cram_ref)?;
+    let mut reader = open_dedup_reader(input, cram_ref, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -871,7 +885,7 @@ pub fn run_multiple_umi(
 
     let readers: Vec<_> = inputs
         .iter()
-        .map(|p| crate::io::open_reader(p, cram_ref))
+        .map(|p| open_dedup_reader(p, cram_ref, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -949,7 +963,7 @@ pub fn run_single_parallel_umi(
     umi_mode: UmiMode,
 ) -> Result<DedupReport, BismarkDedupError> {
     let extractor = umi_extractor_for(umi_mode);
-    let mut reader = crate::io::ThreadedBamReader::from_path(input, parallel)?;
+    let mut reader = open_threaded_dedup_reader(input, parallel, is_paired)?;
     let header = reader.header().clone();
 
     // Zero records (header-only BAM) is handled gracefully — header-only output
@@ -1005,7 +1019,7 @@ pub fn run_multiple_parallel_umi(
 
     let mut readers: Vec<crate::io::ThreadedBamReader> = inputs
         .iter()
-        .map(|p| crate::io::ThreadedBamReader::from_path(p, parallel))
+        .map(|p| open_threaded_dedup_reader(p, parallel, is_paired))
         .collect::<Result<Vec<_>, _>>()?;
     let headers: Vec<Header> = readers.iter().map(|r| r.header().clone()).collect();
 
@@ -1177,10 +1191,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_chr_consistency_passes_on_identical_name_sets() {
+    fn validate_chr_consistency_passes_on_identical_name_lists() {
         let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2", "chr3"]));
-        let other = header_with_chrs(&["chr3", "chr1", "chr2"]); // reordered OK
+        let other = header_with_chrs(&["chr1", "chr2", "chr3"]);
         validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap();
+    }
+
+    #[test]
+    fn validate_chr_consistency_fails_on_reordered_names() {
+        // Regression: a reordered @SQ used to pass (set comparison), so
+        // file2's raw refIDs landed on the wrong chromosome of file1's header.
+        let intern = build_chr_intern(&header_with_chrs(&["chr1", "chr2", "chr3"]));
+        let other = header_with_chrs(&["chr3", "chr1", "chr2"]);
+        let err = validate_chr_consistency(Path::new("other.bam"), &other, &intern).unwrap_err();
+        match err {
+            BismarkDedupError::MultipleSqOrderMismatch { offending_file } => {
+                assert_eq!(offending_file, PathBuf::from("other.bam"));
+            }
+            other => panic!("expected MultipleSqOrderMismatch, got {other:?}"),
+        }
     }
 
     #[test]

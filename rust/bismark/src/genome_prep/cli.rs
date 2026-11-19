@@ -21,6 +21,8 @@ pub enum Aligner {
     Hisat2,
     /// `minimap2 -d` (`-k 20`).
     Minimap2,
+    /// `bwa-mem3 index --meth` on the unconverted genome.
+    BwaMem3,
 }
 
 impl Aligner {
@@ -30,6 +32,7 @@ impl Aligner {
             Aligner::Bowtie2 => "bowtie2-build",
             Aligner::Hisat2 => "hisat2-build",
             Aligner::Minimap2 => "minimap2",
+            Aligner::BwaMem3 => "bwa-mem3",
         }
     }
 }
@@ -40,7 +43,8 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 #[derive(Parser, Debug)]
 #[command(
     name = "bismark_genome_preparation",
-    about = "Prepare bisulfite-converted genome references (CT + GA) and index them.",
+    about = "Prepare bisulfite-converted genome references (CT + GA) and index them, or build a \
+             bwa-mem3 methylation index (--bwamem3).",
     disable_version_flag = true,
     after_help = HELP_FOOTER
 )]
@@ -61,12 +65,24 @@ pub struct Cli {
     #[arg(long = "minimap2", alias = "mm2")]
     pub minimap2: bool,
 
+    /// Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`) of the unconverted genome in
+    /// `<genome>/Bwamem3_Index/`, for `bismark --illumina_5base --bwamem3` and `bismark --taps`.
+    /// Writes no bisulfite-converted genome.
+    #[arg(long)]
+    pub bwamem3: bool,
+
+    /// With --bwamem3: bwa-mem3's memory budget (`--max-memory`, e.g. `120G`). Default: detected
+    /// RAM less a reserve.
+    #[arg(long = "bwamem3_max_memory", value_name = "SIZE")]
+    pub bwamem3_max_memory: Option<String>,
+
     /// Folder containing the indexer binary (not the executable itself).
     #[arg(long = "path_to_aligner")]
     pub path_to_aligner: Option<PathBuf>,
 
-    /// Threads per indexing process (≥ 2). Two indexers run concurrently, so
-    /// `--parallel 4` uses 8 cores total.
+    /// Threads per indexing process (≥ 2). Bowtie 2, HISAT2 and minimap2 run two indexers
+    /// concurrently, so `--parallel 4` uses 8 cores total. With --bwamem3 it is bwa-mem3's `-t`
+    /// (≥ 1; default: all cores).
     #[arg(long)]
     pub parallel: Option<u32>,
 
@@ -117,6 +133,10 @@ pub struct ResolvedConfig {
     pub path_to_aligner: Option<PathBuf>,
     /// Threads passed to the indexer (always emitted; `parallel.unwrap_or(1)`).
     pub threads: u32,
+    /// `--parallel` as given; bwa-mem3 gets `-t` only when it is set.
+    pub parallel: Option<u32>,
+    /// `--bwamem3_max_memory`, passed to bwa-mem3 as `--max-memory`.
+    pub bwamem3_max_memory: Option<String>,
     /// Per-chromosome output instead of MFA.
     pub single_fasta: bool,
     /// SLAM mode (deprecated).
@@ -142,12 +162,12 @@ impl Cli {
             )
         })?;
 
-        // Aligner selection: at most one of bowtie2/hisat2/minimap2.
-        let n = self.bowtie2 as u8 + self.hisat2 as u8 + self.minimap2 as u8;
+        // Aligner selection: at most one of bowtie2/hisat2/minimap2/bwamem3.
+        let n = self.bowtie2 as u8 + self.hisat2 as u8 + self.minimap2 as u8 + self.bwamem3 as u8;
         if n > 1 {
             return Err(GenomePrepError::Validation(
                 "you may not select more than one aligner — pick one of --bowtie2 / --hisat2 / \
-                 --minimap2 (default is Bowtie 2)"
+                 --minimap2 / --bwamem3 (default is Bowtie 2)"
                     .to_string(),
             ));
         }
@@ -155,9 +175,39 @@ impl Cli {
             Aligner::Hisat2
         } else if self.minimap2 {
             Aligner::Minimap2
+        } else if self.bwamem3 {
+            Aligner::BwaMem3
         } else {
             Aligner::Bowtie2
         };
+
+        if aligner == Aligner::BwaMem3 {
+            for (set, flag) in [
+                (self.single_fasta, "--single_fasta"),
+                (self.slam, "--slam"),
+                (self.large_index, "--large-index"),
+                (self.combined_genome, "--combined_genome"),
+            ] {
+                if set {
+                    return Err(GenomePrepError::Validation(format!(
+                        "bwa-mem3 mode does not work in conjunction with {flag} — please respecify"
+                    )));
+                }
+            }
+        }
+        match self.bwamem3_max_memory.as_deref() {
+            Some(_) if aligner != Aligner::BwaMem3 => {
+                return Err(GenomePrepError::Validation(
+                    "--bwamem3_max_memory requires --bwamem3".to_string(),
+                ));
+            }
+            Some(m) if m.trim().is_empty() => {
+                return Err(GenomePrepError::Validation(
+                    "--bwamem3_max_memory needs a size, e.g. 120G".to_string(),
+                ));
+            }
+            _ => {}
+        }
 
         // minimap2 exclusions (Perl lines 154–177).
         if aligner == Aligner::Minimap2 {
@@ -181,13 +231,20 @@ impl Cli {
             }
         }
 
-        // --parallel must be ≥ 2 if given (Perl line 110).
-        if let Some(p) = self.parallel
-            && p < 2
-        {
-            return Err(GenomePrepError::Validation(
-                "--parallel should have a value of 2 or more — please respecify".to_string(),
-            ));
+        // --parallel is ≥ 2 for the paired bisulfite indexers (Perl line 110), ≥ 1 for bwa-mem3.
+        match self.parallel {
+            Some(0) if aligner == Aligner::BwaMem3 => {
+                return Err(GenomePrepError::Validation(
+                    "--parallel should have a value of 1 or more with --bwamem3 — please respecify"
+                        .to_string(),
+                ));
+            }
+            Some(p) if p < 2 && aligner != Aligner::BwaMem3 => {
+                return Err(GenomePrepError::Validation(
+                    "--parallel should have a value of 2 or more — please respecify".to_string(),
+                ));
+            }
+            _ => {}
         }
         let threads = self.parallel.unwrap_or(1);
 
@@ -204,6 +261,8 @@ impl Cli {
             aligner,
             path_to_aligner: self.path_to_aligner.clone(),
             threads,
+            parallel: self.parallel,
+            bwamem3_max_memory: self.bwamem3_max_memory.clone(),
             single_fasta: self.single_fasta,
             slam: self.slam,
             large_index: self.large_index,
@@ -254,6 +313,71 @@ mod tests {
                 "expected error for --minimap2 {extra}"
             );
         }
+    }
+
+    #[test]
+    fn bwamem3_selects_bwamem3_and_keeps_parallel() {
+        let d = tempdir().unwrap();
+        let g = d.path().to_str().unwrap();
+        let r = cli(&["--bwamem3", g]).validate().unwrap();
+        assert_eq!(r.aligner, Aligner::BwaMem3);
+        assert_eq!(r.parallel, None);
+        let r = cli(&["--bwamem3", "--parallel", "4", "--genomic_composition", g])
+            .validate()
+            .unwrap();
+        assert_eq!((r.parallel, r.genomic_composition), (Some(4), true));
+        let r = cli(&["--bwamem3", "--bwamem3_max_memory", "8G", g])
+            .validate()
+            .unwrap();
+        assert_eq!(r.bwamem3_max_memory.as_deref(), Some("8G"));
+        let r = cli(&["--bwamem3", "--parallel", "1", g])
+            .validate()
+            .unwrap();
+        assert_eq!(r.parallel, Some(1));
+        assert!(cli(&["--parallel", "1", g]).validate().is_err());
+        let e = cli(&["--bwamem3", "--parallel", "0", g])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("1 or more with --bwamem3"), "{e}");
+    }
+
+    #[test]
+    fn bwamem3_conflicts() {
+        let d = tempdir().unwrap();
+        let g = d.path().to_str().unwrap();
+        for other in ["--bowtie2", "--hisat2", "--minimap2"] {
+            let e = cli(&["--bwamem3", other, g])
+                .validate()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                e.contains("more than one aligner") && e.contains("--bwamem3"),
+                "{e}"
+            );
+        }
+        for extra in [
+            "--single_fasta",
+            "--slam",
+            "--large-index",
+            "--combined_genome",
+        ] {
+            let e = cli(&["--bwamem3", extra, g])
+                .validate()
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("bwa-mem3 mode") && e.contains(extra), "{e}");
+        }
+        let e = cli(&["--bwamem3_max_memory", "8G", g])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("requires --bwamem3"), "{e}");
+        let e = cli(&["--bwamem3", "--bwamem3_max_memory", " ", g])
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("needs a size"), "{e}");
     }
 
     #[test]

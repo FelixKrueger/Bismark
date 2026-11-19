@@ -44,7 +44,7 @@ A FastQ or FastA input with Windows (CRLF) line endings stops the run at start-u
 
 - `-q` / `--fastq`
 
-  The query input files (specified as `<mate1>`, `<mate2>` or `<singles>` are FastQ files (usually having extension `.fq` or `.fastq`). Input files may also be `gzip` compressed (ending in `.gz`). This is the default. See also `--solexa-quals` and `--integer-quals`.
+  The query input files (specified as `<mate1>`, `<mate2>` or `<singles>` are FastQ files (usually having extension `.fq` or `.fastq`). Input files may also be `gzip` compressed (ending in `.gz`). This is the default. See also `--phred33-quals` and `--phred64-quals`.
 
 - `-f` / `--fasta`
 
@@ -87,9 +87,9 @@ accepted, as they were in Perl Bismark.
 
   Sets the length of the seed substrings to align during multiseed alignment. Smaller values make alignment slower but more sensitive. Default: the `--sensitive` preset of Bowtie 2 is used by default, which sets `-L` to 20.
 
-- `--ignore-quals`
+- `--ignore-quals` (always passed to the aligner)
 
-  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). For bisulfite alignments in Bismark, this option is invariably turned on by default.
+  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
 - `-I <int>` / `--minins <int>`
 
@@ -171,11 +171,11 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `-o/--output_dir <dir>`
 
-  Write all output files into this directory. By default the output files will be written into the same folder as the input file. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute.
+  Write all output files into this directory. By default the output files will be written into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the output folder can be either relative or absolute. While an input is being processed, its outputs are written as `<name>.<pid>.partial` and renamed when that input has finished; a failed run removes the partial files of the input it failed on. Outputs of an earlier run with the same names are replaced as each input finishes.
 
 - `--temp_dir <dir>`
 
-  Write temporary files to this directory instead of into the same directory as the input files. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
+  Write temporary files to this directory instead of into the current working directory. If the specified folder does not exist, Bismark will attempt to create it first. The path to the temporary folder can be either relative or absolute.
 
 - `--non_bs_mm`
 
@@ -227,23 +227,15 @@ Once CRAM output is supported, it requires you to specify a reference genome as 
 
 - `--old_flag`
 
-  Only in paired-end SAM mode, uses the FLAG values used by Bismark 0.8.2 and before. In addition, this options appends /1 and /2 to the read IDs for reads 1 and 2 relative to the input file. Since both the appended read IDs and custom FLAG values may cause problems with some downstream tools such as Picard, new defaults were implemented as of version 0.8.3.
-
-                default                  old_flag
-           ===================     ===================
-           Read 1       Read 2     Read 1       Read 2
-         OT:    99           147        67           131
-         OB:    83           163       115           179
-         CTOT:  99           147        67           131
-         CTOB:  83           163       115           179
+  Not supported by the Rust aligner; the run is rejected. In Perl Bismark this used the paired-end FLAG values of Bismark 0.8.2 and before.
 
 - `--ambig_bam`
 
-For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambiguous.bam`. The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
+For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambig.bam` (`_pe.ambig.bam` for paired-end). The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
 
 - `--nucleotide_coverage`
 
-  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete by calling `bismark bam2nuc`. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. If a file _nucleotide_stats.txt_ is found with the Bismark reports it will be automatically detected and used for the Bismark HTML report. This option works only for BAM or CRAM files.
+  Calculates the mono- and di-nucleotide sequence composition of covered positions in the analysed BAM file and compares it to the genomic average composition once alignments are complete, by running `bismark bam2nuc` on each final BAM in the same process. Since this calculation may take a while, `bismark bam2nuc` attempts to write the genomic sequence composition into a file called _genomic_nucleotide_frequencies.txt_ inside the reference genome folder so it can be re-used the next time round instead of calculating it once again. The _nucleotide_stats.txt_ file is written to the output directory, and `bismark report` detects it and adds it to the HTML report. If bam2nuc fails, the run exits with an error after the alignment outputs are complete; an input without usable reads only gets a warning and no stats file. Once alignment has finished, stats files of this run's inputs are removed before bam2nuc starts, so a failed bam2nuc step never leaves a stale one behind.
 
 ##### Other:
 
@@ -292,13 +284,13 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 ##### Paired-end options:
 
-- `--no-mixed`
+- `--no-mixed` (always passed to the aligner)
 
-  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. This option is invariably on by default.
+  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
-- `--no-discordant`
+- `--no-discordant` (always passed to the aligner)
 
-  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour and is on by default.
+  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
 
 ##### Bowtie 2 Effort options:
 
@@ -387,6 +379,13 @@ The folder containing the `rammap` executable (used by `--rammap_subprocess`; no
 - `--rammap_inprocess`
 
 **Deprecated (hidden).** The in-process backend is now the `--rammap` default, so this flag is inert — accepted for backward compatibility and removed in a later release. Use `--rammap_subprocess` to opt out to the external binary.
+
+#### TAPS:
+
+
+- `--taps`
+
+TAPS (mC→T) mode for paired-end, directional libraries: bwa-mem3 (`mem --meth=taps`) places the raw reads on the unconverted genome, using the bwa-mem3 methylation index in `<genome>/Bwamem3_Index/` (from `bismark prepare --bwamem3`) or the one given as `--five_base_index` (the FASTA a `bwa-mem3 index --meth` index was built from, or a `Bwamem3_Index/` folder), and Bismark calls methylation at inverted polarity on the Illumina 5-Base path. bwa-mem3 is the only engine; the 5-Base duplex, consensus, deconvolution, inline-UMI, `--five_base_min_mapq` and `--five_base_emit_multiplicity` options are rejected. See the [TAPS guide](/Bismark/rust/taps/). Default: OFF.
 
 #### OUTPUT:
 

@@ -7,6 +7,7 @@
 //! minimap2 and SAM/CRAM output fail loudly (deferred), while non-directional/
 //! pbat/PE/FastA resolve (no alignment runs in Phase 1).
 
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -35,6 +36,9 @@ pub enum Aligner {
     /// `--combined_index` rejects. Opt-in `--rammap`, never-silent — NOT
     /// byte-identical to minimap2 (validated by concordance, not the gate).
     Rammap,
+    /// bwa-mem3 `--meth=5base`/`--meth=taps` (5-Base path only: `--illumina_5base --bwamem3` or
+    /// `--taps`): methylation-aware placement; Bismark makes the calls.
+    BwaMem3,
 }
 
 impl Aligner {
@@ -49,6 +53,7 @@ impl Aligner {
             // Design#7: the full word `rammap` (NOT abbreviated like `mm2`) →
             // `_bismark_rammap.bam` / `_rammap_SE_report.txt`.
             Aligner::Rammap => "rammap",
+            Aligner::BwaMem3 => "bwamem3",
         }
     }
 
@@ -62,6 +67,55 @@ impl Aligner {
             Aligner::Minimap2 => "minimap2",
             // The report "Bismark was run with rammap against …" line.
             Aligner::Rammap => "rammap",
+            Aligner::BwaMem3 => "bwa-mem3",
+        }
+    }
+}
+
+/// mC->T chemistry of a run on the 5-Base path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FiveBaseChemistry {
+    Illumina5Base,
+    Taps,
+}
+
+impl FiveBaseChemistry {
+    /// The chemistry the user asked for (`--taps` or `--illumina_5base`).
+    pub fn of(cli: &Cli) -> Self {
+        if cli.taps {
+            Self::Taps
+        } else {
+            Self::Illumina5Base
+        }
+    }
+
+    pub fn flag(self) -> &'static str {
+        match self {
+            Self::Illumina5Base => "--illumina_5base",
+            Self::Taps => "--taps",
+        }
+    }
+
+    /// The flags that select the bwa-mem3 engine for this chemistry.
+    pub fn engine_flags(self) -> &'static str {
+        match self {
+            Self::Illumina5Base => "--illumina_5base --bwamem3",
+            Self::Taps => "--taps",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Illumina5Base => "5-Base",
+            Self::Taps => "TAPS",
+        }
+    }
+
+    /// The bwa-mem3 `--meth=` value.
+    pub fn bwamem3_meth(self) -> &'static str {
+        match self {
+            Self::Illumina5Base => "5base",
+            Self::Taps => "taps",
         }
     }
 }
@@ -165,7 +219,7 @@ impl ScoreModel {
                 // NOT gated on `local`: minimap2/rammap align locally by design and their
                 // `--local` is rejected, so there is no zero-bonus variant to fall back to.
                 Aligner::Minimap2 | Aligner::Rammap => MINIMAP2_MATCH_BONUS,
-                _ => 0.0,
+                Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3 => 0.0,
             },
         }
     }
@@ -462,6 +516,7 @@ pub fn resolve_stream_converted(
                  in-process backend takes them in memory)",
             );
         }
+        Aligner::BwaMem3 => return no("bwa-mem3 is a 5-Base engine; there are no converted reads"),
     }
     if combined_index {
         return no("the combined-index alignment models still read the converted reads as files");
@@ -503,6 +558,8 @@ pub struct RunConfig {
     /// call methylation with inverted polarity. v1 = single-end + directional,
     /// minimap2 backend. Opt-in, never-silent, concordance-gated (no Perl oracle).
     pub five_base: bool,
+    /// mC->T chemistry of a 5-Base-path run (meaningful only when `five_base`).
+    pub five_base_chemistry: FiveBaseChemistry,
     /// #787: run the post-alignment variant/methylation deconvolution pass + report.
     /// Requires `five_base` (guarded at resolve()).
     pub five_base_deconvolution: bool,
@@ -581,6 +638,8 @@ pub struct RunConfig {
     pub add_umi: bool,
     /// `--strandID`: write `YS:Z:<strand>` on paired-end records.
     pub strand_id: bool,
+    /// `--nucleotide_coverage`: run bam2nuc on each final BAM after alignment.
+    pub nucleotide_coverage: bool,
     /// Output target.
     pub output: OutputTarget,
     /// Read-processing options (skip/upto/icpc/max-len).
@@ -717,6 +776,120 @@ fn same_index_basename(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The files `bwa-mem3 mem --meth` opens; neither `.meth.fa` nor the plain `.bwt.2bit.64` is among them.
+pub(crate) const BWAMEM3_INDEX_SUFFIXES: [&str; 7] = [
+    "amb",
+    "ann",
+    "pac",
+    "meth.amb",
+    "meth.ann",
+    "meth.pac",
+    "meth.bwt.2bit.64",
+];
+
+/// Where a bwa-mem3 index prefix came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexSource {
+    /// `--five_base_index`.
+    Explicit,
+    /// `<genome>/Bwamem3_Index/`, from `bismark_genome_preparation --bwamem3`.
+    Auto,
+}
+
+/// Fail, naming the first missing file, unless `prefix` is a complete bwa-mem3 meth index.
+fn check_bwamem3_index_files(prefix: &Path, source: IndexSource) -> Result<()> {
+    for suffix in BWAMEM3_INDEX_SUFFIXES {
+        let file = PathBuf::from(format!("{}.{suffix}", prefix.display()));
+        if !file.is_file() {
+            return Err(AlignerError::Validation(match source {
+                IndexSource::Explicit => format!(
+                    "bwa-mem3 index file {} is missing. Build the index once with `bwa-mem3 index \
+                     --meth <genome.fa>` and pass that FASTA path as --five_base_index.",
+                    file.display()
+                ),
+                IndexSource::Auto => {
+                    let dir = prefix.parent().unwrap_or(prefix);
+                    format!(
+                        "bwa-mem3 index file {} is missing from {}; rebuild the index with \
+                         `bismark_genome_preparation --bwamem3 {}`.",
+                        file.display(),
+                        dir.display(),
+                        dir.parent().unwrap_or(dir).display()
+                    )
+                }
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// The index this run aligns against: `--five_base_index`, or for bwa-mem3 the one
+/// `bismark_genome_preparation --bwamem3` writes to `<genome>/Bwamem3_Index/`.
+fn resolve_five_base_index(
+    cli: &Cli,
+    aligner: Aligner,
+    genome_dir: &Path,
+) -> Result<Option<PathBuf>> {
+    if let Some(index) = &cli.five_base_index {
+        if aligner != Aligner::BwaMem3 {
+            return Ok(Some(index.clone()));
+        }
+        // A folder holding a `bismark_genome_preparation --bwamem3` index stands for its prefix.
+        let index = if index.is_dir() {
+            let prefix = index.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+            if !PathBuf::from(format!("{}.meth.ann", prefix.display())).is_file() {
+                let sub = index.join(crate::genome_prep::bwamem3::INDEX_DIR);
+                let sub_prefix = sub.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+                if PathBuf::from(format!("{}.meth.ann", sub_prefix.display())).is_file() {
+                    let same = std::fs::canonicalize(index).ok().as_deref() == Some(genome_dir);
+                    return Err(AlignerError::Validation(format!(
+                        "--five_base_index {} is a folder; did you mean {}?{}",
+                        index.display(),
+                        sub.display(),
+                        if same {
+                            " (or leave out --five_base_index to use it)"
+                        } else {
+                            ""
+                        }
+                    )));
+                }
+                return Err(AlignerError::Validation(format!(
+                    "--five_base_index {} is a folder; pass the index prefix (the FASTA path the \
+                     index was built from), or a folder written by `bismark_genome_preparation \
+                     --bwamem3`.",
+                    index.display()
+                )));
+            }
+            prefix
+        } else {
+            index.clone()
+        };
+        check_bwamem3_index_files(&index, IndexSource::Explicit)?;
+        return Ok(Some(index));
+    }
+    if aligner != Aligner::BwaMem3 {
+        return Ok(None);
+    }
+    let dir = genome_dir.join(crate::genome_prep::bwamem3::INDEX_DIR);
+    if !dir.is_dir() {
+        return Err(AlignerError::Validation(format!(
+            "{} requires --five_base_index <prefix>: the prefix of a bwa-mem3 methylation index, \
+             built once with `bwa-mem3 index --meth <genome.fa>` (pass that FASTA path), or build \
+             one in {} with `bismark_genome_preparation --bwamem3 {}`.",
+            FiveBaseChemistry::of(cli).engine_flags(),
+            dir.display(),
+            genome_dir.display()
+        )));
+    }
+    let prefix = dir.join(crate::genome_prep::bwamem3::INDEX_PREFIX_NAME);
+    check_bwamem3_index_files(&prefix, IndexSource::Auto)?;
+    eprintln!(
+        "Using the bwa-mem3 index {} (built by bismark_genome_preparation --bwamem3)",
+        prefix.display()
+    );
+    Ok(Some(prefix))
+}
+
 /// Reject a BISULFITE-converted basename for `--five_base_index`.
 ///
 /// 5-Base reads are unconverted, so a `BS_CT`/`BS_GA` index aligns them against a C→T or G→A
@@ -752,9 +925,75 @@ fn discover_genome_for_run(
     }
 }
 
+/// Expand `--taps` to `--illumina_5base --bwamem3`, after rejecting what TAPS does not support,
+/// so every existing 5-Base rule applies unchanged.
+pub(crate) fn expand_taps(cli: &Cli) -> Result<Cow<'_, Cli>> {
+    if !cli.taps || cli.taps_expanded {
+        return Ok(Cow::Borrowed(cli));
+    }
+    if cli.illumina_5base {
+        return Err(AlignerError::Validation(
+            "--taps and --illumina_5base are different chemistries; pick one.".into(),
+        ));
+    }
+    for (set, flag) in [
+        (cli.bowtie2, "--bowtie2"),
+        (cli.hisat2, "--hisat2"),
+        (cli.minimap2, "--minimap2"),
+        (cli.rammap, "--rammap"),
+    ] {
+        if set {
+            return Err(AlignerError::Validation(format!(
+                "--taps aligns with bwa-mem3 only; drop {flag}."
+            )));
+        }
+    }
+    let five_base_only: [(bool, &str); 6] = [
+        (cli.five_base_duplex, "--five_base_duplex"),
+        (cli.five_base_consensus, "--five_base_consensus"),
+        (
+            !cli.five_base_consensus_from_bam.is_empty(),
+            "--five_base_consensus_from_bam",
+        ),
+        (cli.five_base_deconvolution, "--five_base_deconvolution"),
+        (cli.five_base_umi_qname, "--five_base_umi_qname"),
+        (
+            cli.five_base_emit_multiplicity != EmitMultiplicity::Duplex,
+            "--five_base_emit_multiplicity",
+        ),
+    ];
+    if let Some((_, flag)) = five_base_only.iter().find(|(on, _)| *on) {
+        return Err(AlignerError::Validation(format!(
+            "{flag} is validated for Illumina 5-Base only, not TAPS."
+        )));
+    }
+    if cli.five_base_min_mapq > 0 {
+        return Err(AlignerError::Validation(
+            "--five_base_min_mapq only filters the duplex/consensus pass, which --taps does not \
+             run."
+                .into(),
+        ));
+    }
+    if cli.five_base_umi_len > 0 {
+        return Err(AlignerError::Validation(
+            "--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure (UMI dedup \
+             and RX); it is not validated for TAPS."
+                .into(),
+        ));
+    }
+    let mut expanded = cli.clone();
+    expanded.illumina_5base = true;
+    expanded.bwamem3 = true;
+    expanded.taps_expanded = true;
+    Ok(Cow::Owned(expanded))
+}
+
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
+    let expanded = expand_taps(cli)?;
+    let cli: &Cli = &expanded;
     let aligner = resolve_aligner(cli)?;
+    reject_old_flag(cli)?;
     // `--rammap_subprocess` (opt OUT to the subprocess rammap backend) is meaningful only
     // with `--rammap` — fail loud otherwise (never-silent; mirrors the rammap conflict
     // that dies in `resolve_aligner`).
@@ -799,7 +1038,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     }
     if cli.five_base_baseq > 0 && !cli.illumina_5base {
         return Err(AlignerError::Validation(
-            "--five_base_baseq requires --illumina_5base (it masks low-quality bases in the \
+            "--five_base_baseq requires --illumina_5base or --taps (it masks low-quality bases in the \
              5-Base methylation call)."
                 .into(),
         ));
@@ -923,43 +1162,43 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // --illumina_5base (#787) scope guards. The 5-Base path is paired-end +
     // directional, FASTQ, single-instance only; everything else is rejected.
     // Reject loudly (never silently degrade) BEFORE the generic minimap2 guards
-    // so the error names --illumina_5base, not --minimap2.
+    // so the error names the mode flag, not --minimap2.
     // Early CLI-level SE rejection fires before layout resolution (no -1/-2 supplied).
-    if cli.illumina_5base && cli.mates1.is_none() {
-        return Err(AlignerError::Unsupported(
-            "--illumina_5base is paired-end only: the 5-Base library is paired-end. \
+    let chem = FiveBaseChemistry::of(cli);
+    let (flag, label) = (chem.flag(), chem.label());
+    let paired_end_only = || {
+        AlignerError::Unsupported(format!(
+            "{flag} is paired-end only: the {label} library is paired-end. \
              Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
-                .into(),
-        ));
+        ))
+    };
+    if cli.illumina_5base && cli.mates1.is_none() {
+        return Err(paired_end_only());
     }
 
     let (genome_arg, reads_positional) = resolve_genome_and_positional(cli)?;
     let layout = resolve_layout(cli, &reads_positional)?;
+    reject_output_name_collision(cli, &layout)?;
 
     if cli.illumina_5base {
         if matches!(layout, ReadLayout::SingleEnd { .. }) {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base is paired-end only: the 5-Base library is paired-end. \
-                 Provide -1/-2 (single-end was an early scaffold and is no longer supported)."
-                    .into(),
-            ));
+            return Err(paired_end_only());
         }
         if cli.non_directional || cli.pbat {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base is directional only in v1 (drop --non_directional/--pbat): \
-                 the 5-Base library is directional."
-                    .into(),
-            ));
+            return Err(AlignerError::Unsupported(format!(
+                "{flag} is directional only in v1 (drop --non_directional/--pbat): \
+                 the {label} library is directional."
+            )));
         }
         if cli.slam {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base is not supported with --slam.".into(),
-            ));
+            return Err(AlignerError::Unsupported(format!(
+                "{flag} is not supported with --slam."
+            )));
         }
         if cli.fasta {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base requires FASTQ input in v1 (drop --fasta).".into(),
-            ));
+            return Err(AlignerError::Unsupported(format!(
+                "{flag} requires FASTQ input in v1 (drop --fasta)."
+            )));
         }
         // --multicore N is honoured: it sets the single aligner instance's thread count
         // (minimap2 -t N / bowtie2,hisat2 -p N), the HISAT2 --multicore→-p precedent.
@@ -968,11 +1207,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             || cli.combined_index_single_pass
             || cli.combined_index_parallel
         {
-            return Err(AlignerError::Unsupported(
-                "--illumina_5base is not supported with --combined_index (a separate bisulfite \
+            return Err(AlignerError::Unsupported(format!(
+                "{flag} is not supported with --combined_index (a separate bisulfite \
                  alignment model)."
-                    .into(),
-            ));
+            )));
         }
     }
 
@@ -1015,20 +1253,25 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         let env = discovery::index_env_for(aligner);
         discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
     }
+    let five_base_index = resolve_five_base_index(cli, aligner, &genome.genome_dir)?;
 
     let path_to_aligner = match aligner {
         Aligner::Bowtie2 => cli.path_to_bowtie2.as_deref(),
         Aligner::Hisat2 => cli.path_to_hisat2.as_deref(),
         Aligner::Minimap2 => cli.path_to_minimap2.as_deref(),
         Aligner::Rammap => cli.path_to_rammap.as_deref(),
+        Aligner::BwaMem3 => cli.path_to_bwamem3.as_deref(),
     };
-    let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner)?;
-    let (aligner_options, gap_penalties) =
-        if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
-            options::build_five_base_aligner_options(cli, aligner, format)?
-        } else {
-            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
-        };
+    let detected_aligner = aligner::detect_aligner(aligner, path_to_aligner, chem)?;
+    let (aligner_options, gap_penalties) = if cli.illumina_5base
+        && matches!(
+            aligner,
+            Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3
+        ) {
+        options::build_five_base_aligner_options(cli, aligner, format)?
+    } else {
+        options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+    };
     // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
     // and the in-process rammap backend cannot drift (#1092). Must stay after
     // `resolve_mm2_max_length`, which dies first for a `--mm2_*` flag on a non-minimap aligner.
@@ -1089,8 +1332,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         ),
         // #787 5-Base mode (guarded above: PE + directional, minimap2 unconverted path).
         five_base: cli.illumina_5base,
+        five_base_chemistry: chem,
         five_base_deconvolution: cli.five_base_deconvolution,
-        five_base_index: cli.five_base_index.clone(),
+        five_base_index,
         five_base_umi_len: cli.five_base_umi_len,
         five_base_baseq: cli.five_base_baseq,
         five_base_min_mapq: cli.five_base_min_mapq,
@@ -1117,6 +1361,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         add_barcode: cli.add_barcode,
         add_umi: cli.add_umi,
         strand_id: cli.strand_id,
+        nucleotide_coverage: cli.nucleotide_coverage,
         output,
         read_processing,
         // Phase 9b: file-level worker count. `validate_multicore` (above) already
@@ -1361,7 +1606,7 @@ fn reject_unsupported_output_flags(cli: &Cli) -> Result<()> {
             "--non_bs_mm (extra XA non-bisulfite-mismatch tag) is not yet supported in v1.".into(),
         ));
     }
-    if cli.rg_tag {
+    if cli.rg_tag || cli.rg_id.is_some() || cli.rg_sample.is_some() {
         return Err(AlignerError::Unsupported(
             "--rg_tag/--rg_id/--rg_sample (read-group @RG/RG:Z) is not yet supported in v1.".into(),
         ));
@@ -1409,6 +1654,25 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
             "You may not select both --rammap and --minimap2. Make your pick!".into(),
         ));
     }
+    if cli.bwamem3 {
+        for (set, flag) in [
+            (cli.bowtie2, "--bowtie2"),
+            (cli.hisat2, "--hisat2"),
+            (cli.minimap2, "--minimap2"),
+            (cli.rammap, "--rammap"),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "You may not select both --bwamem3 and {flag}. Make your pick!"
+                )));
+            }
+        }
+        if !cli.illumina_5base {
+            return Err(AlignerError::Validation(
+                "--bwamem3 is only supported as a 5-Base engine (--illumina_5base).".into(),
+            ));
+        }
+    }
     // --illumina_5base (5-Base, #787) aligns to the UNCONVERTED genome with minimap2
     // (v1). It is mutually exclusive with the bisulfite engines that have no
     // unconverted-index path yet; `--minimap2` may co-occur (5-Base IS a minimap2
@@ -1420,6 +1684,10 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
                  --five_base_index) or the default minimap2 (genome FASTA)."
                     .into(),
             ));
+        }
+        // The index is resolved after genome discovery (`resolve_five_base_index`).
+        if cli.bwamem3 {
+            return Ok(Aligner::BwaMem3);
         }
         // bowtie2/hisat2 5-Base align the RAW reads to a user-provided UNCONVERTED
         // index (5-Base keeps full complexity, so a normal index works). minimap2 (the
@@ -1442,8 +1710,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
         }
         if cli.five_base_index.is_some() {
             return Err(AlignerError::Validation(
-                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2; the \
-                 default minimap2 5-Base path reads the genome FASTA directly."
+                "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2/--bwamem3; \
+                 the default minimap2 5-Base path reads the genome FASTA directly."
                     .into(),
             ));
         }
@@ -1451,7 +1719,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     }
     if cli.five_base_index.is_some() {
         return Err(AlignerError::Validation(
-            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2.".into(),
+            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2/--bwamem3."
+                .into(),
         ));
     }
     if cli.hisat2 {
@@ -1576,24 +1845,15 @@ fn validate_multicore(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-/// Flags that are recognised (parsed) but not yet *active* in this build — they
-/// take effect in a later phase. Returned so the caller can warn the user
-/// rather than silently accepting and ignoring them (code-review finding).
-pub fn deferred_flags(cli: &Cli) -> Vec<&'static str> {
-    let mut v = Vec::new();
-    let mut push = |cond: bool, name: &'static str| {
-        if cond {
-            v.push(name);
-        }
-    };
-    // NB: --skip/--upto/--gzip/--prefix ACTIVE as of Phase 2; --basename as of
-    // Phase 5; --unmapped/--ambiguous/--ambig_bam as of Phase 6; --multicore/
-    // --parallel as of Phase 9b — none listed here. --rg_tag/--slam/--non_bs_mm/
-    // --sam-no-hd are HARD-REJECTED (see reject_unsupported_output_flags).
-    // --nucleotide_coverage is wired in a later phase (reports).
-    push(cli.nucleotide_coverage, "--nucleotide_coverage");
-    push(cli.old_flag, "--old_flag");
-    v
+/// Reject `--old_flag`, which is parsed for Perl compatibility but not implemented.
+pub(crate) fn reject_old_flag(cli: &Cli) -> Result<()> {
+    if cli.old_flag {
+        return Err(AlignerError::Unsupported(
+            "--old_flag (the legacy pre-v0.8.3 SAM FLAG values) is not supported in this build."
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_format(cli: &Cli) -> Result<ReadFormat> {
@@ -1688,6 +1948,38 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
     Ok(ReadLayout::SingleEnd { reads })
 }
 
+/// Fail when two inputs (or pairs) would write the same output name ([`crate::aligner::output_stem`]).
+fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
+    let (reads, single_end_layout) = match layout {
+        ReadLayout::SingleEnd { reads } => (reads, true),
+        ReadLayout::PairedEnd { mates1, .. } => (mates1, false),
+    };
+    if reads.len() < 2 {
+        return Ok(());
+    }
+    let mut seen: Vec<(String, &String)> = Vec::new();
+    for read in reads {
+        let name = match &cli.basename {
+            Some(b) => b.clone(),
+            None => crate::aligner::output_stem(read, single_end_layout)?,
+        };
+        if let Some((_, first)) = seen.iter().find(|(n, _)| *n == name) {
+            return Err(AlignerError::Validation(format!(
+                "{first} and {read} would both write their output to the name '{name}', so \
+                 the second would overwrite the first. Rename one of them, or run them \
+                 separately{}.",
+                if cli.basename.is_some() {
+                    " (--basename names the output of a single input)"
+                } else {
+                    ""
+                }
+            )));
+        }
+        seen.push((name, read));
+    }
+    Ok(())
+}
+
 fn check_exists(file: &str) -> Result<()> {
     if Path::new(file).exists() {
         Ok(())
@@ -1765,7 +2057,8 @@ impl RunConfig {
         // A 5-Base run probes no converted index; report the index it does use.
         let index_lines = if self.five_base {
             format!(
-                "5-Base index:   {}\n",
+                "{:<16}{}\n",
+                format!("{} index:", self.five_base_chemistry.label()),
                 self.five_base_index
                     .as_ref()
                     .map(|p| p.display().to_string())
@@ -1784,11 +2077,14 @@ impl RunConfig {
         // The reason for a fallback is printed separately by `run`. 5-Base has
         // no converted reads at all, so it gets its own state.
         let converted = if self.five_base {
-            "none (5-Base aligns the raw reads to the unconverted genome)"
+            format!(
+                "none ({} aligns the raw reads to the unconverted genome)",
+                self.five_base_chemistry.label()
+            )
         } else if self.stream_converted.enabled {
-            "streamed to the aligner through FIFOs (no temp files)"
+            "streamed to the aligner through FIFOs (no temp files)".to_string()
         } else {
-            "written to the temp dir as files"
+            "written to the temp dir as files".to_string()
         };
         format!(
             "Bismark aligner (Rust) — resolved configuration\n\
@@ -1852,6 +2148,7 @@ pub fn run_config_stub(
         rammap_subprocess: false,
         rammap_inprocess_threads: 1,
         five_base: false,
+        five_base_chemistry: FiveBaseChemistry::Illumina5Base,
         five_base_deconvolution: false,
         five_base_index: None,
         five_base_umi_len: 0,
@@ -1894,6 +2191,7 @@ pub fn run_config_stub(
         add_barcode: false,
         add_umi: false,
         strand_id: false,
+        nucleotide_coverage: false,
         output: OutputTarget {
             output_dir: PathBuf::from("."),
             temp_dir: PathBuf::from("."),
@@ -1932,6 +2230,349 @@ mod tests {
     #[test]
     fn resolve_aligner_defaults_to_bowtie2() {
         assert_eq!(resolve_aligner(&cli_from(&[])).unwrap(), Aligner::Bowtie2);
+    }
+
+    #[test]
+    fn five_base_chemistry_names() {
+        use FiveBaseChemistry::*;
+        assert_eq!(Illumina5Base.flag(), "--illumina_5base");
+        assert_eq!(Taps.flag(), "--taps");
+        assert_eq!(Illumina5Base.engine_flags(), "--illumina_5base --bwamem3");
+        assert_eq!(Taps.engine_flags(), "--taps");
+        assert_eq!(Illumina5Base.label(), "5-Base");
+        assert_eq!(Taps.label(), "TAPS");
+        assert_eq!(Illumina5Base.bwamem3_meth(), "5base");
+        assert_eq!(Taps.bwamem3_meth(), "taps");
+        assert_eq!(FiveBaseChemistry::of(&cli_from(&["--taps"])), Taps);
+        assert_eq!(
+            FiveBaseChemistry::of(&cli_from(&["--illumina_5base"])),
+            Illumina5Base
+        );
+    }
+
+    fn taps_err(args: &[&str]) -> String {
+        let mut v = vec!["--taps", "--five_base_index", "/x/idx.fa"];
+        v.extend_from_slice(args);
+        expand_taps(&cli_from(&v)).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn taps_rejects_other_chemistry_and_engines() {
+        for flag in ["--illumina_5base", "--five_base"] {
+            let e = taps_err(&[flag]);
+            assert!(
+                e.contains("--taps") && e.contains("--illumina_5base") && e.contains("pick one"),
+                "{flag}: {e}"
+            );
+        }
+        for flag in ["--bowtie2", "--hisat2", "--minimap2", "--rammap"] {
+            let e = taps_err(&[flag]);
+            assert!(
+                e.contains("bwa-mem3 only") && e.contains(flag),
+                "{flag}: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn taps_rejects_five_base_only_options() {
+        for (args, flag) in [
+            (&["--five_base_duplex"][..], "--five_base_duplex"),
+            (&["--five_base_consensus"][..], "--five_base_consensus"),
+            (
+                &["--five_base_consensus_from_bam", "x.bam"][..],
+                "--five_base_consensus_from_bam",
+            ),
+            (
+                &["--five_base_deconvolution"][..],
+                "--five_base_deconvolution",
+            ),
+            (&["--five_base_deconv"][..], "--five_base_deconvolution"),
+            (&["--five_base_umi_qname"][..], "--five_base_umi_qname"),
+            (
+                &["--five_base_emit_multiplicity", "simplex"][..],
+                "--five_base_emit_multiplicity",
+            ),
+        ] {
+            let e = taps_err(args);
+            assert!(
+                e.contains(flag) && e.contains("Illumina 5-Base only, not TAPS"),
+                "{args:?}: {e}"
+            );
+        }
+        let e = taps_err(&["--five_base_min_mapq", "20"]);
+        assert!(
+            e.contains("--five_base_min_mapq") && e.contains("duplex/consensus"),
+            "{e}"
+        );
+        let e = taps_err(&["--five_base_umi_len", "8"]);
+        assert!(
+            e.contains("--five_base_umi_len") && e.contains("not validated for TAPS"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn taps_expands_once_and_accepts_bwamem3() {
+        let cli = cli_from(&["--taps", "--bwamem3", "--five_base_index", "/x/idx.fa"]);
+        let once = expand_taps(&cli).unwrap();
+        assert!(matches!(once, Cow::Owned(_)));
+        assert!(once.illumina_5base && once.bwamem3 && once.taps && once.taps_expanded);
+        let twice = expand_taps(&once).unwrap();
+        assert!(matches!(twice, Cow::Borrowed(_)));
+        assert_eq!(format!("{:?}", *twice), format!("{:?}", *once));
+        assert!(matches!(
+            expand_taps(&cli_from(&["--illumina_5base"])).unwrap(),
+            Cow::Borrowed(_)
+        ));
+        assert!(
+            expand_taps(&cli_from(&[
+                "--taps",
+                "--five_base_umi_len",
+                "0",
+                "--five_base_min_mapq",
+                "0"
+            ]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn resolve_expands_taps_before_the_five_base_guards() {
+        let e = resolve(
+            &cli_from(&["--taps", "--bowtie2", "--five_base_index", "/x/i.fa"]),
+            "c".into(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("bwa-mem3 only"), "{e}");
+        let taps = cli_from(&["--taps", "--five_base_index", "/x/i.fa"]);
+        let expanded = expand_taps(&taps).unwrap();
+        assert_eq!(resolve_aligner(&expanded).unwrap(), Aligner::BwaMem3);
+    }
+
+    #[test]
+    fn taps_scope_guards_name_taps() {
+        let (_t, g, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            g.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+        let base = ["--five_base_index", "/x/i.fa", "--genome", g];
+        let pe = ["-1", r1, "-2", r2];
+        let cases: [(&[&str], &str); 6] = [
+            (&[], "paired-end only"),
+            (&["--non_directional"], "directional only"),
+            (&["--pbat"], "directional only"),
+            (&["--slam"], "--slam"),
+            (&["--fasta"], "FASTQ input"),
+            (&["--combined_index"], "--combined_index"),
+        ];
+        for (i, (extra, want)) in cases.into_iter().enumerate() {
+            for (mode, name) in [
+                (&["--taps"][..], "--taps"),
+                (&["--illumina_5base", "--bwamem3"][..], "--illumina_5base"),
+            ] {
+                let mut v: Vec<&str> = mode.to_vec();
+                v.extend_from_slice(&base);
+                if i > 0 {
+                    v.extend_from_slice(&pe);
+                }
+                v.extend_from_slice(extra);
+                let e = resolve(&cli_from(&v), "c".into()).unwrap_err().to_string();
+                assert!(
+                    e.starts_with(name) && e.contains(want),
+                    "{mode:?} {extra:?}: {e}"
+                );
+                if name == "--taps" {
+                    assert!(
+                        !e.contains("--illumina_5base") && !e.contains("5-Base"),
+                        "{e}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bwamem3_missing_index_names_the_mode() {
+        let (_t, g, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            g.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+        for (mode, name) in [
+            (&["--taps"][..], "--taps requires"),
+            (
+                &["--illumina_5base", "--bwamem3"][..],
+                "--illumina_5base --bwamem3 requires",
+            ),
+        ] {
+            let mut v: Vec<&str> = mode.to_vec();
+            v.extend_from_slice(&["--genome", g, "-1", r1, "-2", r2]);
+            let e = resolve(&cli_from(&v), "c".into()).unwrap_err().to_string();
+            assert!(
+                e.starts_with(name)
+                    && e.contains("--five_base_index")
+                    && e.contains("bwa-mem3 index --meth")
+                    && e.contains("bismark_genome_preparation --bwamem3")
+                    && e.contains("Bwamem3_Index"),
+                "{mode:?}: {e}"
+            );
+        }
+    }
+
+    fn stub_bwamem3_index(prefix: &Path) {
+        for s in BWAMEM3_INDEX_SUFFIXES {
+            std::fs::write(format!("{}.{s}", prefix.display()), b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn bwamem3_index_found_in_the_genome_folder() {
+        let (_t, g, _r1, _r2) = fasta_only_genome_and_reads();
+        let dir = g.join("Bwamem3_Index");
+        std::fs::create_dir(&dir).unwrap();
+        stub_bwamem3_index(&dir.join("genome.fa"));
+        for mode in [&["--taps"][..], &["--illumina_5base", "--bwamem3"][..]] {
+            let cli = expand_taps(&cli_from(mode)).unwrap().into_owned();
+            assert_eq!(
+                resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+                Some(dir.join("genome.fa")),
+                "{mode:?}"
+            );
+        }
+
+        // An explicit --five_base_index wins over the genome folder's index.
+        let other = g.parent().unwrap().join("other.fa");
+        stub_bwamem3_index(&other);
+        let cli = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            other.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .into_owned();
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+            Some(other)
+        );
+
+        // The index folder itself stands for its prefix.
+        let cli = expand_taps(&cli_from(&[
+            "--taps",
+            "--five_base_index",
+            dir.to_str().unwrap(),
+        ]))
+        .unwrap()
+        .into_owned();
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::BwaMem3, &g).unwrap(),
+            Some(dir.join("genome.fa"))
+        );
+        // A folder that holds Bwamem3_Index/ gets a hint; "leave it out" only for the --genome folder.
+        let folder_err = |folder: &Path, genome: &Path| {
+            expand_taps(&cli_from(&[
+                "--taps",
+                "--five_base_index",
+                folder.to_str().unwrap(),
+            ]))
+            .map(|c| resolve_five_base_index(&c, Aligner::BwaMem3, genome))
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+        };
+        let gc = std::fs::canonicalize(&g).unwrap();
+        let e = folder_err(&g, &gc);
+        assert!(
+            e.contains(&format!("did you mean {}?", dir.display()))
+                && e.contains("leave out --five_base_index"),
+            "{e}"
+        );
+        let other_genome = tempfile::tempdir().unwrap();
+        let e = folder_err(&g, other_genome.path());
+        assert!(
+            e.contains("did you mean") && !e.contains("leave out"),
+            "{e}"
+        );
+        let empty = tempfile::tempdir().unwrap();
+        let e = folder_err(empty.path(), &gc);
+        assert!(e.contains("is a folder; pass the index prefix"), "{e}");
+
+        // Other engines never pick it up.
+        let cli = cli_from(&["--illumina_5base"]);
+        assert_eq!(
+            resolve_five_base_index(&cli, Aligner::Minimap2, &g).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn partial_genome_folder_index_names_the_file_and_the_rebuild() {
+        let (_t, g, _r1, _r2) = fasta_only_genome_and_reads();
+        let dir = g.join("Bwamem3_Index");
+        std::fs::create_dir(&dir).unwrap();
+        stub_bwamem3_index(&dir.join("genome.fa"));
+        std::fs::remove_file(dir.join("genome.fa.meth.bwt.2bit.64")).unwrap();
+        let cli = expand_taps(&cli_from(&["--taps"])).unwrap().into_owned();
+        let e = resolve_five_base_index(&cli, Aligner::BwaMem3, &g)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("genome.fa.meth.bwt.2bit.64")
+                && e.contains("bismark_genome_preparation --bwamem3")
+                && !e.contains("--five_base_index"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn summary_names_taps() {
+        let mut c = run_config_stub(
+            Aligner::BwaMem3,
+            Mm2Preset::Sr,
+            PathBuf::from("ct"),
+            PathBuf::from("ga"),
+            LibraryType::Directional,
+            ReadLayout::PairedEnd {
+                mates1: vec!["a".into()],
+                mates2: vec!["b".into()],
+            },
+        );
+        c.five_base = true;
+        c.five_base_index = Some(PathBuf::from("/x/g.fa"));
+        let five = c.summary();
+        assert!(five.contains("5-Base index:   /x/g.fa\n"), "{five}");
+        assert!(
+            five.contains("none (5-Base aligns the raw reads to the unconverted genome)"),
+            "{five}"
+        );
+        c.five_base_chemistry = FiveBaseChemistry::Taps;
+        let s = c.summary();
+        assert!(s.contains("TAPS index:     /x/g.fa\n"), "{s}");
+        assert!(
+            s.contains("none (TAPS aligns the raw reads to the unconverted genome)"),
+            "{s}"
+        );
+        assert!(!s.contains("5-Base"), "{s}");
+    }
+
+    #[test]
+    fn run_config_stub_defaults_to_illumina_5base_chemistry() {
+        let c = run_config_stub(
+            Aligner::BwaMem3,
+            Mm2Preset::Sr,
+            PathBuf::from("ct"),
+            PathBuf::from("ga"),
+            LibraryType::Directional,
+            ReadLayout::PairedEnd {
+                mates1: vec!["a".into()],
+                mates2: vec!["b".into()],
+            },
+        );
+        assert_eq!(c.five_base_chemistry, FiveBaseChemistry::Illumina5Base);
     }
 
     /// A genome folder holding only a FASTA, plus empty read files — the #1099 shape.
@@ -2226,6 +2867,75 @@ mod tests {
             resolve_aligner(&cli_from(&["--minimap2"])).unwrap(),
             Aligner::Minimap2
         );
+    }
+
+    #[test]
+    fn bwamem3_index_files_checked_with_build_hint() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("g.fa");
+        // No plain .bwt.2bit.64: nf-core's `bwamem3/index --meth` omits it.
+        let all = [
+            "amb",
+            "ann",
+            "pac",
+            "meth.amb",
+            "meth.ann",
+            "meth.pac",
+            "meth.bwt.2bit.64",
+        ];
+        for s in all {
+            std::fs::write(format!("{}.{s}", p.display()), b"").unwrap();
+        }
+        assert!(check_bwamem3_index_files(&p, IndexSource::Explicit).is_ok());
+        for missing in all {
+            let f = format!("{}.{missing}", p.display());
+            std::fs::remove_file(&f).unwrap();
+            let e = check_bwamem3_index_files(&p, IndexSource::Explicit)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                e.contains(&format!("g.fa.{missing}")) && e.contains("bwa-mem3 index --meth"),
+                "{e}"
+            );
+            std::fs::write(&f, b"").unwrap();
+        }
+    }
+
+    #[test]
+    fn resolve_aligner_bwamem3_rules() {
+        let ok = cli_from(&[
+            "--illumina_5base",
+            "--bwamem3",
+            "--five_base_index",
+            "/x/idx.fa",
+        ]);
+        assert_eq!(resolve_aligner(&ok).unwrap(), Aligner::BwaMem3);
+
+        let e = resolve_aligner(&cli_from(&["--bwamem3"]))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("only supported as a 5-Base engine"), "{e}");
+
+        // Without --five_base_index the engine still resolves; the index is checked later.
+        assert_eq!(
+            resolve_aligner(&cli_from(&["--illumina_5base", "--bwamem3"])).unwrap(),
+            Aligner::BwaMem3
+        );
+
+        for other in ["--bowtie2", "--hisat2", "--minimap2", "--rammap"] {
+            let c = cli_from(&[
+                "--illumina_5base",
+                "--bwamem3",
+                other,
+                "--five_base_index",
+                "/x/idx.fa",
+            ]);
+            let e = resolve_aligner(&c).unwrap_err().to_string();
+            assert!(
+                e.contains("--bwamem3") && e.contains("Make your pick"),
+                "{other}: {e}"
+            );
+        }
     }
 
     #[test]

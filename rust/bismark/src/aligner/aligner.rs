@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::aligner::config::Aligner;
+use crate::aligner::config::{Aligner, FiveBaseChemistry};
 use crate::aligner::error::{AlignerError, Result};
 
 /// The Bowtie 2 version this port pins for the byte-identity gate.
@@ -26,6 +26,24 @@ pub const PINNED_MINIMAP2_VERSION: &str = "2.31-r1302";
 /// The rammap version this port pins (concordance gate, NOT byte-identity). rammap
 /// reports `rammap 1.1.1` (a `rammap ` banner prefix, unlike minimap2's bare number).
 pub const PINNED_RAMMAP_VERSION: &str = "1.1.1";
+
+/// The bwa-mem3 version CI and the container install for the 5-Base `--bwamem3` engine.
+pub const PINNED_BWAMEM3_VERSION: &str = "0.18.0";
+
+/// The bwa-mem3 versions the 5-Base engine is validated against; others warn.
+pub const VALIDATED_BWAMEM3_VERSIONS: &[&str] = &["0.16.0", "0.17.0", "0.18.0"];
+
+/// [`VALIDATED_BWAMEM3_VERSIONS`] as a list for messages: `0.16.0, 0.17.0 and 0.18.0`.
+pub(crate) fn validated_bwamem3_versions() -> String {
+    match VALIDATED_BWAMEM3_VERSIONS.split_last() {
+        Some((last, [])) => last.to_string(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// The first bwa-mem3 release with `--meth=5base`.
+pub const MIN_BWAMEM3_VERSION: (u32, u32, u32) = (0, 16, 0);
 
 /// A located, working aligner.
 #[derive(Debug, Clone)]
@@ -44,16 +62,18 @@ fn binary_name(kind: Aligner) -> &'static str {
         Aligner::Hisat2 => "hisat2",
         Aligner::Minimap2 => "minimap2",
         Aligner::Rammap => "rammap",
+        Aligner::BwaMem3 => "bwa-mem3",
     }
 }
 
-/// The pinned version `kind` is byte-identity-validated against.
+/// The pinned version of `kind`; bwa-mem3 is validated against [`VALIDATED_BWAMEM3_VERSIONS`].
 fn pinned_version(kind: Aligner) -> &'static str {
     match kind {
         Aligner::Bowtie2 => PINNED_BOWTIE2_VERSION,
         Aligner::Hisat2 => PINNED_HISAT2_VERSION,
         Aligner::Minimap2 => PINNED_MINIMAP2_VERSION,
         Aligner::Rammap => PINNED_RAMMAP_VERSION,
+        Aligner::BwaMem3 => PINNED_BWAMEM3_VERSION,
     }
 }
 
@@ -64,6 +84,7 @@ fn path_flag(kind: Aligner) -> &'static str {
         Aligner::Hisat2 => "--path_to_hisat2",
         Aligner::Minimap2 => "--path_to_minimap2",
         Aligner::Rammap => "--path_to_rammap",
+        Aligner::BwaMem3 => "--path_to_bwamem3",
     }
 }
 
@@ -90,8 +111,13 @@ fn resolve_aligner_path(kind: Aligner, path_to: Option<&Path>) -> Result<PathBuf
 
 /// Detect `kind`: resolve the path, run `--version`, parse the version, and warn
 /// if it is not the pinned version. Byte-identity is guaranteed only against the
-/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2).
-pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedAligner> {
+/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2). `chem` names the 5-Base-path mode in the
+/// bwa-mem3 messages; other aligners ignore it.
+pub fn detect_aligner(
+    kind: Aligner,
+    path_to: Option<&Path>,
+    chem: FiveBaseChemistry,
+) -> Result<DetectedAligner> {
     let path = resolve_aligner_path(kind, path_to)?;
 
     let not_working = || AlignerError::AlignerNotWorking {
@@ -100,8 +126,14 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
         path_flag: path_flag(kind).to_string(),
     };
 
+    // bwa-mem3 has no `--version` flag (it exits 1); its version is the `version` subcommand.
+    let version_arg = if kind == Aligner::BwaMem3 {
+        "version"
+    } else {
+        "--version"
+    };
     let output = Command::new(&path)
-        .arg("--version")
+        .arg(version_arg)
         .output()
         .map_err(|_| not_working())?;
 
@@ -120,7 +152,37 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
         // rammap prints `rammap 1.1.1` (a banner prefix) — take the last token.
         Aligner::Rammap => parse_rammap_version(&stdout),
         Aligner::Bowtie2 | Aligner::Hisat2 => parse_bowtie2_version(&stdout),
+        Aligner::BwaMem3 => parse_bwamem3_version(&stdout),
     };
+    if kind == Aligner::BwaMem3 && !parsed.as_deref().is_some_and(bwamem3_version_ok) {
+        let found =
+            parsed.unwrap_or_else(|| stdout.lines().next().unwrap_or("").trim().to_string());
+        if found.is_empty() {
+            return Err(AlignerError::Validation(format!(
+                "`bwa-mem3 version` printed no version ({}); {} needs \
+                 bwa-mem3 >= {}.{}.{}.",
+                path.display(),
+                chem.engine_flags(),
+                MIN_BWAMEM3_VERSION.0,
+                MIN_BWAMEM3_VERSION.1,
+                MIN_BWAMEM3_VERSION.2
+            )));
+        }
+        let why = match chem {
+            FiveBaseChemistry::Illumina5Base => "the first release with --meth=5base",
+            FiveBaseChemistry::Taps => {
+                "the first release Bismark's bwa-mem3 engine is validated on"
+            }
+        };
+        return Err(AlignerError::Validation(format!(
+            "bwa-mem3 {found} is too old or unrecognised: {} needs bwa-mem3 \
+             >= {}.{}.{} ({why}).",
+            chem.engine_flags(),
+            MIN_BWAMEM3_VERSION.0,
+            MIN_BWAMEM3_VERSION.1,
+            MIN_BWAMEM3_VERSION.2
+        )));
+    }
     let version = parsed.unwrap_or_else(|| {
         stdout
             .lines()
@@ -131,7 +193,18 @@ pub fn detect_aligner(kind: Aligner, path_to: Option<&Path>) -> Result<DetectedA
     });
 
     let pinned = pinned_version(kind);
-    if version != pinned {
+    let validated = if kind == Aligner::BwaMem3 {
+        VALIDATED_BWAMEM3_VERSIONS.contains(&version.as_str())
+    } else {
+        version == pinned
+    };
+    if !validated && kind == Aligner::BwaMem3 {
+        eprintln!(
+            "Warning: detected bwa-mem3 {version}; Bismark's {} engine is validated against {}.",
+            chem.label(),
+            validated_bwamem3_versions()
+        );
+    } else if !validated {
         eprintln!(
             "Warning: detected {} {version}, but byte-identity is only guaranteed against the \
              pinned version {pinned}.",
@@ -186,6 +259,22 @@ fn parse_rammap_version(stdout: &str) -> Option<String> {
         .map(str::to_string) // "rammap 1.1.1" -> "1.1.1"
 }
 
+/// The leading `x.y.z` of `bwa-mem3 version`'s first non-empty line (`0.16.0`, `0.16.0-dirty`).
+pub(crate) fn parse_bwamem3_version(stdout: &str) -> Option<String> {
+    let line = stdout.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let end = line
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(line.len());
+    let triple = &line[..end];
+    is_version_triple(triple).then(|| triple.to_string())
+}
+
+/// `true` if `v` is an `x.y.z` at or above [`MIN_BWAMEM3_VERSION`].
+pub(crate) fn bwamem3_version_ok(v: &str) -> bool {
+    let p: Vec<u32> = v.split('.').filter_map(|x| x.parse().ok()).collect();
+    p.len() == 3 && (p[0], p[1], p[2]) >= MIN_BWAMEM3_VERSION
+}
+
 /// `true` if `s` is `<int>.<int>.<int>`.
 fn is_version_triple(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
@@ -198,6 +287,7 @@ fn is_version_triple(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aligner::config::FiveBaseChemistry::{Illumina5Base, Taps};
 
     #[test]
     fn parses_standard_bowtie2_version_line() {
@@ -256,6 +346,110 @@ mod tests {
         assert!(!is_version_triple("2.5.x"));
         assert!(is_version_triple("2.5.5"));
         assert!(is_version_triple("10.0.123"));
+    }
+
+    /// bwa-mem3 detection metadata: binary, pin, path flag, output token and report name.
+    #[test]
+    fn bwamem3_detection_metadata() {
+        assert_eq!(binary_name(Aligner::BwaMem3), "bwa-mem3");
+        assert_eq!(pinned_version(Aligner::BwaMem3), "0.18.0");
+        assert_eq!(VALIDATED_BWAMEM3_VERSIONS, ["0.16.0", "0.17.0", "0.18.0"]);
+        assert_eq!(validated_bwamem3_versions(), "0.16.0, 0.17.0 and 0.18.0");
+        assert!(VALIDATED_BWAMEM3_VERSIONS.contains(&PINNED_BWAMEM3_VERSION));
+        assert_eq!(path_flag(Aligner::BwaMem3), "--path_to_bwamem3");
+        assert_eq!(Aligner::BwaMem3.token(), "bwamem3");
+        assert_eq!(Aligner::BwaMem3.name(), "bwa-mem3");
+    }
+
+    #[test]
+    fn parses_bwamem3_version_leading_triple() {
+        assert_eq!(
+            parse_bwamem3_version("0.16.0\nCompiler: gcc 15.2.0\n").as_deref(),
+            Some("0.16.0")
+        );
+        assert_eq!(
+            parse_bwamem3_version("0.16.0-dirty\n").as_deref(),
+            Some("0.16.0")
+        );
+        assert_eq!(
+            parse_bwamem3_version("  0.17.0-r12  \n").as_deref(),
+            Some("0.17.0")
+        );
+        assert_eq!(parse_bwamem3_version("bwa-mem3 build\n"), None);
+        assert_eq!(parse_bwamem3_version(""), None);
+    }
+
+    #[test]
+    fn bwamem3_minimum_version_gate() {
+        assert!(bwamem3_version_ok("0.16.0"));
+        assert!(bwamem3_version_ok("0.17.0"));
+        assert!(bwamem3_version_ok("1.0.0"));
+        assert!(!bwamem3_version_ok("0.15.1"));
+        assert!(!bwamem3_version_ok("0.9.9"));
+        assert!(!bwamem3_version_ok("unknown"));
+    }
+
+    #[cfg(unix)]
+    fn fake_bwamem3(script: &str) -> tempfile::TempDir {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bwa-mem3");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A test thread forking while the script was open for writing makes exec fail briefly.
+        for _ in 0..100 {
+            match std::process::Command::new(&bin).arg("version").output() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => break,
+            }
+        }
+        dir
+    }
+
+    /// `bwa-mem3 --version` exits 1; detection must use the `version` subcommand.
+    #[cfg(unix)]
+    #[test]
+    fn detect_bwamem3_uses_version_subcommand() {
+        let dir = fake_bwamem3(
+            "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.16.0; echo 'Compiler: gcc 15.2.0'; exit 0; }\n\
+             echo \"ERROR: unknown command '$1'\" >&2; exit 1\n",
+        );
+        let d = detect_aligner(Aligner::BwaMem3, Some(dir.path()), Illumina5Base).unwrap();
+        assert_eq!(d.version, "0.16.0");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_bwamem3_rejects_too_old() {
+        let dir = fake_bwamem3("#!/bin/sh\necho 0.15.1\n");
+        let err = detect_aligner(Aligner::BwaMem3, Some(dir.path()), Illumina5Base)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0.15.1") && err.contains("0.16.0"), "{err}");
+        assert!(err.contains("--illumina_5base --bwamem3 needs"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_bwamem3_messages_name_taps_under_taps() {
+        let old = fake_bwamem3("#!/bin/sh\necho 0.15.1\n");
+        let e = detect_aligner(Aligner::BwaMem3, Some(old.path()), Taps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("--taps needs bwa-mem3 >= 0.16.0") && !e.contains("--illumina_5base"),
+            "{e}"
+        );
+        let empty = fake_bwamem3("#!/bin/sh\nexit 0\n");
+        let e = detect_aligner(Aligner::BwaMem3, Some(empty.path()), Taps)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("--taps needs") && !e.contains("--illumina_5base"),
+            "{e}"
+        );
     }
 
     /// Phase 3 (T1): the rammap detection metadata (binary / pin / path flag).

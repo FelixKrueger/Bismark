@@ -16,6 +16,7 @@ the `NM` identity matters, since Bismark counts soft-clipped bases as mismatches
 | File | What |
 |---|---|
 | `softclip_indel_se.bam` | 8 single-end records, bisulfite convention, real `XM`/`XR`/`XG`/`MD`/`NM` |
+| `softclip_indel_se.cram` | The same BAM as CRAM, written by samtools 1.25 (see below). samtools drops `MD` everywhere and `NM` wherever it matches the reference, so only the two `*_softclip` records keep `NM`. Tests that the CRAM reader regenerates them |
 | `pUC19.fa` | The reference (2686 bp). Present so a test can build an **independent** from-genome oracle rather than re-deriving the reference from `MD` (PLAN §9.5) |
 | `softclip_indel_se.fq` | The input reads |
 | `generate_reads.py` | The read generator — regenerates `softclip_indel_se.fq` from `pUC19.fa` |
@@ -67,6 +68,14 @@ gzcat test_files/pUC19.fa.gz > genome/pUC19.fa
 bismark_genome_preparation --bowtie2 genome/
 python3 generate_reads.py genome/pUC19.fa reads.fq
 bismark --genome genome/ --local --output_dir out/ reads.fq
+```
+
+The CRAM, with the local `UR:` path removed from the header:
+
+```bash
+samtools view --no-PG -C -T pUC19.fa -o tmp.cram softclip_indel_se.bam
+samtools view -H --no-PG tmp.cram | sed 's/\tUR:[^\t]*//' > h.sam
+samtools reheader --no-PG h.sam tmp.cram > softclip_indel_se.cram
 ```
 
 Reads are built from pUC19 substrings with `C→T` applied outside CpG context (so CpG calls are

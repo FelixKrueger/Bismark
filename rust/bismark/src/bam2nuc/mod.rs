@@ -25,54 +25,71 @@ pub mod cli;
 pub mod count;
 pub mod error;
 pub mod freqs;
-pub mod genome;
 pub mod output_name;
 pub mod report;
 
+pub use crate::io::genome::Genome;
 pub use cli::{Cli, ResolvedConfig};
 pub use error::BismarkBam2nucError;
-pub use genome::Genome;
 
 /// Run the nucleotide-coverage report (Perl `bam2nuc`'s top-level flow,
 /// `:36-61`):
 /// 1. Load the genome into memory.
 /// 2. `--genomic_composition_only` → compute + write the cache, then exit.
 /// 3. Otherwise, for each input file (argv order): gate the format (accept
-///    `.bam`; reject `.sam`/`.cram`), resolve the genomic composition (computed
+///    BAM and CRAM; reject SAM), resolve the genomic composition (computed
 ///    once for file #1, then reused), count the reads, and write
 ///    `<sample>.nucleotide_stats.txt`.
 pub fn run(config: &ResolvedConfig) -> Result<(), BismarkBam2nucError> {
-    use std::io::Write;
+    let genome = load_genome(&config.genome_folder)?;
+    run_with_genome(config, &genome)
+}
 
-    let genome = Genome::load(&config.genome_folder)?;
+/// Load `genome_folder` as bam2nuc reads it, and report how many sequences it holds.
+pub fn load_genome(genome_folder: &std::path::Path) -> Result<Genome, BismarkBam2nucError> {
+    let genome = Genome::load(genome_folder, &crate::io::genome::FASTA_TIERS_WITH_GZ)?;
     eprintln!(
         "Stored sequence information of {} chromosomes/scaffolds in total",
         genome.len()
     );
+    Ok(genome)
+}
+
+/// [`run`] on a genome that is already loaded.
+pub fn run_with_genome(
+    config: &ResolvedConfig,
+    genome: &Genome,
+) -> Result<(), BismarkBam2nucError> {
+    use std::io::Write;
 
     // --genomic_composition_only: compute + write the cache (or reuse), exit.
     if config.genomic_composition_only {
-        freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
+        freqs::get_genomic_frequencies(genome, &config.genome_folder, &config.output_dir)?;
         eprintln!("Finished processing genomic nucleotide frequencies");
         return Ok(());
     }
 
     for infile in &config.inputs {
-        // Input-format gate (content sniff): accept BAM; reject SAM (SPEC Q2)
-        // and CRAM (SPEC Q3). Done before counting — for a `.bam` the output
+        // Input-format gate (content sniff): accept BAM and CRAM; reject SAM
+        // (SPEC Q2). Done before counting — for a `.bam`/`.cram` the output
         // name always derives cleanly, so the observable outcome matches Perl
         // (which derives the name after counting).
-        match crate::io::AlignmentKind::from_path(infile)? {
-            crate::io::AlignmentKind::Bam => {}
-            crate::io::AlignmentKind::Sam => return Err(BismarkBam2nucError::SamNotSupported),
-            crate::io::AlignmentKind::Cram => return Err(BismarkBam2nucError::CramNotSupported),
+        if crate::io::AlignmentKind::from_path(infile)? == crate::io::AlignmentKind::Sam {
+            return Err(BismarkBam2nucError::SamNotSupported);
         }
 
         // Genomic composition: reused from the genome-folder cache after file #1.
         let genomic =
-            freqs::get_genomic_frequencies(&genome, &config.genome_folder, &config.output_dir)?;
+            freqs::get_genomic_frequencies(genome, &config.genome_folder, &config.output_dir)?;
 
-        let (sample, stats) = count::count_reads_in_file(&genome, infile)?;
+        let (sample, stats) = count::count_reads_in_file(
+            genome,
+            infile,
+            config.cram_ref.as_deref(),
+            config.paired,
+            config.paired_forced_by_user,
+        )
+        .inspect_err(|_| eprintln!("Failed on input {}", infile.display()))?;
         eprintln!(
             "Processed {} reads ({} skipped for an InDel/softclip/skip CIGAR)",
             stats.total, stats.skipped

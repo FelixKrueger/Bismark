@@ -60,6 +60,7 @@ pub mod options;
 pub mod output;
 pub mod parallel;
 pub mod report;
+mod staging;
 pub mod stream;
 pub mod ubam;
 
@@ -81,6 +82,7 @@ use crate::aligner::align::{
 };
 use crate::aligner::aux_out::AuxKind;
 use crate::aligner::config::{Aligner, LibraryType, Mm2Preset, ReadFormat, ReadLayout, ScoreModel};
+use crate::aligner::convert::open_reader;
 use crate::aligner::genome::{Genome, read_genome_into_memory};
 use crate::aligner::merge::{
     BestAlignment, BestAlignmentPaired, Counters, Decision, DecisionPaired,
@@ -161,20 +163,32 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
     )
 }
 
-/// Never-silent notice for an `--illumina_5base` run, naming the engine that runs.
-fn five_base_notice(aligner: Aligner) -> String {
-    format!(
-        "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
-         with {} to the UNCONVERTED genome and methylation is called with inverted \
-         polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
-         NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
-        aligner.name()
-    )
+/// Never-silent notice for a run on the 5-Base path, naming the chemistry and the engine.
+fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String {
+    match chem {
+        config::FiveBaseChemistry::Illumina5Base => format!(
+            "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
+             with {} to the UNCONVERTED genome and methylation is called with inverted \
+             polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
+            aligner.name()
+        ),
+        config::FiveBaseChemistry::Taps => format!(
+            "Note: --taps is the TAPS (mC->T) mode: reads are aligned with {} to the \
+             UNCONVERTED genome and methylation is called with inverted polarity (a read T at a \
+             genomic C = methylated). Directional, paired-end only. NOT byte-identical (Perl \
+             Bismark has no TAPS oracle); validated on public TAPS data (see the TAPS guide).",
+            aligner.name()
+        ),
+    }
 }
 
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    let expanded = config::expand_taps(cli)?;
+    // Everything below, both standalone dispatches included, sees the expanded flags.
+    let cli: &cli::Cli = &expanded;
     // Mutual exclusion FIRST: both of the standalone-over-existing-BAM paths `return`, so a
     // check placed beside either dispatch would never fire for the other one.
     if !cli.five_base_consensus_from_bam.is_empty() && !cli.five_base_bisulfite_bam.is_empty() {
@@ -196,10 +210,22 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                 .into(),
         ));
     }
+    // The standalone paths below return before resolve(), which handles these flags.
+    if !cli.five_base_consensus_from_bam.is_empty() || !cli.five_base_bisulfite_bam.is_empty() {
+        config::reject_old_flag(cli)?;
+        if cli.nucleotide_coverage {
+            return Err(AlignerError::Validation(
+                "--nucleotide_coverage applies to an alignment run; it has no effect on \
+                 --five_base_consensus_from_bam or --five_base_bisulfite_bam. Run \
+                 `bismark bam2nuc` on their output instead."
+                    .into(),
+            ));
+        }
+    }
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
     if !cli.five_base_consensus_from_bam.is_empty() {
-        return run_five_base_consensus_standalone(cli, &command_line);
+        return staging::scope(|| run_five_base_consensus_standalone(cli, &command_line));
     }
     // #1095 standalone bisulfite-convention re-encode over EXISTING BAM(s) — same shape,
     // but needs no genome: the reference is reconstructed per record from MD.
@@ -214,14 +240,6 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     // the run (the transcode FASTQ is consumed by BOTH the convert step and the
     // methylation-call re-read, so cleanup must follow the pipeline).
     let alt_input_temp_dirs = resolve_alt_inputs(&mut config)?;
-    let deferred = config::deferred_flags(cli);
-    if !deferred.is_empty() {
-        eprintln!(
-            "Note: these options are recognised but not yet active in this build \
-             (wired in a later phase): {}",
-            deferred.join(", ")
-        );
-    }
     if let Some(n) = config.hisat2_multicore_remap {
         eprintln!("{}", hisat2_multicore_remap_notice(n));
     }
@@ -251,7 +269,10 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
 
     // Never-silent opt-in notice (#787): 5-Base has no Perl oracle, so it is not byte-identical.
     if config.five_base {
-        eprintln!("{}", five_base_notice(config.aligner));
+        eprintln!(
+            "{}",
+            five_base_notice(config.aligner, config.five_base_chemistry)
+        );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
     // minimap2 reimplementation — concordance-validated, NOT byte-identical to
@@ -312,13 +333,93 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
         }
     }
     eprintln!("{}", config.summary());
-    let result = reject_crlf_inputs(&config.layout).and_then(|()| pipeline(&config));
+    let result = reject_crlf_inputs(&config.layout)
+        .and_then(|()| staging::scope(|| pipeline(&config)))
+        .and_then(|()| run_nucleotide_coverage(&config));
     // Best-effort cleanup of the alternative-input transcode temp dirs (the plan's
     // "cleaned up with the other temps"), regardless of pipeline success/failure.
     for dir in &alt_input_temp_dirs {
         let _ = std::fs::remove_dir_all(dir);
     }
     result
+}
+
+/// `--nucleotide_coverage` (Perl 931-946): bam2nuc on every input's final BAM, in
+/// `--output_dir`, after the alignment has finished.
+fn run_nucleotide_coverage(config: &RunConfig) -> Result<()> {
+    if !config.nucleotide_coverage {
+        return Ok(());
+    }
+    // The layout, not bam2nuc's @PG sniff: positional paired uBAM/BINSEQ/CRAM input has no `-1`/`-2`.
+    let (reads, paired): (&[String], bool) = match &config.layout {
+        ReadLayout::SingleEnd { reads } => (reads, false),
+        ReadLayout::PairedEnd { mates1, .. } => (mates1, true),
+    };
+    let tok = config.aligner.token();
+    let pe = if paired { "_pe" } else { "" };
+    let mut output_dir = config.output.output_dir.to_string_lossy().into_owned();
+    if !output_dir.is_empty() && !output_dir.ends_with('/') {
+        output_dir.push('/');
+    }
+    let parent_dir = std::env::current_dir()?;
+    let failed = |e: crate::bam2nuc::BismarkBam2nucError| {
+        AlignerError::Validation(format!(
+            "alignment outputs are complete; bam2nuc (--nucleotide_coverage) failed: {e}"
+        ))
+    };
+    let bams: Vec<PathBuf> = reads
+        .iter()
+        .map(|read| {
+            derive_output_path(
+                read,
+                config,
+                &format!("_bismark_{tok}{pe}.bam"),
+                &format!("{pe}.bam"),
+            )
+        })
+        .collect();
+    // Stats from an earlier run must not sit next to a BAM this run rewrote.
+    for bam in &bams {
+        remove_stats_file(&output_dir, bam);
+    }
+    eprintln!("Now calculating observed and expected nucleotide coverage statistics...");
+    let genome = crate::bam2nuc::load_genome(&config.genome.genome_dir).map_err(failed)?;
+    // One BAM per call, so an input without usable reads does not skip the next one.
+    for bam in bams {
+        let bam2nuc = crate::bam2nuc::ResolvedConfig {
+            inputs: vec![bam.clone()],
+            genome_folder: config.genome.genome_dir.clone(),
+            output_dir: output_dir.clone(),
+            parent_dir: parent_dir.clone(),
+            genomic_composition_only: false,
+            cram_ref: None,
+            paired: Some(paired),
+            paired_forced_by_user: false,
+        };
+        if let Err(e) = crate::bam2nuc::run_with_genome(&bam2nuc, &genome) {
+            remove_stats_file(&output_dir, &bam);
+            if !matches!(e, crate::bam2nuc::BismarkBam2nucError::ZeroDivision { .. }) {
+                return Err(failed(e));
+            }
+            eprintln!(
+                "Warning: no nucleotide coverage statistics for {}: {e}",
+                bam.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Remove `bam`'s stats file, which `bismark report` would otherwise read. A directory
+/// at that path is left alone.
+fn remove_stats_file(output_dir: &str, bam: &Path) {
+    let Ok(name) = crate::bam2nuc::output_name::derive_output_name(bam) else {
+        return;
+    };
+    let stats = PathBuf::from(format!("{output_dir}{name}"));
+    if std::fs::symlink_metadata(&stats).is_ok_and(|m| !m.is_dir()) {
+        let _ = std::fs::remove_file(&stats);
+    }
 }
 
 /// Fail on a read input with Windows (CRLF) line endings.
@@ -387,10 +488,11 @@ fn check_merged(
 /// fails loud (pass the collated PE uBAM positionally instead); uBAM + `--fasta`
 /// is rejected (BAM carries qualities → FASTQ).
 ///
-/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<i>/` so the
-/// temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
-/// same-basename uBAMs can't collide and a pre-existing temp is never clobbered.
-/// Returns the created subdirs for the caller to clean up after the pipeline.
+/// Each transcode goes into its OWN subdir `<temp_dir>/.bismark_ubam/<pid>.<i>/` so
+/// the temp keeps the `<stem>` basename (preserving the output stem, R3) yet two
+/// same-basename uBAMs, or two concurrent runs sharing a temp dir, can't collide.
+/// Returns the created subdirs for the caller to clean up after the pipeline; on a
+/// transcode failure the subdirs made so far are removed here.
 /// An alternative (non-FASTQ/FASTA) read-input backend: a binary format that is
 /// detected, then **transcoded to a temp FASTQ** and fed to the byte-frozen
 /// convert→align→merge pipeline. uBAM (#1026/#1027) is the first; BINSEQ the
@@ -433,7 +535,7 @@ impl InputDecoder for UbamDecoder {
         ubam::transcode_ubam_to_fastq_pe(path, temp_dir)
     }
     fn label(&self) -> &'static str {
-        "unaligned BAM"
+        "unaligned BAM/CRAM"
     }
     fn decode_tool(&self) -> &'static str {
         "samtools fastq"
@@ -502,6 +604,12 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
     let temp_dir = config.output.temp_dir.clone();
     let is_fasta = matches!(config.format, ReadFormat::FastA);
     let mut temp_dirs: Vec<PathBuf> = Vec::new();
+    let pid = std::process::id();
+    let remove_dirs = |dirs: &[PathBuf]| {
+        for d in dirs {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    };
 
     let decoder_idx = |path: &str| decoders.iter().position(|d| d.detect(Path::new(path)));
 
@@ -575,11 +683,13 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let (r1, r2) = dec.transcode_pe(Path::new(r), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let (r1, r2) = dec
+                .transcode_pe(Path::new(r), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             mates1.push(r1.to_string_lossy().into_owned());
             mates2.push(r2.to_string_lossy().into_owned());
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::PairedEnd { mates1, mates2 };
         config.format = ReadFormat::FastQ;
@@ -595,15 +705,30 @@ fn resolve_alt_inputs(config: &mut RunConfig) -> Result<Vec<PathBuf>> {
                 dec.label(),
                 dec.decode_tool()
             );
-            let sub = temp_dir.join(dec.subdir()).join(i.to_string());
-            let temp = dec.transcode_se(Path::new(read), &sub)?;
+            let sub = temp_dir.join(dec.subdir()).join(format!("{pid}.{i}"));
+            temp_dirs.push(sub.clone());
+            let temp = dec
+                .transcode_se(Path::new(read), &sub)
+                .inspect_err(|_| remove_dirs(&temp_dirs))?;
             *read = temp.to_string_lossy().into_owned();
-            temp_dirs.push(sub);
         }
         config.layout = ReadLayout::SingleEnd { reads: new_reads };
         config.format = ReadFormat::FastQ;
     }
     Ok(temp_dirs)
+}
+
+/// Whether the first record of `bam` has an `mk` tag masking at least `umi_len` 5' bases.
+fn first_record_masks_umi(bam: &Path, umi_len: usize) -> Result<bool> {
+    let mut reader = crate::io::BamReader::from_path_without_sort_check(bam)
+        .map_err(|e| AlignerError::Validation(format!("consensus: open {}: {e}", bam.display())))?;
+    let first =
+        reader.records().next().transpose().map_err(|e| {
+            AlignerError::Validation(format!("consensus: read {}: {e}", bam.display()))
+        })?;
+    Ok(first.is_some_and(
+        |r| matches!(crate::io::tags::mk(r.inner().data()), Ok(Some((five, _))) if five >= umi_len),
+    ))
 }
 
 /// `[#787]` Standalone duplex-consensus over one or more EXISTING 5-Base BAM(s), with NO
@@ -647,6 +772,19 @@ fn run_five_base_consensus_standalone(cli: &cli::Cli, command_line: &str) -> Res
              5-Base is a paired-end library.",
             bams[0].display()
         )));
+    }
+
+    if cli.five_base_umi_len > 0 {
+        for bam in bams {
+            if !first_record_masks_umi(bam, cli.five_base_umi_len)? {
+                eprintln!(
+                    "Warning: {} has no mk tag masking a {}-base inline UMI, so the consensus counts \
+                     those bases; re-align it with this version to mask them.",
+                    bam.display(),
+                    cli.five_base_umi_len
+                );
+            }
+        }
     }
 
     let umi_swap = if cli.five_base_umi_qname {
@@ -744,11 +882,12 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
 
     if !cli.illumina_5base {
         return Err(AlignerError::Validation(
-            "--five_base_bisulfite_bam requires --illumina_5base (it is a 5-Base interop \
-             shim; on bisulfite input the re-encode is a no-op by construction)"
+            "--five_base_bisulfite_bam requires --illumina_5base or --taps (it is a 5-Base \
+             interop shim; on bisulfite input the re-encode is a no-op by construction)"
                 .into(),
         ));
     }
+    let label = config::FiveBaseChemistry::of(cli).label();
 
     let out_dir = cli.output_dir.clone().unwrap_or_else(|| PathBuf::from("."));
     std::fs::create_dir_all(&out_dir).map_err(|e| {
@@ -940,7 +1079,7 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
                 return Err(AlignerError::Validation(format!(
                     "bisulfite: {} has a methylation-call flip rate of {rate:.6} ({flipped} of \
                  {letters} calls). It must be exactly 0 (already bisulfite convention) or 1 \
-                 (5-Base). A value in between means the input is mixed or partly converted; \
+                 ({label}). A value in between means the input is mixed or partly converted; \
                  refusing rather than writing a file that is half one convention and half the \
                  other.",
                     bam.display()
@@ -976,14 +1115,14 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
         };
 
         let convention = if letters == 0 {
-            "no methylation calls"
+            "no methylation calls".to_string()
         } else if flipped == 0 {
-            "already bisulfite convention (input was NOT 5-Base) — output is unchanged"
+            format!("already bisulfite convention (input was NOT {label}) — output is unchanged")
         } else {
-            "5-Base input, re-encoded to bisulfite convention"
+            format!("{label} input, re-encoded to bisulfite convention")
         };
         let report = format!(
-            "Bismark 5-Base -> bisulfite-convention re-encode ({})\n\n\
+            "Bismark {label} -> bisulfite-convention re-encode ({})\n\n\
              input BAM\t{}\n\
              output BAM\t{}\n\n\
              records read\t{n_read}\n\
@@ -1007,7 +1146,7 @@ fn run_five_base_bisulfite_standalone(cli: &cli::Cli, command_line: &str) -> Res
             eprintln!(
                 "Note: {masked} no-call cytosine(s) were masked to N. This input appears to \
                  have been produced with --five_base_baseq: those positions keep the raw \
-                 5-Base base in SEQ, which downstream SEQ-reading tools would score with \
+                 {label} base in SEQ, which downstream SEQ-reading tools would score with \
                  INVERTED polarity. N makes them a no-call instead."
             );
         }
@@ -1336,16 +1475,7 @@ fn process_se_chunk(
         let pbat = matches!(config.library, LibraryType::Pbat);
         let mut readers: Vec<Option<Box<dyn BufRead>>> = se_instance_plan(config.library)
             .into_iter()
-            .map(|(_o, _i, file_idx)| {
-                let path = &converted[file_idx].path;
-                let f = File::open(path)?;
-                let r: Box<dyn BufRead> = if path.to_string_lossy().ends_with(".gz") {
-                    Box::new(BufReader::new(MultiGzDecoder::new(f)))
-                } else {
-                    Box::new(BufReader::new(f))
-                };
-                Ok(Some(r))
-            })
+            .map(|(_o, _i, file_idx)| Ok(Some(open_reader(&converted[file_idx].path)?)))
             .collect::<Result<Vec<_>>>()?;
         let mut streams = build_se_inprocess_streams(config, &mut readers)?;
         drive_merge(
@@ -1533,13 +1663,12 @@ fn run_se_instances_streamed(
     ) {
         // An instance that died starves the merge, which then fails on the
         // symptom; report the instance itself.
-        return Err(streams
-            .iter_mut()
-            .find_map(|s| s.failure())
-            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+        return Err(streams.iter_mut().find_map(|s| s.failure()).map_or(e, |f| {
+            stream::with_wrapper_hint(f, streamed.gzipped(), false)
+        }));
     }
     Ok(finish_concurrently(streams, AlignerStream::finish)
-        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+        .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped(), false))?
         .into_iter()
         .enumerate()
         .collect())
@@ -1843,7 +1972,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -1873,6 +2002,7 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup (rev1 A): delete EVERY converted temp file for this
         // read — 1 for directional/pbat, 2 (C→T + G→A) for non-directional. Byte-
@@ -1886,6 +2016,82 @@ fn run_se(config: &RunConfig, reads: &[String]) -> Result<()> {
     }
     Ok(())
 }
+
+/// The 5-Base engine process. Unless [`finish`](Self::finish) reaps it, it is killed and reaped
+/// on drop, so an early stop or an error never leaves it blocked on a full pipe.
+struct EngineChild {
+    child: std::process::Child,
+    name: &'static str,
+    reaped: bool,
+}
+
+impl EngineChild {
+    /// Wait for the engine to exit, and fail on a non-zero status.
+    fn finish(mut self) -> Result<()> {
+        let status = self.child.wait()?;
+        self.reaped = true;
+        if !status.success() {
+            return Err(AlignerError::Validation(format!(
+                "{} exited with {}",
+                self.name,
+                describe_exit(status)
+            )));
+        }
+        Ok(())
+    }
+
+    /// An error for `what`, naming the engine's exit status if it has ended within 2 s.
+    fn failure(&mut self, what: &str) -> AlignerError {
+        let mut status = None;
+        for _ in 0..40 {
+            if let Ok(Some(s)) = self.child.try_wait() {
+                status = Some(s);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let ended = match status {
+            Some(s) => {
+                self.reaped = true;
+                format!("; {} exited with {}", self.name, describe_exit(s))
+            }
+            None => String::new(),
+        };
+        AlignerError::Validation(format!("{} {what}{ended}", self.name))
+    }
+}
+
+/// `status N` or `signal N`, with an out-of-memory hint for signal 9.
+fn describe_exit(status: std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("status {code}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            let oom = if sig == 9 {
+                " (a kill by signal 9 usually means it ran out of memory)"
+            } else {
+                ""
+            };
+            return format!("signal {sig}{oom}");
+        }
+    }
+    status.to_string()
+}
+
+impl Drop for EngineChild {
+    fn drop(&mut self) {
+        if !self.reaped {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+}
+
+/// The bwa-mem3 environment variable that would override `--meth-seed-prune`.
+const BWAMEM3_SEED_PRUNE_ENV: &str = "BWAMEM3_METH_SEED_PRUNE";
 
 /// Effective 5-Base options with single-instance threading and input ordering.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
@@ -1903,7 +2109,8 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
         // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
         // base string carries a resolved `-t {p}` (#1074 C2).
-        _ => replace_minimap2_threads(&config.aligner_options, n),
+        Aligner::Minimap2 | Aligner::Rammap => replace_minimap2_threads(&config.aligner_options, n),
+        Aligner::BwaMem3 => format!("{} -t {n}", config.aligner_options),
     }
 }
 
@@ -1938,8 +2145,8 @@ fn replace_minimap2_threads(opts: &str, n: usize) -> String {
 }
 
 /// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
-/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`
-/// against the user's unconverted index. `reads` is always 2 (5-Base is paired-end).
+/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`;
+/// bwa-mem3: `mem <opts> <prefix> r1 r2`. `reads` is always 2 (5-Base is paired-end).
 fn five_base_build_argv(
     config: &RunConfig,
     opts: &str,
@@ -1962,7 +2169,17 @@ fn five_base_build_argv(
             args.push("-2".into());
             args.push(reads[1].as_os_str().to_owned());
         }
-        _ => {
+        // `mem <opts> <prefix> r1 r2`: the options already begin with the `mem` subcommand.
+        Aligner::BwaMem3 => {
+            let idx = config
+                .five_base_index
+                .as_ref()
+                .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+            args.push(idx.as_os_str().to_owned());
+            args.push(reads[0].as_os_str().to_owned());
+            args.push(reads[1].as_os_str().to_owned());
+        }
+        Aligner::Minimap2 | Aligner::Rammap => {
             // minimap2: positional <genome.fa> then the read file(s).
             args.push(ref_path.as_os_str().to_owned());
             for r in reads {
@@ -1988,13 +2205,9 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
         .output_dir
         .join(".bismark_5base_concat_ref.fa");
     let mut out = BufWriter::new(File::create(&tmp)?);
+    staging::scratch(&tmp)?;
     for f in fastas {
-        let file = File::open(f)?;
-        let mut r: Box<dyn BufRead> = if f.to_string_lossy().ends_with(".gz") {
-            Box::new(BufReader::new(MultiGzDecoder::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        };
+        let mut r = open_reader(f)?;
         std::io::copy(&mut r, &mut out)?;
         out.write_all(b"\n")?; // guard against a missing trailing newline between files
     }
@@ -2002,7 +2215,131 @@ fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<Path
     Ok((tmp.clone(), Some(tmp)))
 }
 
-/// Read the next PRIMARY SAM record from minimap2's stdout, skipping `@` headers
+/// `(name, length)` per contig from a BWA `.ann`: a `<len> <n_seqs> <seed>` header line, then
+/// `<gi> <name> [comment]` and `<offset> <len> <n_ambs>` per contig.
+pub(crate) fn read_bwa_ann(prefix: &Path) -> Result<Vec<(String, u64)>> {
+    let path = PathBuf::from(format!("{}.ann", prefix.display()));
+    let bad =
+        || AlignerError::Validation(format!("{} is not a valid BWA .ann file", path.display()));
+    let text = std::fs::read_to_string(&path)?;
+    let mut lines = text.lines();
+    let n_seqs: usize = lines
+        .next()
+        .and_then(|h| h.split_whitespace().nth(1))
+        .and_then(|n| n.parse().ok())
+        .ok_or_else(bad)?;
+    let mut out = Vec::with_capacity(n_seqs);
+    while let (Some(id), Some(pos)) = (lines.next(), lines.next()) {
+        let name = id.split_whitespace().nth(1).ok_or_else(bad)?;
+        let len = pos
+            .split_whitespace()
+            .nth(1)
+            .and_then(|l| l.parse::<u64>().ok())
+            .ok_or_else(bad)?;
+        out.push((name.to_string(), len));
+    }
+    if out.len() != n_seqs {
+        return Err(bad());
+    }
+    Ok(out)
+}
+
+/// Fail unless `got` has exactly the `(name, length)` set of `expected` (the genome folder).
+fn check_contigs_match(
+    expected: &[(String, u64)],
+    got: &[(String, u64)],
+    what: &str,
+) -> Result<()> {
+    use std::collections::BTreeSet;
+    let e: BTreeSet<&(String, u64)> = expected.iter().collect();
+    let g: BTreeSet<&(String, u64)> = got.iter().collect();
+    if e == g {
+        return Ok(());
+    }
+    let list = |s: Vec<&&(String, u64)>| {
+        s.iter()
+            .take(5)
+            .map(|(n, l)| format!("{n}:{l}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(AlignerError::Validation(format!(
+        "the {what} does not match the genome folder (contig:length). Only in the genome folder: \
+         [{}]; only in the {what}: [{}]. Build the index from the same FASTA as the genome folder.",
+        list(e.difference(&g).collect()),
+        list(g.difference(&e).collect())
+    )))
+}
+
+/// Consume the `@` header lines (peeking, so the first record stays unread) and return the
+/// `@SQ` `(SN, LN)` pairs.
+fn five_base_read_sq_header<R: BufRead>(reader: &mut R) -> Result<Vec<(String, u64)>> {
+    let mut sq = Vec::new();
+    let mut line = String::new();
+    while reader.fill_buf()?.first() == Some(&b'@') {
+        line.clear();
+        reader.read_line(&mut line)?;
+        if let Some(rest) = line.strip_prefix("@SQ\t") {
+            let (mut sn, mut ln) = (None, None);
+            for field in rest.trim_end().split('\t') {
+                if let Some(v) = field.strip_prefix("SN:") {
+                    sn = Some(v.to_string());
+                } else if let Some(v) = field.strip_prefix("LN:") {
+                    ln = v.parse::<u64>().ok();
+                }
+            }
+            if let (Some(s), Some(l)) = (sn, ln) {
+                sq.push((s, l));
+            }
+        }
+    }
+    Ok(sq)
+}
+
+/// Record the bwa-mem3 run as its own `@PG` (`PP:Bismark`); its ID must not contain "Bismark".
+fn add_bwamem3_pg(header: &mut noodles_sam::Header, config: &RunConfig, opts: &str) {
+    use noodles_sam::header::record::value::Map;
+    use noodles_sam::header::record::value::map::Program;
+    use noodles_sam::header::record::value::map::program::tag::{
+        COMMAND_LINE, NAME, PREVIOUS_PROGRAM_ID, VERSION,
+    };
+    let index = config
+        .five_base_index
+        .as_ref()
+        .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+    let mut prog = Map::<Program>::default();
+    let fields = prog.other_fields_mut();
+    fields.insert(NAME, bstr::BString::from("bwa-mem3"));
+    fields.insert(PREVIOUS_PROGRAM_ID, bstr::BString::from("Bismark"));
+    fields.insert(
+        VERSION,
+        bstr::BString::from(config.detected_aligner.version.as_bytes()),
+    );
+    fields.insert(
+        COMMAND_LINE,
+        bstr::BString::from(format!("bwa-mem3 {opts} {} <R1> <R2>", index.display())),
+    );
+    header
+        .programs_mut()
+        .as_mut()
+        .insert(bstr::BString::from("bwa-mem3"), prog);
+}
+
+/// The genome folder's contigs as `(name, length)`, in `@SQ` order.
+fn genome_contigs(genome: &Genome) -> Vec<(String, u64)> {
+    genome
+        .sq_order
+        .iter()
+        .map(|n| {
+            (
+                n.clone(),
+                genome.chromosomes.get(n).map_or(0, Vec::len) as u64,
+            )
+        })
+        .collect()
+}
+
+/// Read the next PRIMARY SAM record from the engine's stdout, skipping `@` headers
 /// and secondary (0x100) / supplementary (0x800) lines. `None` at EOF.
 fn five_base_next_primary<R: BufRead>(
     reader: &mut R,
@@ -2116,30 +2453,69 @@ fn five_base_emit_record(
 // ===========================================================================
 // #787 Illumina 5-Base PAIRED-END driver. Opt-in, never-silent, concordance-gated
 // (NOT byte-identical: Perl Bismark has no 5-Base oracle). It does NOT convert the
-// reads: minimap2 is run in PE mode (`<opts> ref.fa r1.fq r2.fq`) against the
-// unconverted genome (bowtie2/hisat2 via `--five_base_index`);
+// reads: one engine runs in PE mode against the unconverted genome (minimap2 on the
+// FASTA; bowtie2/hisat2/bwa-mem3 on `--five_base_index`);
 // the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
 // byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
 // ===========================================================================
 
-/// Drive the 5-Base PE run: one minimap2 PE instance per mate-pair file against the
+/// Drive the 5-Base PE run: one engine instance per mate-pair file against the
 /// unconverted reference, lockstep with the original FastQ pair, emitting a Bismark
 /// `_pe.bam` + PE report. Mirrors `run_pe`'s setup.
 fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
     let started = Instant::now();
+    if let Some(f) = config
+        .genome
+        .fastas
+        .iter()
+        .find(|f| crate::genome_prep::bwamem3::is_index_fasta(f))
+    {
+        return Err(AlignerError::Validation(format!(
+            "{} in the genome folder is a bwa-mem3 index file, not genome; keep bwa-mem3 index \
+             files out of the top level of the --genome folder (`bismark_genome_preparation \
+             --bwamem3` puts them in Bwamem3_Index/)",
+            f.display()
+        )));
+    }
+    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
+        eprintln!(
+            "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
+             --meth-seed-prune=spec30)."
+        );
+    }
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
-    let header = generate_sam_header(&genome, &config.command_line);
+    if config.aligner == Aligner::BwaMem3 {
+        let index = config
+            .five_base_index
+            .as_ref()
+            .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+        check_contigs_match(
+            &genome_contigs(&genome),
+            &read_bwa_ann(index)?,
+            "bwa-mem3 index",
+        )?;
+    }
+    let mut header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
     let fb_opts = five_base_aligner_options(config);
-    let (ref_path, ref_tmp) = five_base_reference_fasta(config)?;
+    if config.aligner == Aligner::BwaMem3 {
+        add_bwamem3_pg(&mut header, config, &fb_opts);
+    }
+    // Only minimap2 reads the genome FASTA; the other engines align against an index.
+    let (ref_path, ref_tmp) = if config.aligner == Aligner::Minimap2 {
+        five_base_reference_fasta(config)?
+    } else {
+        (PathBuf::new(), None)
+    };
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
         let bam_path =
             derive_output_path(read_1, config, &format!("_bismark_{tok}_pe.bam"), "_pe.bam");
         eprintln!(
-            ">>> Writing 5-Base mapping results to {} <<<",
+            ">>> Writing {} mapping results to {} <<<",
+            config.five_base_chemistry.label(),
             bam_path.display()
         );
         let mut sinks = open_pe_sinks(read_1, read_2, config, &header, &bam_path)?;
@@ -2150,7 +2526,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_five_base_report_header(
             &mut report,
             &ReportHeader {
@@ -2162,6 +2538,17 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 library: config.library,
             },
         )?;
+        if config.aligner == Aligner::BwaMem3 {
+            writeln!(
+                report,
+                "bwa-mem3 version: {}",
+                config.detected_aligner.version
+            )?;
+            if config.five_base_chemistry == config::FiveBaseChemistry::Taps {
+                writeln!(report, "Library chemistry: TAPS (mC->T)")?;
+            }
+            writeln!(report)?;
+        }
 
         let mut counters = Counters::default();
         five_base_align_and_call_pe(
@@ -2176,6 +2563,16 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         )?;
 
         report::print_final_analysis_report_paired_ends(&mut report, &counters, true)?;
+        writeln!(
+            report,
+            "Proper pairs rejected (same strand, other contig, pointing apart, or R2 not proper):\t{}",
+            counters.five_base_pair_orientation_rejected
+        )?;
+        writeln!(
+            report,
+            "Dovetail overhang bases not called:\t{}",
+            counters.five_base_overhang_bases_masked
+        )?;
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
@@ -2189,7 +2586,12 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 &format!("_bismark_{tok}_pe.5base_deconvolution.txt"),
                 "_pe.5base_deconvolution.txt",
             );
-            run_five_base_deconvolution(&genome, &bam_path, &deconv_path)?;
+            run_five_base_deconvolution(
+                &genome,
+                &staging::current(&bam_path),
+                &deconv_path,
+                config.five_base_baseq,
+            )?;
         }
 
         // #787 optional PAIRED-END duplex family pass over the just-written _pe.bam.
@@ -2207,7 +2609,13 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 &format!("_bismark_{tok}_pe.5base_duplex.txt"),
                 "_pe.5base_duplex.txt",
             );
-            run_five_base_duplex_pe(&genome, &bam_path, &duplex_path, umi_swap)?;
+            run_five_base_duplex_pe(
+                &genome,
+                &staging::current(&bam_path),
+                &duplex_path,
+                umi_swap,
+                config.five_base_baseq,
+            )?;
 
             // #787 optional PE consensus COLLAPSE (one consensus read per duplex family).
             if config.five_base_consensus {
@@ -2234,7 +2642,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 run_five_base_consensus(
                     &genome,
                     &refid,
-                    &[bam_path.as_path()],
+                    &[staging::current(&bam_path).as_path()],
                     outputs,
                     &header,
                     umi_swap,
@@ -2242,6 +2650,7 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 )?;
             }
         }
+        staging::commit()?;
     }
 
     if let Some(tmp) = ref_tmp {
@@ -2250,8 +2659,8 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
     Ok(())
 }
 
-/// Spawn ONE minimap2 PE instance (`<opts> ref.fa r1.fq r2.fq`) and walk both FastQ
-/// files in lockstep with minimap2's primary records (two per pair, in input order).
+/// Spawn ONE 5-Base engine PE instance and walk both FastQ files in lockstep with its
+/// primary records (two per pair, in input order).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn five_base_align_and_call_pe(
     config: &RunConfig,
@@ -2266,8 +2675,10 @@ fn five_base_align_and_call_pe(
     let bin = &config.detected_aligner.path;
     let opts = five_base_aligner_options(config);
     let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
-    let mut child = std::process::Command::new(bin)
+    let child = std::process::Command::new(bin)
         .args(&args)
+        // The variable overrides bwa-mem3's --meth-seed-prune flag.
+        .env_remove(BWAMEM3_SEED_PRUNE_ENV)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -2278,15 +2689,27 @@ fn five_base_align_and_call_pe(
                 bin.display()
             ))
         })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| AlignerError::Validation("minimap2 stdout was not captured".into()))?;
+    let mut engine = EngineChild {
+        child,
+        name: config.aligner.name(),
+        reaped: false,
+    };
+    let stdout = engine.child.stdout.take().ok_or_else(|| {
+        AlignerError::Validation(format!("{} stdout was not captured", config.aligner.name()))
+    })?;
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
+    if config.aligner == Aligner::BwaMem3 {
+        let sq = five_base_read_sq_header(&mut sam)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        if sq.is_empty() {
+            return Err(engine.failure("ended before writing its SAM header"));
+        }
+        check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
+    }
 
-    let mut r1 = open_maybe_gz(read_1)?;
-    let mut r2 = open_maybe_gz(read_2)?;
+    let mut r1 = open_reader(read_1)?;
+    let mut r2 = open_reader(read_2)?;
     let (skip, upto) = (config.read_processing.skip, config.read_processing.upto);
     let mut count: u64 = 0;
     // #787 UMI dedup (PE): key on both mates' UMIs + the R1 chrom/pos/strand.
@@ -2294,15 +2717,22 @@ fn five_base_align_and_call_pe(
     let mut seen: std::collections::HashSet<(Vec<u8>, Vec<u8>, String, u32, u16)> =
         std::collections::HashSet::new();
     let mut dups: u64 = 0;
+    let mut stopped_early = false;
     while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
         let Some((id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
-            break;
+            return Err(AlignerError::Validation(format!(
+                "{} has fewer reads than {}",
+                read_2.display(),
+                read_1.display()
+            )));
         };
         count += 1;
-        // Each pair always yields TWO minimap2 primaries (mapped or unmapped); consume
-        // them to stay in lockstep even for skipped reads.
-        let a = five_base_next_primary(&mut sam, &mut sam_line)?;
-        let b = five_base_next_primary(&mut sam, &mut sam_line)?;
+        // Each pair always yields TWO primaries (mapped or unmapped); consume them to stay
+        // in lockstep even for skipped reads.
+        let a = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        let b = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
         if let Some(s) = skip
             && s > 0
             && count <= s
@@ -2313,13 +2743,11 @@ fn five_base_align_and_call_pe(
             && u > 0
             && count > u
         {
+            stopped_early = true;
             break;
         }
         let (Some(a), Some(b)) = (a, b) else {
-            return Err(AlignerError::Validation(format!(
-                "{} produced fewer PE records than read pairs (desync)",
-                config.aligner.name()
-            )));
+            return Err(engine.failure("produced fewer PE records than read pairs (desync)"));
         };
         // Identify R1 (FLAG 0x40) and R2 (FLAG 0x80) within the pair.
         let (rec1, rec2) = if a.flag & 0x40 != 0 {
@@ -2345,9 +2773,9 @@ fn five_base_align_and_call_pe(
         let qual1_bytes: Vec<u8> = convert::chomp_newline(&qual1).to_vec();
         let qual2_bytes: Vec<u8> = convert::chomp_newline(&qual2).to_vec();
 
-        // UMI dedup (proper pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
+        // UMI dedup (accepted pairs only): drop a pair whose (R1 UMI, R2 UMI, chrom,
         // R1 pos, R1 strand) was already seen.
-        if umi_len > 0 && rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 {
+        if umi_len > 0 && five_base_pair_geometry(rec1, rec2).is_some() {
             let u1: Vec<u8> = seq1_uc.iter().take(umi_len).copied().collect();
             let u2: Vec<u8> = seq2_uc.iter().take(umi_len).copied().collect();
             if !seen.insert((u1, u2, rec1.rname.clone(), rec1.pos, rec1.flag & 0x10)) {
@@ -2370,6 +2798,7 @@ fn five_base_align_and_call_pe(
             config.dovetail,
             config.strand_id,
             config.five_base_baseq,
+            umi_len,
             counters,
         )? {
             // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
@@ -2387,14 +2816,30 @@ fn five_base_align_and_call_pe(
         }
     }
 
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(AlignerError::Validation(format!(
-            "minimap2 exited with status {status}"
-        )));
+    if stopped_early {
+        // `--upto` was reached: the engine's remaining output is not needed.
+        drop(sam);
+        drop(engine);
+    } else {
+        let extra = five_base_next_primary(&mut sam, &mut sam_line)
+            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+        if extra.is_some() {
+            return Err(engine.failure("produced more records than read pairs"));
+        }
+        if read_fastq_record(&mut r2)?.is_some() {
+            return Err(AlignerError::Validation(format!(
+                "{} has more reads than {}",
+                read_2.display(),
+                read_1.display()
+            )));
+        }
+        engine.finish()?;
     }
     if umi_len > 0 {
-        eprintln!("5-Base UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).");
+        eprintln!(
+            "{} UMI dedup (umi_len {umi_len}): removed {dups} duplicate pair(s).",
+            config.five_base_chemistry.label()
+        );
     }
     Ok(())
 }
@@ -2447,6 +2892,117 @@ fn five_base_check_cigar_covers_read(
     )))
 }
 
+/// CIGAR as `(length, op)` pairs; an unparseable CIGAR yields none.
+fn cigar_ops(cigar: &str) -> Vec<(u64, u8)> {
+    let mut ops = Vec::new();
+    let mut n = 0u64;
+    for b in cigar.bytes() {
+        if b.is_ascii_digit() {
+            n = n * 10 + u64::from(b - b'0');
+        } else {
+            ops.push((n, b));
+            n = 0;
+        }
+    }
+    ops
+}
+
+/// Read bases of each mate past the other mate's 5' end (a dovetail overhang), as
+/// `(R1 trailing bases, R2 trailing bases, aligned bases among them)`, counted in read orientation;
+/// `None` when the reverse mate ends at or before the forward mate starts (mates pointing apart).
+fn five_base_overhang_lens(rec1: &SamRecord, rec2: &SamRecord) -> Option<(usize, usize, u64)> {
+    let (fwd, rev, r1_forward) = if rec1.flag & 0x10 == 0 {
+        (rec1, rec2, true)
+    } else {
+        (rec2, rec1, false)
+    };
+    let (fwd_ops, rev_ops) = (cigar_ops(&fwd.cigar), cigar_ops(&rev.cigar));
+    let span = |r: &SamRecord, ops: &[(u64, u8)]| {
+        let start = u64::from(r.pos.saturating_sub(1));
+        let len: u64 = ops
+            .iter()
+            .filter(|(_, op)| matches!(op, b'M' | b'D' | b'N' | b'=' | b'X'))
+            .map(|(n, _)| n)
+            .sum();
+        (start, start + len)
+    };
+    let ((fs, fe), (rs, re)) = (span(fwd, &fwd_ops), span(rev, &rev_ops));
+    if re <= fs {
+        return None;
+    }
+    // The reverse mate's SEQ prefix left of the forward mate's start.
+    let (mut q_rev, mut al_rev, mut rp) = (0u64, 0u64, rs);
+    for &(n, op) in &rev_ops {
+        match op {
+            b'S' => q_rev += n,
+            b'M' | b'=' | b'X' => {
+                let take = n.min(fs.saturating_sub(rp));
+                q_rev += take;
+                al_rev += take;
+                rp += take;
+                if take < n {
+                    break;
+                }
+            }
+            b'I' if rp < fs => {
+                q_rev += n;
+                al_rev += n;
+            }
+            b'I' => break,
+            b'D' | b'N' => rp += n,
+            _ => {}
+        }
+    }
+    // The forward mate's SEQ suffix right of the reverse mate's end.
+    let (mut q_fwd, mut al_fwd, mut rp) = (0u64, 0u64, fe);
+    for &(n, op) in fwd_ops.iter().rev() {
+        match op {
+            b'S' => q_fwd += n,
+            b'M' | b'=' | b'X' => {
+                let take = n.min(rp.saturating_sub(re));
+                q_fwd += take;
+                al_fwd += take;
+                rp -= take;
+                if take < n {
+                    break;
+                }
+            }
+            b'I' if rp > re => {
+                q_fwd += n;
+                al_fwd += n;
+            }
+            b'I' => break,
+            b'D' | b'N' => rp = rp.saturating_sub(n),
+            _ => {}
+        }
+    }
+    // Clipped bases are masked with an overhang but never on their own.
+    let k_rev = if al_rev > 0 { q_rev as usize } else { 0 };
+    let k_fwd = if al_fwd > 0 { q_fwd as usize } else { 0 };
+    let aligned = al_rev + al_fwd;
+    Some(if r1_forward {
+        (k_fwd, k_rev, aligned)
+    } else {
+        (k_rev, k_fwd, aligned)
+    })
+}
+
+/// The overhang lengths of a pair Bismark accepts: both mates mapped and flagged proper, on one
+/// contig, on opposite strands and pointing at each other; `None` for any other pair.
+fn five_base_pair_geometry(rec1: &SamRecord, rec2: &SamRecord) -> Option<(usize, usize, u64)> {
+    let accepted = rec1.flag & 0x2 != 0
+        && rec2.flag & 0x2 != 0
+        && rec1.flag & 0x4 == 0
+        && rec2.flag & 0x4 == 0
+        && rec1.rname == rec2.rname
+        && (rec1.flag ^ rec2.flag) & 0x10 != 0;
+    if accepted {
+        five_base_overhang_lens(rec1, rec2)
+    } else {
+        None
+    }
+}
+
 /// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
 /// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
@@ -2466,6 +3022,7 @@ fn five_base_emit_pe_record(
     dovetail: bool,
     strand_id: bool,
     baseq: u8,
+    umi_len: usize,
     counters: &mut Counters,
 ) -> Result<Option<(crate::io::BismarkRecord, crate::io::BismarkRecord)>> {
     // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
@@ -2474,6 +3031,12 @@ fn five_base_emit_pe_record(
         counters.no_single_alignment_found += 1;
         return Ok(None);
     }
+    // R2's strand is derived from R1's below, so the pair must be FR/RF on one contig.
+    let Some((k1, k2, overhang)) = five_base_pair_geometry(rec1, rec2) else {
+        counters.five_base_pair_orientation_rejected += 1;
+        counters.no_single_alignment_found += 1;
+        return Ok(None);
+    };
     five_base_check_cigar_covers_read(identifier, "R1", &rec1.cigar, seq1_uc.len())?;
     five_base_check_cigar_covers_read(identifier, "R2", &rec2.cigar, seq2_uc.len())?;
     counters.unique_best_alignment_count += 1;
@@ -2504,8 +3067,21 @@ fn five_base_emit_pe_record(
         return Ok(None);
     }
     let off = if phred64 { 64 } else { 33 };
-    let call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
-    let call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+    let mut call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
+    let mut call2 = mask_low_quality(seq2_uc, qual2, baseq, off);
+    // Each mate's inline 5' UMI is never a methylation call, whether or not it was soft-clipped.
+    for b in call1.iter_mut().take(umi_len) {
+        *b = b'N';
+    }
+    for b in call2.iter_mut().take(umi_len) {
+        *b = b'N';
+    }
+    // Bases past the mate's 5' end are adapter read-through, not genome.
+    let n1 = call1.len();
+    call1[n1.saturating_sub(k1)..].fill(b'N');
+    let n2 = call2.len();
+    call2[n2.saturating_sub(k2)..].fill(b'N');
+    counters.five_base_overhang_bases_masked += overhang;
     let mc1 = methylation_call(
         &call1,
         &ext.unmodified_genomic_sequence_1,
@@ -2520,7 +3096,7 @@ fn five_base_emit_pe_record(
         true,
         counters,
     );
-    let (out1, out2) = paired_end_sam_output(
+    let (mut out1, mut out2) = paired_end_sam_output(
         identifier,
         seq1_uc,
         seq2_uc,
@@ -2538,7 +3114,188 @@ fn five_base_emit_pe_record(
         // --barcode/--umi tag emission is not wired here, so pass no extra tags.
         crate::aligner::output::BarcodeUmiTags::default(),
     )?;
+    // #1211: carry the masked read ends so the passes that re-read SEQ skip them too.
+    if umi_len > 0 || k1 > 0 {
+        out1.set_mk(umi_len, k1);
+    }
+    if umi_len > 0 || k2 > 0 {
+        out2.set_mk(umi_len, k2);
+    }
     Ok(Some((out1, out2)))
+}
+
+/// #1211: the SEQ indices (BAM orientation) a pass that re-reads SEQ may use — the `mk`
+/// tag's masked read ends excluded, as the record's own `XM` excludes them.
+fn five_base_called_range(
+    inner: &noodles_sam::alignment::RecordBuf,
+) -> Result<std::ops::Range<usize>> {
+    let (five, three) = crate::io::tags::mk(inner.data())
+        .map_err(|e| AlignerError::Validation(format!("5-Base: {e}")))?
+        .unwrap_or((0, 0));
+    // A reverse record's SEQ is the read reverse-complemented: its 3' end comes first.
+    let (lo, hi) = if u16::from(inner.flags()) & 0x10 != 0 {
+        (three, five)
+    } else {
+        (five, three)
+    };
+    Ok(lo..inner.sequence().len().saturating_sub(hi))
+}
+
+/// Tracks the last R1 so its R2 counts only the positions R1 does not cover and the CpGs
+/// where R1 has no information; R2 must follow its R1, with only secondary or supplementary
+/// records in between.
+#[derive(Default)]
+struct MateSpan {
+    name: Vec<u8>,
+    span: std::ops::Range<usize>,
+    r1_gaps: Vec<u32>,
+}
+
+/// What R1 leaves to its R2: R1's reference span, except the sorted CpG positions where
+/// R1 has no information.
+#[derive(Default)]
+struct Covered {
+    span: std::ops::Range<usize>,
+    gaps: Vec<u32>,
+}
+
+impl Covered {
+    fn hides(&self, rp: usize) -> bool {
+        self.span.contains(&rp) && self.gaps.binary_search(&(rp as u32)).is_err()
+    }
+}
+
+/// One record's CpG observations, and the CpG positions where it has no information
+/// (an `N`, a base below `--five_base_baseq`, or a deletion).
+struct CpgWalk {
+    obs: Vec<crate::aligner::five_base_duplex::SiteObs>,
+    gaps: Vec<u32>,
+}
+
+impl MateSpan {
+    /// `None` for a secondary or supplementary record (skip it); otherwise the reference
+    /// positions this record leaves to its R1 (empty unless it is an R2).
+    fn next(
+        &mut self,
+        inner: &noodles_sam::alignment::RecordBuf,
+        pass: &str,
+        bam_path: &Path,
+    ) -> Result<Option<Covered>> {
+        let flags = u16::from(inner.flags());
+        if flags & 0x900 != 0 {
+            return Ok(None);
+        }
+        let name: &[u8] = inner.name().map_or(&[], |n| n.as_ref());
+        let covered = if flags & 0x80 != 0 {
+            if self.name != name {
+                return Err(AlignerError::Validation(format!(
+                    "{pass}: R2 '{}' does not follow its R1 in {}",
+                    String::from_utf8_lossy(name),
+                    bam_path.display()
+                )));
+            }
+            Covered {
+                span: self.span.clone(),
+                gaps: std::mem::take(&mut self.r1_gaps),
+            }
+        } else {
+            Covered::default()
+        };
+        if flags & 0x40 != 0 {
+            self.name = name.to_vec();
+            self.span = match (inner.alignment_start(), inner.alignment_end()) {
+                (Some(s), Some(e)) => usize::from(s) - 1..usize::from(e),
+                _ => 0..0,
+            };
+            self.r1_gaps.clear();
+        }
+        Ok(Some(covered))
+    }
+
+    /// Remember where the current R1 has no information, so its R2 can fill those CpGs.
+    fn record_r1(&mut self, inner: &noodles_sam::alignment::RecordBuf, gaps: Vec<u32>) {
+        let flags = u16::from(inner.flags());
+        if flags & 0x40 != 0 && flags & 0x900 == 0 {
+            self.r1_gaps = gaps;
+        }
+    }
+}
+
+/// One record's CpG-cytosine observations where `covered` does not hide them: as in `XM`,
+/// only C/T at a `+` cytosine and G/A at a `-` one, at or above `baseq` (no QUAL passes).
+fn cpg_observations(
+    inner: &noodles_sam::alignment::RecordBuf,
+    g: &[u8],
+    covered: &Covered,
+    baseq: u8,
+) -> Result<CpgWalk> {
+    use crate::aligner::five_base_duplex::SiteObs;
+    use noodles_sam::alignment::record::cigar::op::Kind;
+
+    let mut walk = CpgWalk {
+        obs: Vec::new(),
+        gaps: Vec::new(),
+    };
+    let is_cpg_c = |rp: usize| {
+        let gb = g.get(rp).copied();
+        (gb == Some(b'C') && g.get(rp + 1) == Some(&b'G'))
+            || (gb == Some(b'G') && rp > 0 && g.get(rp - 1) == Some(&b'C'))
+    };
+    let Some(start) = inner.alignment_start() else {
+        return Ok(walk);
+    };
+    let seq = inner.sequence().as_ref();
+    let qual = inner.quality_scores().as_ref();
+    let called = five_base_called_range(inner)?;
+    let (mut ri, mut rp) = (0usize, usize::from(start) - 1);
+    for op in inner.cigar().as_ref().iter() {
+        let len = op.len();
+        match op.kind() {
+            Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+                for _ in 0..len {
+                    if called.contains(&ri)
+                        && !covered.hides(rp)
+                        && is_cpg_c(rp)
+                        && let Some(&base) = seq.get(ri)
+                    {
+                        let base = base.to_ascii_uppercase();
+                        let plus = g[rp] == b'C';
+                        if base == b'N' || (baseq > 0 && qual.get(ri).is_some_and(|&q| q < baseq)) {
+                            walk.gaps.push(rp as u32);
+                        } else if plus && matches!(base, b'C' | b'T') {
+                            walk.obs.push(SiteObs {
+                                pos0: rp as u32,
+                                plus,
+                                t_equivalent: base == b'T',
+                            });
+                        } else if !plus && matches!(base, b'G' | b'A') {
+                            walk.obs.push(SiteObs {
+                                pos0: rp as u32,
+                                plus,
+                                t_equivalent: base == b'A',
+                            });
+                        }
+                    }
+                    ri += 1;
+                    rp += 1;
+                }
+            }
+            Kind::Insertion | Kind::SoftClip => ri += len,
+            Kind::Deletion | Kind::Skip => {
+                // A deletion or skip between two called bases is no information at its CpGs.
+                if ri > 0 && called.contains(&(ri - 1)) && called.contains(&ri) {
+                    for d in rp..rp + len {
+                        if is_cpg_c(d) && !covered.hides(d) {
+                            walk.gaps.push(d as u32);
+                        }
+                    }
+                }
+                rp += len;
+            }
+            _ => {}
+        }
+    }
+    Ok(walk)
 }
 
 /// #787 deconvolution pass: read back the just-written 5-Base BAM, build the per-CpG
@@ -2546,21 +3303,33 @@ fn five_base_emit_pe_record(
 /// write `<report_path>`. Reads are in SAM forward orientation; OT reads sequence the
 /// `+` strand, OB reads the `-` strand (in forward orientation). At a genomic `C` (CpG)
 /// the own strand is OT and the T-equivalent allele is `T`; at a genomic `G` the own
-/// strand is OB and the T-equivalent allele is `A`.
-fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &Path) -> Result<()> {
+/// strand is OB and the T-equivalent allele is `A`. R2 is called on its R1's strand, adds
+/// the positions R1 does not cover and the CpGs where R1 has no information, and must
+/// follow its R1.
+fn run_five_base_deconvolution(
+    genome: &Genome,
+    bam_path: &Path,
+    report_path: &Path,
+    baseq: u8,
+) -> Result<()> {
     use crate::aligner::five_base_deconv::{
         DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC, Deconvoluter,
     };
-    use noodles_sam::alignment::record::cigar::op::Kind;
+    use crate::io::BismarkStrand::{CTOB, CTOT, OB, OT};
 
     let mut reader = crate::io::BamReader::from_path_without_sort_check(bam_path)
         .map_err(|e| AlignerError::Validation(format!("deconvolution: open BAM: {e}")))?;
     let mut dec = Deconvoluter::default();
+    let mut mates = MateSpan::default();
 
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("deconvolution: {e}")))?;
         let inner = rec.inner();
-        if u16::from(inner.flags()) & 0x4 != 0 {
+        let Some(covered) = mates.next(inner, "deconvolution", bam_path)? else {
+            continue; // secondary / supplementary
+        };
+        let flags = u16::from(inner.flags());
+        if flags & 0x4 != 0 {
             continue; // unmapped
         }
         let xr = crate::io::tags::xr(inner.data())
@@ -2569,13 +3338,8 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
             .map_err(|e| AlignerError::Validation(format!("deconvolution: XG: {e}")))?;
         let strand = crate::io::BismarkStrand::from_xr_xg(xr, xg)
             .map_err(|e| AlignerError::Validation(format!("deconvolution: strand: {e}")))?;
-        let (is_ot, is_ob) = (
-            strand == crate::io::BismarkStrand::OT,
-            strand == crate::io::BismarkStrand::OB,
-        );
-        if !is_ot && !is_ob {
-            continue; // directional 5-Base only ever yields OT/OB
-        }
+        // R2 (CTOT/CTOB) is called against its R1's strand, as in the core `XM`.
+        let (is_ot, is_ob) = (matches!(strand, OT | CTOT), matches!(strand, OB | CTOB));
         let Some(ref_id) = inner.reference_sequence_id() else {
             continue;
         };
@@ -2583,56 +3347,20 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
             continue;
         };
         let Some(g) = genome.get(chrom) else { continue };
-        let seq = inner.sequence().as_ref();
-        let Some(start) = inner.alignment_start() else {
-            continue;
-        };
-        let ref_start = usize::from(start) - 1; // 1-based POS → 0-based
-
-        let (mut ri, mut rp) = (0usize, ref_start);
-        for op in inner.cigar().as_ref().iter() {
-            let len = op.len();
-            match op.kind() {
-                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                    for _ in 0..len {
-                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
-                            // CpG `+`-strand cytosine: genomic C followed by G.
-                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
-                                dec.observe(
-                                    chrom,
-                                    rp as u32,
-                                    true,
-                                    is_ot,
-                                    base.eq_ignore_ascii_case(&b'T'),
-                                );
-                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
-                                // CpG `-`-strand cytosine: genomic G preceded by C.
-                                dec.observe(
-                                    chrom,
-                                    rp as u32,
-                                    false,
-                                    is_ob,
-                                    base.eq_ignore_ascii_case(&b'A'),
-                                );
-                            }
-                        }
-                        ri += 1;
-                        rp += 1;
-                    }
-                }
-                Kind::Insertion | Kind::SoftClip => ri += len,
-                Kind::Deletion | Kind::Skip => rp += len,
-                _ => {}
-            }
+        let walk = cpg_observations(inner, g, &covered, baseq)?;
+        mates.record_r1(inner, walk.gaps);
+        for o in walk.obs {
+            let own = if o.plus { is_ot } else { is_ob };
+            dec.observe(chrom, o.pos0, o.plus, own, o.t_equivalent);
         }
     }
 
-    let mut w = BufWriter::new(File::create(report_path)?);
+    let mut w = BufWriter::new(staging::create(report_path)?);
     let s = dec.write_report(&mut w, DEFAULT_MIN_OPP_DEPTH, DEFAULT_VARIANT_OPP_FRAC)?;
     w.flush()?;
     eprintln!(
         "5-Base deconvolution: {} variant CpG(s), {} methylation site(s), {} undetermined \
-         ({}/{} methylated calls kept). Report: {}",
+         ({} of {} calls at non-variant sites are methylated). Report: {}",
         s.variants,
         s.methylation_sites,
         s.undetermined,
@@ -2647,31 +3375,35 @@ fn run_five_base_deconvolution(genome: &Genome, bam_path: &Path, report_path: &P
 /// sequences each molecule as TWO read-pairs (top-strand + bottom-strand) with swapped
 /// UMIs; both map to the SAME fragment, so families key on the FRAGMENT outer span
 /// (POS + mate-pos + TLEN) plus the canonical dual UMI, and the two pairs land in one
-/// family without explicit R1/R2 pairing. Two strand concepts (cf. SE, where they
-/// coincide): the MOLECULE strand (which duplex pair: `R1-forward == OT`) drives family
-/// pairing; the COVERAGE strand (the record's FLAG orientation) drives per-CpG
-/// own/opposite reconciliation — R2 covers the opposite genomic strand from its R1, so
-/// strand is taken from the FLAG, never from R2's `CTOT`/`CTOB` tag.
+/// family without explicit R1/R2 pairing. The MOLECULE strand (which duplex pair:
+/// `R1-forward == OT`) drives both family pairing and per-CpG own/opposite: R2 maps the
+/// other way but reads the copy of its R1's strand, so its bases are that strand's (#1222).
+/// R2 adds the positions its R1 does not cover (#1227) and the CpGs where R1 has no
+/// information (#1238).
 fn run_five_base_duplex_pe(
     genome: &Genome,
     bam_path: &Path,
     report_path: &Path,
     umi_swap: Option<crate::aligner::five_base_duplex::UmiSwap>,
-) -> Result<()> {
-    use crate::aligner::five_base_duplex::{DuplexFamilies, DuplexKey, SiteObs, canonical_umi};
-    use noodles_sam::alignment::record::cigar::op::Kind;
+    baseq: u8,
+) -> Result<crate::aligner::five_base_duplex::DuplexSummary> {
+    use crate::aligner::five_base_duplex::{DuplexFamilies, DuplexKey, canonical_umi};
 
     let mut reader = crate::io::BamReader::from_path_without_sort_check(bam_path)
         .map_err(|e| AlignerError::Validation(format!("duplex-pe: open BAM: {e}")))?;
     let mut fams = DuplexFamilies::default();
     let mut missing_umi = false;
+    let mut mates = MateSpan::default();
 
     for rec in reader.records() {
         let rec = rec.map_err(|e| AlignerError::Validation(format!("duplex-pe: {e}")))?;
         let inner = rec.inner();
+        let Some(covered) = mates.next(inner, "duplex-pe", bam_path)? else {
+            continue; // secondary / supplementary
+        };
         let flag = u16::from(inner.flags());
-        // Concordant primary pairs only (the 5-Base PE path emits proper pairs).
-        if flag & 0x4 != 0 || flag & 0x2 == 0 || flag & 0x100 != 0 || flag & 0x800 != 0 {
+        // Concordant pairs only (the 5-Base PE path emits proper pairs).
+        if flag & 0x4 != 0 || flag & 0x2 == 0 {
             continue;
         }
         let tlen = inner.template_length();
@@ -2697,12 +3429,9 @@ fn run_five_base_duplex_pe(
         let frag_start = pos0.min(mate0) as u32;
         let frag_end = frag_start + tlen.unsigned_abs();
 
-        // Coverage strand (forward reads cover `+`), and molecule strand (which duplex
-        // pair): R1-forward / R2-reverse ⇒ top-strand pair (OT); R1-reverse / R2-forward
-        // ⇒ bottom-strand pair (OB).
-        let coverage_forward = flag & 0x10 == 0;
-        let is_r1 = flag & 0x40 != 0;
-        let molecule_is_ot = is_r1 == coverage_forward;
+        // Molecule strand (which duplex pair): R1-forward / R2-reverse ⇒ top-strand pair
+        // (OT); R1-reverse / R2-forward ⇒ bottom-strand pair (OB).
+        let molecule_is_ot = (flag & 0x40 != 0) == (flag & 0x10 == 0);
 
         let canon_umi: Vec<u8> = if let Some(swap) = umi_swap {
             match crate::io::tags::rx(inner.data()) {
@@ -2716,46 +3445,16 @@ fn run_five_base_duplex_pe(
             Vec::new()
         };
 
-        // CpG-cytosine observations from this record's CIGAR walk (BAM-forward bases).
-        let seq = inner.sequence().as_ref();
-        let (mut ri, mut rp) = (0usize, pos0);
-        let mut obs: Vec<SiteObs> = Vec::new();
-        for op in inner.cigar().as_ref().iter() {
-            let len = op.len();
-            match op.kind() {
-                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
-                    for _ in 0..len {
-                        if let (Some(&base), Some(&gb)) = (seq.get(ri), g.get(rp)) {
-                            if gb == b'C' && g.get(rp + 1) == Some(&b'G') {
-                                obs.push(SiteObs {
-                                    pos0: rp as u32,
-                                    plus: true,
-                                    t_equivalent: base.eq_ignore_ascii_case(&b'T'),
-                                });
-                            } else if gb == b'G' && rp > 0 && g.get(rp - 1) == Some(&b'C') {
-                                obs.push(SiteObs {
-                                    pos0: rp as u32,
-                                    plus: false,
-                                    t_equivalent: base.eq_ignore_ascii_case(&b'A'),
-                                });
-                            }
-                        }
-                        ri += 1;
-                        rp += 1;
-                    }
-                }
-                Kind::Insertion | Kind::SoftClip => ri += len,
-                Kind::Deletion | Kind::Skip => rp += len,
-                _ => {}
-            }
-        }
+        let walk = cpg_observations(inner, g, &covered, baseq)?;
+        mates.record_r1(inner, walk.gaps);
+        let obs = walk.obs;
         let key = DuplexKey {
             chrom: chrom.clone(),
             start: frag_start,
             end: frag_end,
             canon_umi,
         };
-        fams.add_read(key, molecule_is_ot, coverage_forward, obs);
+        fams.add_read(key, molecule_is_ot, obs);
     }
 
     if umi_swap.is_none() || missing_umi {
@@ -2766,21 +3465,24 @@ fn run_five_base_duplex_pe(
         );
     }
 
-    let mut w = BufWriter::new(File::create(report_path)?);
+    let mut w = BufWriter::new(staging::create(report_path)?);
     let s = w_duplex_report(&mut w, &fams)?;
     w.flush()?;
     eprintln!(
         "5-Base duplex (PE): {} family(ies), {} duplex-paired, {} singleton(s); {} methylation \
-         site(s), {} variant site(s), {} undetermined. Report: {}",
+         site(s), {} variant site(s), {} undetermined ({} of {} calls at non-variant sites are \
+         methylated). Report: {}",
         s.total_families,
         s.duplex_paired,
         s.singletons,
         s.methylation_sites,
         s.variant_sites,
         s.undetermined_sites,
+        s.methylated_calls,
+        s.total_calls,
         report_path.display()
     );
-    Ok(())
+    Ok(s)
 }
 
 /// Thin wrapper so the duplex report uses the module's default thresholds.
@@ -2818,11 +3520,10 @@ enum EmitPaths<'a> {
 /// they are skipped exactly as before.
 ///
 /// Families are keyed like the duplex pass on the FRAGMENT outer span (POS + mate-pos +
-/// TLEN; 5-Base is paired-end). The MOLECULE strand
-/// (which duplex pair) gates pairing; the COVERAGE strand (FLAG orientation) buckets reads
-/// for reconciliation. At each reference position the forward-covering reads and the
-/// reverse-covering reads are each reduced to their highest-quality base, then combined by
-/// [`consensus_base`] (own = forward at a `+` CpG / reverse at a `-` CpG).
+/// TLEN; 5-Base is paired-end). The MOLECULE strand (which duplex pair) gates pairing and
+/// buckets reads for reconciliation: at each reference position the OT-molecule reads and
+/// the OB-molecule reads are each reduced to their highest-quality base, then combined by
+/// [`consensus_base`] (own = OT at a `+` CpG / OB at a `-` CpG).
 #[allow(clippy::too_many_arguments)]
 fn run_five_base_consensus(
     genome: &Genome,
@@ -3004,14 +3705,14 @@ fn run_five_base_consensus(
     // Writers up front: an empty run must still leave valid header-only BAMs.
     let mut dpx_writer = match dpx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(p, header.clone())
+            crate::io::BamWriter::from_path(&staging::stage(p)?, header.clone())
                 .map_err(|e| AlignerError::Validation(format!("consensus: create BAM: {e}")))?,
         ),
         None => None,
     };
     let mut spx_writer = match spx_path {
         Some(p) => Some(
-            crate::io::BamWriter::from_path(p, header.clone()).map_err(|e| {
+            crate::io::BamWriter::from_path(&staging::stage(p)?, header.clone()).map_err(|e| {
                 AlignerError::Validation(format!("simplex consensus: create BAM: {e}"))
             })?,
         ),
@@ -3170,6 +3871,7 @@ fn run_five_base_consensus(
             let (molecule_is_ot, ref_id, ref_start) = (ki.molecule_is_ot, ki.ref_id, ki.ref_start);
             // Build the per-reference-position (base, phred) map for this read.
             let seq = inner.sequence().as_ref();
+            let called = five_base_called_range(inner)?;
             let quals = inner.quality_scores().as_ref();
             let mut covered: HashMap<u32, (u8, u8)> = HashMap::new();
             let (mut ri, mut rp) = (0usize, ref_start);
@@ -3178,7 +3880,9 @@ fn run_five_base_consensus(
                 match op.kind() {
                     Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
                         for _ in 0..len {
-                            if let Some(&b) = seq.get(ri) {
+                            if called.contains(&ri)
+                                && let Some(&b) = seq.get(ri)
+                            {
                                 let q = quals.get(ri).copied().unwrap_or(40);
                                 covered.insert(rp, (b.to_ascii_uppercase(), q));
                             }
@@ -3289,16 +3993,6 @@ fn run_five_base_consensus(
     Ok(())
 }
 
-/// Open a (optionally gzipped) reader.
-fn open_maybe_gz(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
-    if path.to_string_lossy().ends_with(".gz") {
-        Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))))
-    } else {
-        Ok(Box::new(BufReader::new(file)))
-    }
-}
-
 /// Read one 4-line FastQ record (owned id/seq/plus/qual lines incl. trailing `\n`),
 /// or `None` at EOF / a truncated final record.
 #[allow(clippy::type_complexity)]
@@ -3359,15 +4053,12 @@ impl Write for AuxWriter {
 }
 
 impl AuxWriter {
-    /// Finalise: gz writes its trailer (`finish`); plain only flushes. Neither
-    /// path flushes mid-stream — a `flush()` would force a deflate block boundary
-    /// and break the merge's raw-byte identity (PLAN §3.5 invariant).
+    /// Finalise: gz writes its trailer (`finish`), then both drain their buffer.
+    /// Neither flushes mid-stream: that would force a deflate block boundary and
+    /// break the merge's raw-byte identity (PLAN §3.5 invariant).
     fn finish(self) -> std::io::Result<()> {
         match self {
-            AuxWriter::Gz(w) => {
-                w.finish()?;
-                Ok(())
-            }
+            AuxWriter::Gz(w) => w.finish()?.flush(),
             AuxWriter::Plain(mut w) => w.flush(),
         }
     }
@@ -3411,7 +4102,7 @@ fn open_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<Sinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path)?, header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -3422,9 +4113,11 @@ fn open_sinks(
             ".ambig.bam",
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
-        Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
-            AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
-        })?)
+        Some(
+            BamWriter::from_path(&staging::stage(&p)?, header.clone()).map_err(|e| {
+                AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
+            })?,
+        )
     } else {
         None
     };
@@ -3437,7 +4130,7 @@ fn open_sinks(
         let name = aux_out::aux_filename(&filename, prefix, base, kind, fasta, None);
         let p = config.output.output_dir.join(name);
         Ok(GzEncoder::new(
-            BufWriter::new(File::create(&p)?),
+            BufWriter::new(staging::create(&p)?),
             Compression::default(),
         ))
     };
@@ -3468,6 +4161,22 @@ fn basename(read_file: &str) -> String {
         .unwrap_or_else(|| read_file.to_string())
 }
 
+/// The `<stripped-stem>` that [`derive_output_path`] gives `read`. A binary input in a single-end
+/// layout is named off its decoded `<stem>.fastq` / `<stem>_1.fastq` (see [`InputDecoder`]).
+pub(crate) fn output_stem(read: &str, single_end_layout: bool) -> Result<String> {
+    let path = Path::new(read);
+    if single_end_layout && let Some(dec) = ALT_INPUT_DECODERS.iter().find(|d| d.detect(path)) {
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("reads");
+        let decoded = if dec.is_paired(path)? {
+            format!("{stem}_1.fastq")
+        } else {
+            format!("{stem}.fastq")
+        };
+        return Ok(strip_fastq_suffix(&decoded));
+    }
+    Ok(strip_fastq_suffix(&basename(read)))
+}
+
 /// Derive an output path: `(<prefix>.)<stripped-stem><default_suffix>` (or
 /// `<basename><basename_suffix>` when `-B` is set), under `output_dir`. Mirrors
 /// the report/BAM naming (Perl 1559–1638). NB: the `--unmapped`/`--ambiguous`
@@ -3493,7 +4202,7 @@ fn derive_output_path(
 }
 
 /// Strip the first matching FastQ suffix (Perl `s/(\.fastq\.gz|\.fq\.gz|\.fastq|\.fq)$//`).
-fn strip_fastq_suffix(name: &str) -> String {
+pub(crate) fn strip_fastq_suffix(name: &str) -> String {
     for suf in [".fastq.gz", ".fq.gz", ".fastq", ".fq"] {
         if let Some(s) = name.strip_suffix(suf) {
             return s.to_string();
@@ -3518,12 +4227,7 @@ fn drive_merge<S: SamStream>(
     sinks: &mut Sinks,
     counters: &mut Counters,
 ) -> Result<()> {
-    let file = File::open(read_file)?;
-    let mut reader: Box<dyn BufRead> = if read_file.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
+    let mut reader = open_reader(read_file)?;
     let directional = matches!(config.library, LibraryType::Directional);
     let fasta = matches!(config.format, ReadFormat::FastA);
     let (skip, upto, icpc) = (
@@ -3805,7 +4509,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -3847,6 +4551,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -3906,7 +4611,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -3947,6 +4652,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4015,6 +4721,11 @@ fn process_se_chunk_combined(
         select_fn,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &read_file,
+        false,
     )?;
     stream.finish()?;
     Ok(converted)
@@ -4108,15 +4819,13 @@ fn drive_merge_combined<S: SamStream>(
         // produces — yields an empty group → NoAlignment, leaving the stream head
         // for the next read (no mis-assignment, no infinite loop).
         //
-        // No desync sentinel is needed (cf. the faithful merge's flag-4-then-same-
-        // id `die`, merge.rs ~200): that guard catches a SINGLE instance reporting a
-        // read as both unmapped and mapped, whereas here we drain the WHOLE
-        // contiguous same-QNAME run in one pass, so a read's lines cannot reappear
-        // at the head after we move on. A stream-exhaustion assert at EOF is
-        // deliberately NOT added either — it would false-positive under `--upto`
-        // (the FastQ loop breaks early while the stream still holds later reads).
-        // Output order/lockstep rests on the same Bowtie 2 `--reorder`-under-`-p`
-        // invariant the faithful path relies on.
+        // No per-read desync sentinel is needed (cf. the faithful merge's flag-4-
+        // then-same-id `die`, merge.rs ~200): we drain the WHOLE contiguous same-
+        // QNAME run in one pass, so a read's lines cannot reappear at the head after
+        // we move on. A name desync instead leaves the stream unconsumed, which the
+        // caller's `check_merged` reports as on the faithful path (`--upto` is safe:
+        // the converted input already stops at the same read). Output order/lockstep
+        // rests on the same Bowtie 2 `--reorder`-under-`-p` invariant.
         let mut records: Vec<crate::aligner::align::SamRecord> = Vec::new();
         while stream.current().is_some_and(|r| r.qname == identifier) {
             records.push(stream.current().unwrap().clone());
@@ -4205,7 +4914,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4246,6 +4955,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4323,6 +5033,14 @@ fn process_se_chunk_combined_nondir(
         refid,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [
+            (ct_stream.exit_failure(), ct_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &read_file,
+        false,
     )?;
     ct_stream.finish()?;
     ga_stream.finish()?;
@@ -4629,7 +5347,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4670,6 +5388,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4773,6 +5492,14 @@ fn process_se_chunk_combined_nondir_sequential(
         sinks,
         counters,
     )?;
+    check_merged(
+        [
+            (None, ct_file_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &read_file,
+        false,
+    )?;
     ga_stream.finish()?;
 
     // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
@@ -4863,7 +5590,7 @@ fn run_se_combined_nondir_tagged(config: &RunConfig, reads: &[String]) -> Result
             &format!("_bismark_{tok}_SE_report.txt"),
             "_SE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -4904,6 +5631,7 @@ fn run_se_combined_nondir_tagged(config: &RunConfig, reads: &[String]) -> Result
         report.flush()?;
 
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -4962,6 +5690,11 @@ fn process_se_chunk_combined_nondir_tagged(
         &converted.path,
     )?;
     drive_merge_combined_nondir_tagged(input, &mut stream, config, genome, refid, sinks, counters)?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &read_file,
+        false,
+    )?;
     stream.finish()?;
     Ok(vec![converted])
 }
@@ -5391,7 +6124,9 @@ fn run_pe_instances_streamed(
             .iter_mut()
             .flatten()
             .find_map(|s| s.failure())
-            .map_or(e, |f| stream::with_wrapper_hint(f, streamed.gzipped())));
+            .map_or(e, |f| {
+                stream::with_wrapper_hint(f, streamed.gzipped(), true)
+            }));
     }
     // Instance i reads pipes 2i (`-1`) and 2i+1 (`-2`) and sits at its plan slot.
     let in_plan_order = plan
@@ -5400,7 +6135,7 @@ fn run_pe_instances_streamed(
         .collect();
     Ok(
         finish_concurrently(in_plan_order, PairedAlignerStream::finish)
-            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped()))?
+            .map_err(|e| stream::with_wrapper_hint(e, streamed.gzipped(), true))?
             .into_iter()
             .enumerate()
             .flat_map(|(i, n)| [(2 * i, n), (2 * i + 1, n)])
@@ -5521,7 +6256,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -5550,6 +6285,7 @@ fn run_pe(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup (rev1 A; Perl 2155): delete EVERY converted temp
         // file — 2 for directional/pbat, 4 for non-directional. Best-effort.
@@ -5607,7 +6343,7 @@ fn open_pe_sinks(
     header: &noodles_sam::Header,
     bam_path: &Path,
 ) -> Result<PeSinks> {
-    let bam = BamWriter::from_path(bam_path, header.clone())
+    let bam = BamWriter::from_path(&staging::stage(bam_path)?, header.clone())
         .map_err(|e| AlignerError::Validation(format!("failed to open BAM {bam_path:?}: {e}")))?;
 
     let ambig_bam = if config.ambig_bam {
@@ -5618,9 +6354,11 @@ fn open_pe_sinks(
             "_pe.ambig.bam",
         );
         eprintln!("Ambiguous BAM output: {}", p.display());
-        Some(BamWriter::from_path(&p, header.clone()).map_err(|e| {
-            AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
-        })?)
+        Some(
+            BamWriter::from_path(&staging::stage(&p)?, header.clone()).map_err(|e| {
+                AlignerError::Validation(format!("failed to open ambig BAM {p:?}: {e}"))
+            })?,
+        )
     } else {
         None
     };
@@ -5632,7 +6370,7 @@ fn open_pe_sinks(
     let open_gz = |name: String| -> Result<GzEncoder<BufWriter<File>>> {
         let p = config.output.output_dir.join(name);
         Ok(GzEncoder::new(
-            BufWriter::new(File::create(&p)?),
+            BufWriter::new(staging::create(&p)?),
             Compression::default(),
         ))
     };
@@ -5688,16 +6426,6 @@ fn open_pe_sinks(
         unmapped_2,
         ambiguous_1,
         ambiguous_2,
-    })
-}
-
-/// Open a FastQ reader (gz or plain) for the PE lockstep.
-fn open_reader(path: &Path) -> Result<Box<dyn BufRead>> {
-    let file = File::open(path)?;
-    Ok(if path.to_string_lossy().ends_with(".gz") {
-        Box::new(BufReader::new(MultiGzDecoder::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
     })
 }
 
@@ -6052,7 +6780,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6097,6 +6825,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: delete both converted temp files (C→T R1, G→A R2).
         for cr in &converted {
@@ -6159,7 +6888,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6204,6 +6933,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: delete both converted temp files (G→A R1, C→T R2).
         for cr in &converted {
@@ -6295,6 +7025,11 @@ fn process_pe_chunk_combined(
         select_fn,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
     )?;
     stream.finish()?;
     Ok(vec![cr1, cr2])
@@ -6507,7 +7242,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -6546,6 +7281,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         // Per-mode temp cleanup: the 4 converted files (R1/R2 × C→T/G→A).
         for cr in &converted {
@@ -6644,6 +7380,14 @@ fn process_pe_chunk_combined_nondir(
         dovetail,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [
+            (ct_stream.exit_failure(), ct_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
     )?;
     ct_stream.finish()?;
     ga_stream.finish()?;
@@ -6972,8 +7716,7 @@ fn counters_summary(read_file: &str, c: &Counters) -> String {
            ambiguous (unsuitable):   {}\n\
            directional-rejected:     {}\n\
            could-not-extract genomic:{}\n\
-           strand OT/OB/CTOT/CTOB:   {}/{}/{}/{}\n\
-           (full report layout is Phase 6)",
+           strand OT/OB/CTOT/CTOB:   {}/{}/{}/{}",
         c.sequences_count,
         c.unique_best_alignment_count,
         c.no_single_alignment_found,
@@ -7062,7 +7805,7 @@ fn run_pe_combined_nondir_sequential(
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -7103,6 +7846,7 @@ fn run_pe_combined_nondir_sequential(
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -7229,6 +7973,14 @@ fn process_pe_chunk_combined_nondir_sequential(
         sinks,
         counters,
     )?;
+    check_merged(
+        [
+            (None, ct_file_stream.stopped_at()),
+            (ga_stream.exit_failure(), ga_stream.stopped_at()),
+        ],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
+    )?;
     ga_stream.finish()?;
 
     // The spill is internal scratch (not a `ConvertedReads`) — clean it up here;
@@ -7292,7 +8044,7 @@ fn run_pe_combined_nondir_tagged(
             &format!("_bismark_{tok}_PE_report.txt"),
             "_PE_report.txt",
         );
-        let mut report = BufWriter::new(File::create(&report_path)?);
+        let mut report = BufWriter::new(staging::create(&report_path)?);
         report::write_report_header(
             &mut report,
             &ReportHeader {
@@ -7333,6 +8085,7 @@ fn run_pe_combined_nondir_tagged(
         report::write_completion_line(&mut report, started.elapsed().as_secs())?;
         report.flush()?;
         sinks.finish()?;
+        staging::commit()?;
 
         for cr in &converted {
             let _ = std::fs::remove_file(&cr.path);
@@ -7411,6 +8164,11 @@ fn process_pe_chunk_combined_nondir_tagged(
         dovetail,
         sinks,
         counters,
+    )?;
+    check_merged(
+        [(stream.exit_failure(), stream.stopped_at())],
+        &format!("{} and {}", read_1.display(), read_2.display()),
+        true,
     )?;
     stream.finish()?;
     Ok(vec![tagged1, tagged2])
@@ -7629,6 +8387,16 @@ fn drive_merge_combined_pe_nondir_tagged<S: PairedSamStream>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gz_aux_finish_reports_a_failed_final_write() {
+        use std::io::Write as _;
+        let full = File::create("/dev/full").unwrap();
+        let mut w = AuxWriter::Gz(GzEncoder::new(BufWriter::new(full), Compression::default()));
+        w.write_all(b"@r1\nACGT\n+\nIIII\n").unwrap();
+        assert!(w.finish().is_err());
+    }
 
     #[test]
     fn reject_crlf_inputs_passes_empty_and_lf_files_and_names_a_crlf_one() {
@@ -7957,7 +8725,7 @@ mod tests {
         let mut c = Counters::default();
         let (o1, o2) = five_base_emit_pe_record(
             &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
-            0, &mut c,
+            0, 0, &mut c,
         )
         .unwrap()
         .expect("proper pair emits two records");
@@ -7984,10 +8752,1143 @@ mod tests {
         let mut c = Counters::default();
         let out = five_base_emit_pe_record(
             &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
-            0, &mut c,
+            0, 0, &mut c,
         )
         .unwrap();
         assert!(out.is_none());
+        assert_eq!(c.no_single_alignment_found, 1);
+        assert_eq!(c.unique_best_alignment_count, 0);
+    }
+
+    /// Engines may set 0x2 on same-strand or cross-contig pairs; only opposite-strand,
+    /// same-contig pairs with BOTH mates 0x2 are emitted.
+    #[test]
+    fn five_base_emit_pe_rejects_same_strand_cross_contig_and_one_sided_proper() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        let cases = [
+            // FF
+            (
+                "p\t67\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t131\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+            // RR
+            (
+                "p\t115\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t179\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+            // cross-contig
+            (
+                "p\t99\tchr1\t3\t60\t4M\tchr2\t5\t0\tTGAA\tIIII",
+                "p\t147\tchr2\t5\t60\t4M\tchr1\t3\t0\tGAAT\tIIII",
+            ),
+            // R2 not flagged proper
+            (
+                "p\t99\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII",
+                "p\t145\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII",
+            ),
+        ];
+        for (a, b) in cases {
+            let (r1, r2) = (SamRecord::parse(a).unwrap(), SamRecord::parse(b).unwrap());
+            let mut c = Counters::default();
+            let out = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true,
+                false, 0, 0, &mut c,
+            )
+            .unwrap();
+            assert!(out.is_none(), "{a} / {b}");
+            assert_eq!(c.five_base_pair_orientation_rejected, 1, "{a} / {b}");
+            assert_eq!(c.unique_best_alignment_count, 0, "{a} / {b}");
+        }
+    }
+
+    /// A UMI the engine aligned instead of soft-clipping is never called: bwa-mem3 scores a
+    /// read T at a genomic C as free, so it can extend into a UMI.
+    #[test]
+    fn five_base_umi_prefix_is_never_called() {
+        // R1 "TGTG" fully aligned over genomic CGCG: unmasked it calls Z.Z.
+        let genome = five_base_genome("chr1", b"AACGCGAATTTTAACGAA");
+        let refid = build_refid(&genome);
+        let r1 = SamRecord::parse("p\t99\tchr1\t3\t60\t4M\t=\t7\t8\tTGTG\tIIII\tAS:i:0").unwrap();
+        let r2 = SamRecord::parse("p\t147\tchr1\t7\t60\t4M\t=\t3\t-8\tAATT\tIIII\tAS:i:0").unwrap();
+        let call = |umi_len: usize| {
+            let mut c = Counters::default();
+            let (o1, _) = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TGTG", b"IIII", b"AATT", b"IIII", &genome, &refid, false, true,
+                false, 0, umi_len, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            crate::io::tags::xm(o1.inner().data()).unwrap().to_vec()
+        };
+        assert_eq!(call(0), b"Z.Z.".to_vec(), "unmasked baseline");
+        assert_eq!(call(2), b"..Z.".to_vec(), "the 2 UMI bases are no-calls");
+    }
+
+    fn sam(line: &str) -> SamRecord {
+        SamRecord::parse(line).unwrap()
+    }
+
+    /// (R1 bases, R2 bases, aligned bases) past the mate's 5' end; R1 forward unless noted.
+    #[test]
+    fn five_base_overhang_lens_counts_bases_past_the_mates_5_prime_end() {
+        let f = |pos: u32, cig: &str| sam(&format!("p\t99\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
+        let r =
+            |pos: u32, cig: &str| sam(&format!("p\t147\tchr1\t{pos}\t60\t{cig}\t=\t1\t0\t*\t*"));
+        let lens = |a: &SamRecord, b: &SamRecord| five_base_overhang_lens(a, b).expect("inward");
+        // Dovetail both ways: F [10,20), R [7,17).
+        assert_eq!(lens(&f(11, "10M"), &r(8, "10M")), (3, 3, 6));
+        // R contained in F: F [0,10), R [2,6); F reads 4 bases past R's 5' end.
+        assert_eq!(lens(&f(1, "10M"), &r(3, "4M")), (4, 0, 4));
+        // Ordinary FR pair.
+        assert_eq!(lens(&f(1, "10M"), &r(6, "10M")), (0, 0, 0));
+        // R [7,15) with a leading soft clip and an insertion in the overhang: the clip is masked
+        // with it but is not counted as aligned.
+        assert_eq!(lens(&f(11, "10M"), &r(8, "2S2M1I6M")), (5, 6, 9));
+        // A deletion in R's overhang: R [7,20) as 2M3D8M; only the 2 bases left of 10 overhang.
+        assert_eq!(lens(&f(11, "10M"), &r(8, "2M3D8M")), (0, 2, 2));
+        // An insertion exactly at R's end belongs to the inward side: F [10,20) as 5M2I5M, R [7,15).
+        assert_eq!(lens(&f(11, "5M2I5M"), &r(8, "8M")), (5, 3, 8));
+        // R1 reverse (OB), asymmetric: R1 [7,17) reverse, R2 [10,22) forward.
+        let r1 = sam("p\t83\tchr1\t8\t60\t10M\t=\t11\t0\t*\t*");
+        let r2 = sam("p\t163\tchr1\t11\t60\t12M\t=\t8\t0\t*\t*");
+        assert_eq!(lens(&r1, &r2), (3, 5, 8));
+    }
+
+    /// Mates pointing apart (the reverse mate ends at or before the forward mate starts) are
+    /// not a fragment.
+    #[test]
+    fn five_base_outward_pairs_have_no_overhang_geometry() {
+        let f = sam("p\t99\tchr1\t11\t60\t10M\t=\t1\t0\t*\t*");
+        for r in [
+            "p\t147\tchr1\t1\t60\t5M\t=\t11\t0\t*\t*",
+            "p\t147\tchr1\t6\t60\t5M\t=\t11\t0\t*\t*",
+        ] {
+            assert_eq!(five_base_overhang_lens(&f, &sam(r)), None, "{r}");
+        }
+    }
+
+    /// A dovetail overhang is adapter read-through: its bases are never called.
+    #[test]
+    fn five_base_dovetail_overhang_is_never_called() {
+        // CHH Cs at 3 and 9; every read base over them is T, which calls H.
+        let genome = five_base_genome("chr1", b"TTTCTTTTTCTTTTTTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t5\t60\t6M\t=\t3\t6\tTTTTTT\tIIIIII\tAS:i:0");
+        let xm = |r2: &SamRecord| {
+            let mut c = Counters::default();
+            let (o1, o2) = five_base_emit_pe_record(
+                &r1, r2, "p", b"TTTTTT", b"IIIIII", b"AAAAAA", b"IIIIII", &genome, &refid, false,
+                true, false, 0, 0, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            let x1 = crate::io::tags::xm(o1.inner().data()).unwrap().to_vec();
+            let x2 = crate::io::tags::xm(o2.inner().data()).unwrap().to_vec();
+            (x1, x2, c.five_base_overhang_bases_masked)
+        };
+        // R1 [4,10), R2 [6,12): R2 calls the C at 9 too.
+        let ordinary = sam("p\t147\tchr1\t7\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
+        assert_eq!(xm(&ordinary), (b".....H".to_vec(), b"...H..".to_vec(), 0));
+        // R2 [2,8): R1's bases at 8, 9 and R2's at 2, 3 are each past the mate's 5' end.
+        let dovetail = sam("p\t147\tchr1\t3\t60\t6M\t=\t5\t-6\tTTTTTT\tIIIIII\tAS:i:0");
+        assert_eq!(xm(&dovetail), (b"......".to_vec(), b"......".to_vec(), 4));
+    }
+
+    /// The UMI is the 5' end of each mate in read orientation, so a reverse mate loses its
+    /// rightmost reference positions.
+    #[test]
+    fn five_base_umi_mask_covers_the_reverse_mate_5_prime_end() {
+        // A CHH C at 10, read as T by R2 over [6,12) at its 2nd read base.
+        let genome = five_base_genome("chr1", b"TTTTTTTTTTCTTTTTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t5\t60\t6M\t=\t7\t8\tTTTTTT\tIIIIII\tAS:i:0");
+        let r2 = sam("p\t147\tchr1\t7\t60\t6M\t=\t5\t-8\tTTTTTT\tIIIIII\tAS:i:0");
+        let xm2 = |umi_len: usize| {
+            let mut c = Counters::default();
+            let (_, o2) = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TTTTTT", b"IIIIII", b"AAAAAA", b"IIIIII", &genome, &refid, false,
+                true, false, 0, umi_len, &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            crate::io::tags::xm(o2.inner().data()).unwrap().to_vec()
+        };
+        assert_eq!(xm2(0), b"....H.".to_vec());
+        assert_eq!(xm2(2), b"......".to_vec());
+    }
+
+    /// #1211 fixture: one molecule as an OT and an OB dovetailed pair over genome
+    /// `TTTTTT CG TT CG TT CG TTTTTTTT`. Reverse mates span [6,14), forward mates [8,16), so
+    /// the CpGs at 6 and 14 lie in a dovetail overhang and only the CpG at 10 is fragment;
+    /// a 4-base inline UMI covers the CpG at 10 in every read too. Writes `<dir>/umi<n>.bam`.
+    fn five_base_dovetail_duplex_bam(
+        dir: &Path,
+        umi_len: usize,
+    ) -> (Genome, HashMap<String, usize>, PathBuf) {
+        let genome = five_base_genome("chr1", b"TTTTTTCGTTCGTTCGTTTTTTTT");
+        let refid = build_refid(&genome);
+        let path = dir.join(format!("umi{umi_len}.bam"));
+        let mut w = BamWriter::from_path(&path, generate_sam_header(&genome, "test")).unwrap();
+        let (f, r) = ("TTCGTTCG", "CGTTCGTT"); // reference [8,16) and [6,14)
+        for (q, f1, p1, s1, f2, p2, s2, t) in [
+            ("ot", 99, 9, f, 147, 7, r, 10),
+            ("ob", 83, 7, r, 163, 9, f, -10),
+        ] {
+            let line = |flag: u16, pos: u32, mpos: u32, seq: &str, tlen: i32| {
+                sam(&format!(
+                    "{q}\t{flag}\tchr1\t{pos}\t60\t8M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIII\tAS:i:0"
+                ))
+            };
+            let (r1, r2) = (line(f1, p1, p2, s1, t), line(f2, p2, p1, s2, -t));
+            // The emit path takes each mate as sequenced (read orientation).
+            let read = |rec: &SamRecord| {
+                let s = rec.seq.as_bytes();
+                if rec.flag & 0x10 != 0 {
+                    crate::aligner::output::revcomp(s)
+                } else {
+                    s.to_vec()
+                }
+            };
+            let mut c = Counters::default();
+            let (o1, o2) = five_base_emit_pe_record(
+                &r1,
+                &r2,
+                q,
+                &read(&r1),
+                b"IIIIIIII",
+                &read(&r2),
+                b"IIIIIIII",
+                &genome,
+                &refid,
+                false,
+                true,
+                false,
+                0,
+                umi_len,
+                &mut c,
+            )
+            .unwrap()
+            .expect("proper pair");
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        (genome, refid, path)
+    }
+
+    /// One OT pair over `TTCGTTCGTTCGTTCG…`, R1 on [0,8) and R2 on [8,16): no dovetail overhang.
+    fn five_base_plain_pair_bam(dir: &Path, umi_len: usize) -> (Genome, PathBuf) {
+        let genome = five_base_genome("chr1", b"TTCGTTCGTTCGTTCGTTTTTTTT");
+        let refid = build_refid(&genome);
+        let path = dir.join(format!("plain{umi_len}.bam"));
+        let mut w = BamWriter::from_path(&path, generate_sam_header(&genome, "test")).unwrap();
+        let line = |flag: u16, pos: u32, mpos: u32, tlen: i32| {
+            sam(&format!(
+                "pp\t{flag}\tchr1\t{pos}\t60\t8M\t=\t{mpos}\t{tlen}\tTTCGTTCG\tIIIIIIII\tAS:i:0"
+            ))
+        };
+        let (r1, r2) = (line(99, 1, 9, 16), line(147, 9, 1, -16));
+        let mut c = Counters::default();
+        let (o1, o2) = five_base_emit_pe_record(
+            &r1,
+            &r2,
+            "pp",
+            b"TTCGTTCG",
+            b"IIIIIIII",
+            &crate::aligner::output::revcomp(b"TTCGTTCG"),
+            b"IIIIIIII",
+            &genome,
+            &refid,
+            false,
+            true,
+            false,
+            0,
+            umi_len,
+            &mut c,
+        )
+        .unwrap()
+        .expect("proper pair");
+        write_record(&mut w, &o1).unwrap();
+        write_record(&mut w, &o2).unwrap();
+        w.finish().unwrap();
+        (genome, path)
+    }
+
+    /// `mk` is written only where bases are masked; an inline UMI marks both mates' 5' ends.
+    #[test]
+    fn five_base_mk_marks_inline_umi_on_a_pair_without_overhang() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mks = |umi_len: usize| {
+            let (_, bam) = five_base_plain_pair_bam(dir.path(), umi_len);
+            let mut reader = crate::io::BamReader::from_path_without_sort_check(&bam).unwrap();
+            reader
+                .records()
+                .map(|r| crate::io::tags::mk(r.unwrap().inner().data()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(mks(0), vec![None, None]);
+        assert_eq!(mks(2), vec![Some((2, 0)), Some((2, 0))]);
+    }
+
+    /// Deconvolution drops exactly the sites under the inline UMI on a pair without overhang.
+    #[test]
+    fn five_base_deconvolution_skips_inline_umi_bases_only() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites = |umi_len: usize| {
+            let (genome, bam) = five_base_plain_pair_bam(dir.path(), umi_len);
+            let report = dir.path().join(format!("plain_deconv{umi_len}.txt"));
+            staging::scope(|| run_five_base_deconvolution(&genome, &bam, &report, 0)).unwrap();
+            std::fs::read_to_string(&report)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.split('\t').nth(1).unwrap().parse::<u32>().unwrap())
+                .collect::<std::collections::BTreeSet<u32>>()
+        };
+        let (all, masked) = (sites(0), sites(2));
+        let dropped: Vec<u32> = all.difference(&masked).copied().collect();
+        assert!(!dropped.is_empty(), "the UMI covers a CpG");
+        // 1-based reference positions under R1's first 2 bases and R2's last 2.
+        assert!(
+            dropped.iter().all(|p| [1, 2, 15, 16].contains(p)),
+            "{dropped:?}"
+        );
+        assert!(masked.is_subset(&all));
+    }
+
+    /// #1211: deconvolution counts no CpG from a dovetail overhang or an inline UMI.
+    #[test]
+    fn five_base_deconvolution_skips_overhang_and_umi_bases() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sites = |umi_len: usize| {
+            let (genome, _, bam) = five_base_dovetail_duplex_bam(dir.path(), umi_len);
+            let report = dir.path().join(format!("deconv{umi_len}.txt"));
+            staging::scope(|| run_five_base_deconvolution(&genome, &bam, &report, 0)).unwrap();
+            let mut pos: Vec<u32> = std::fs::read_to_string(&report)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.split('\t').nth(1).unwrap().parse().unwrap())
+                .collect();
+            pos.sort_unstable();
+            pos
+        };
+        assert_eq!(sites(0), vec![11, 12], "only the fragment CpG (1-based)");
+        assert!(sites(4).is_empty(), "the UMI covers the fragment CpG");
+    }
+
+    /// #1220: in a paired-end run the deconvolution counts R2 on its R1's strand, and a base
+    /// both mates cover only once. One OT pair over `TT CG TTT CG TTTT CG TTTTT`: R1 on
+    /// [0,10), R2 on [6,16), so the CpG at 2 is R1 only, 7 is in both mates, 13 is R2 only.
+    #[test]
+    fn five_base_deconvolution_counts_r2_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", b"TTCGTTTCGTTTTCGTTTTT");
+        let refid = build_refid(&genome);
+        let bam = dir.path().join("pe.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let r1 = sam("p\t99\tchr1\t1\t60\t10M\t=\t7\t16\tTTCGTTTCGT\tIIIIIIIIII\tAS:i:0");
+        let r2 = sam("p\t147\tchr1\t7\t60\t10M\t=\t1\t-16\tTCGTTTTCGT\tIIIIIIIIII\tAS:i:0");
+        let read2 = crate::aligner::output::revcomp(r2.seq.as_bytes());
+        let (o1, o2) = five_base_emit_pe_record(
+            &r1,
+            &r2,
+            "p",
+            r1.seq.as_bytes(),
+            b"IIIIIIIIII",
+            &read2,
+            b"IIIIIIIIII",
+            &genome,
+            &refid,
+            false,
+            true,
+            false,
+            0,
+            0,
+            &mut Counters::default(),
+        )
+        .unwrap()
+        .expect("proper pair");
+        write_record(&mut w, &o1).unwrap();
+        write_record(&mut w, &o2).unwrap();
+        w.finish().unwrap();
+
+        let report = dir.path().join("deconv.txt");
+        staging::scope(|| run_five_base_deconvolution(&genome, &bam, &report, 0)).unwrap();
+        let mut sites: Vec<(u32, String)> = std::fs::read_to_string(&report)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f[1].parse().unwrap(), f[2..].join(" "))
+            })
+            .collect();
+        sites.sort();
+        let positions: Vec<u32> = sites.iter().map(|s| s.0).collect();
+        assert_eq!(
+            positions,
+            vec![3, 4, 8, 9, 14, 15],
+            "R2's CpG at 13 is counted"
+        );
+        let at = |p: u32| sites.iter().find(|s| s.0 == p).unwrap().1.clone();
+        assert_eq!(
+            at(8),
+            at(3),
+            "the CpG in both mates is counted once, like R1's own"
+        );
+        assert_eq!(at(14), at(3), "R2 counts as an OT read");
+    }
+
+    /// Emit one 5-Base pair from SAM-forward lines, reversing the mate that maps to `-`.
+    fn emit_test_pair(
+        genome: &Genome,
+        name: &str,
+        r1: &str,
+        r2: &str,
+        umi_len: usize,
+    ) -> (crate::io::BismarkRecord, crate::io::BismarkRecord) {
+        let refid = build_refid(genome);
+        let (r1, r2) = (sam(r1), sam(r2));
+        let read = |rec: &SamRecord| {
+            let s = rec.seq.as_bytes();
+            if rec.flag & 0x10 != 0 {
+                crate::aligner::output::revcomp(s)
+            } else {
+                s.to_vec()
+            }
+        };
+        let (q1, q2) = (vec![b'I'; r1.seq.len()], vec![b'I'; r2.seq.len()]);
+        five_base_emit_pe_record(
+            &r1,
+            &r2,
+            name,
+            &read(&r1),
+            &q1,
+            &read(&r2),
+            &q2,
+            genome,
+            &refid,
+            false,
+            true,
+            false,
+            0,
+            umi_len,
+            &mut Counters::default(),
+        )
+        .unwrap()
+        .expect("proper pair")
+    }
+
+    /// The `R2_GENOME` pair on [2,12) + [8,18): OT (99/147) or OB (83/163), named `name`.
+    fn r2_genome_pair(
+        genome: &Genome,
+        name: &str,
+        ot: bool,
+        umi_len: usize,
+    ) -> (crate::io::BismarkRecord, crate::io::BismarkRecord) {
+        let left = "TTCGTTTCGT";
+        let right = "TCGTTTTCGT";
+        let (r1, r2) = if ot {
+            (
+                format!("{name}\t99\tchr1\t3\t60\t10M\t=\t9\t16\t{left}\tIIIIIIIIII\tAS:i:0"),
+                format!("{name}\t147\tchr1\t9\t60\t10M\t=\t3\t-16\t{right}\tIIIIIIIIII\tAS:i:0"),
+            )
+        } else {
+            (
+                format!("{name}\t83\tchr1\t9\t60\t10M\t=\t3\t-16\t{right}\tIIIIIIIIII\tAS:i:0"),
+                format!("{name}\t163\tchr1\t3\t60\t10M\t=\t9\t16\t{left}\tIIIIIIIIII\tAS:i:0"),
+            )
+        };
+        emit_test_pair(genome, name, &r1, &r2, umi_len)
+    }
+
+    /// `rec` renamed, re-flagged and, with `pos1`, moved to that 1-based position.
+    fn with_flags(
+        rec: &crate::io::BismarkRecord,
+        name: &str,
+        flags: u16,
+        pos1: Option<usize>,
+    ) -> crate::io::BismarkRecord {
+        let mut inner = rec.inner().clone();
+        *inner.name_mut() = Some(name.into());
+        *inner.flags_mut() = noodles_sam::alignment::record::Flags::from(flags);
+        if let Some(p) = pos1 {
+            *inner.alignment_start_mut() = noodles_core::Position::new(p);
+        }
+        crate::io::BismarkRecord::from_noodles_record(inner).unwrap()
+    }
+
+    /// `rec` with BAM QUAL (reference orientation) set to `qual`; empty means absent.
+    fn with_qual(rec: &crate::io::BismarkRecord, qual: &[u8]) -> crate::io::BismarkRecord {
+        let mut inner = rec.inner().clone();
+        *inner.quality_scores_mut() = qual.to_vec().into();
+        crate::io::BismarkRecord::from_noodles_record(inner).unwrap()
+    }
+
+    /// The deconvolution rows and the duplex report of `records`, written in that order.
+    fn pass_outputs(
+        genome: &Genome,
+        dir: &Path,
+        tag: &str,
+        records: &[&crate::io::BismarkRecord],
+        baseq: u8,
+    ) -> (Vec<(u32, String)>, String) {
+        let bam = dir.join(format!("{tag}.bam"));
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(genome, "test")).unwrap();
+        for r in records {
+            write_record(&mut w, r).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.join(format!("{tag}.duplex.txt"));
+        staging::scope(|| run_five_base_duplex_pe(genome, &bam, &report, None, baseq)).unwrap();
+        let deconv = bam.with_extension("deconv.txt");
+        staging::scope(|| run_five_base_deconvolution(genome, &bam, &deconv, baseq)).unwrap();
+        (
+            report_rows(&deconv),
+            std::fs::read_to_string(&report).unwrap(),
+        )
+    }
+
+    /// Deconvolution report rows `(1-based pos, rest of the row)`, sorted.
+    fn deconv_rows(genome: &Genome, bam: &Path) -> Vec<(u32, String)> {
+        let report = bam.with_extension("deconv.txt");
+        staging::scope(|| run_five_base_deconvolution(genome, bam, &report, 0)).unwrap();
+        report_rows(&report)
+    }
+
+    /// Rows of a deconvolution report `(1-based pos, rest of the row)`, sorted.
+    fn report_rows(report: &Path) -> Vec<(u32, String)> {
+        let mut rows: Vec<(u32, String)> = std::fs::read_to_string(report)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f[1].parse().unwrap(), f[2..].join(" "))
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    const R2_GENOME: &[u8] = b"TTTTCGTTTCGTTTTCGTTTTTTT";
+
+    /// A CTOB R2 counts as an OB read, once where it overlaps its R1.
+    #[test]
+    fn five_base_deconvolution_counts_a_ctob_r2_as_ob() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("ob.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (o1, o2) = r2_genome_pair(&genome, "p", false, 0);
+        write_record(&mut w, &o1).unwrap();
+        write_record(&mut w, &o2).unwrap();
+        w.finish().unwrap();
+        let rows = deconv_rows(&genome, &bam);
+        let positions: Vec<u32> = rows.iter().map(|r| r.0).collect();
+        assert_eq!(positions, vec![5, 6, 10, 11, 16, 17]);
+        let at = |p: u32| rows.iter().find(|r| r.0 == p).unwrap().1.clone();
+        assert_eq!(at(5), at(16), "R2's CpG counts like R1's own");
+        assert_eq!(at(10), at(16), "the overlap CpG is counted once");
+    }
+
+    /// With an inline UMI, an overlapping pair loses only the sites under the UMI.
+    #[test]
+    fn five_base_deconvolution_overlap_and_inline_umi() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let rows = |umi_len: usize| {
+            let bam = dir.path().join(format!("umi{umi_len}.bam"));
+            let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+            let (o1, o2) = r2_genome_pair(&genome, "p", true, umi_len);
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+            w.finish().unwrap();
+            deconv_rows(&genome, &bam)
+        };
+        let (all, masked) = (rows(0), rows(2));
+        let pos = |r: &[(u32, String)]| r.iter().map(|x| x.0).collect::<Vec<u32>>();
+        let dropped: Vec<u32> = pos(&all)
+            .into_iter()
+            .filter(|p| !pos(&masked).contains(p))
+            .collect();
+        assert_eq!(
+            dropped,
+            vec![17],
+            "R2's UMI covers the G at 17; R1's covers no CpG"
+        );
+        let at = |r: &[(u32, String)], p: u32| r.iter().find(|x| x.0 == p).unwrap().1.clone();
+        assert_eq!(
+            at(&masked, 10),
+            at(&masked, 5),
+            "the overlap CpG is still counted once"
+        );
+    }
+
+    /// A pair skipped for a contig missing from the genome still pairs its R2.
+    #[test]
+    fn five_base_deconvolution_pairs_an_r2_whose_pair_is_skipped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut both = five_base_genome("chr1", R2_GENOME);
+        both.chromosomes.insert("chr2".into(), R2_GENOME.to_vec());
+        both.sq_order.push("chr2".into());
+        let line = |n: &str, f: u16, chr: &str, pos: u32, mpos: u32, tlen: i32, seq: &str| {
+            format!("{n}\t{f}\t{chr}\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0")
+        };
+        let (left, right) = ("TTCGTTTCGT", "TCGTTTTCGT");
+        let bam = dir.path().join("skip.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&both, "test")).unwrap();
+        for chr in ["chr2", "chr1"] {
+            let (o1, o2) = emit_test_pair(
+                &both,
+                chr,
+                &line(chr, 99, chr, 3, 9, 16, left),
+                &line(chr, 147, chr, 9, 3, -16, right),
+                0,
+            );
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let mut chr1_only = five_base_genome("chr1", R2_GENOME);
+        chr1_only.sq_order.push("chr2".into());
+        let rows = deconv_rows(&chr1_only, &bam);
+        assert_eq!(rows.len(), 6, "the chr1 pair's sites only");
+    }
+
+    /// #1237: an `N` at a CpG cytosine is no call.
+    #[test]
+    fn five_base_deconvolution_skips_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let line = |n: &str, f: u16, pos: u32, mpos: u32, tlen: i32, seq: &str| {
+            format!("{n}\t{f}\tchr1\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0")
+        };
+        let right = line("p", 147, 9, 3, -16, "TCGTTTTCGT");
+        let rows = |left: &str| {
+            let (o1, o2) = emit_test_pair(&genome, "p", &line("p", 99, 3, 9, 16, left), &right, 0);
+            pass_outputs(&genome, dir.path(), left, &[&o1, &o2], 0).0
+        };
+        let clean = rows("TTCGTTTCGT");
+        let without =
+            |p: u32| -> Vec<(u32, String)> { clean.iter().filter(|r| r.0 != p).cloned().collect() };
+        // R1 alone reads the `+` cytosine at 0-based 4 and the `-` one at 5.
+        assert_eq!(rows("TTNGTTTCGT"), without(5), "N at the + cytosine");
+        assert_eq!(rows("TTCNTTTCGT"), without(6), "N at the - cytosine");
+    }
+
+    /// #1237: a base that is neither allele of the CpG cytosine is no call.
+    #[test]
+    fn five_base_deconvolution_and_duplex_skip_a_mismatch() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // An `A` at the `+` cytosine at 0-based 15, read by the top pair's R2 only.
+        let mut seq = t2.inner().sequence().as_ref().to_vec();
+        assert_eq!(seq[7], b'C');
+        seq[7] = b'A';
+        let mut inner = t2.inner().clone();
+        *inner.sequence_mut() = seq.into();
+        let t2a = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (rows, duplex) = pass_outputs(&genome, dir.path(), "mm", &[&t1, &t2a, &b1, &b2], 0);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
+        let at = |p: u32| rows.iter().find(|r| r.0 == p).unwrap().1.clone();
+        assert_eq!(
+            at(16),
+            "+ undetermined 0 0 NA",
+            "only the opposite-strand read is left"
+        );
+    }
+
+    /// #1237: an `N` at a `-` cytosine is no call in the duplex too.
+    #[test]
+    fn five_base_duplex_pe_skips_n_at_a_minus_cytosine() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // The bottom pair's R2 alone reads the `-` cytosine at 0-based 5 on its own strand.
+        let mut seq = b2.inner().sequence().as_ref().to_vec();
+        assert_eq!(seq[3], b'G');
+        seq[3] = b'N';
+        let mut inner = b2.inner().clone();
+        *inner.sequence_mut() = seq.into();
+        let b2n = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (_, duplex) = pass_outputs(&genome, dir.path(), "minus", &[&t1, &t2, &b1, &b2n], 0);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
+    }
+
+    /// #1237: with `--five_base_baseq`, a base below the threshold is no call.
+    #[test]
+    fn five_base_deconvolution_and_duplex_honour_baseq() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        // Phred 2 at R1's `+` cytosine at 0-based 4 (R1 starts at 2).
+        let mut q = vec![40u8; 10];
+        q[2] = 2;
+        let t1q = with_qual(&t1, &q);
+        let run = |tag: &str, baseq: u8| {
+            pass_outputs(&genome, dir.path(), tag, &[&t1q, &t2, &b1, &b2], baseq)
+        };
+        let clean = pass_outputs(&genome, dir.path(), "hi", &[&t1, &t2, &b1, &b2], 0);
+        assert_eq!(run("q0", 0), clean, "off");
+        assert_eq!(run("q2", 2), clean, "Phred 2 is not below 2");
+        let (rows, duplex) = run("q20", 20);
+        let family = duplex.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{duplex}");
+        let at = |r: &[(u32, String)], p: u32| r.iter().find(|x| x.0 == p).map(|x| x.1.clone());
+        assert_eq!(at(&clean.0, 5).as_deref(), Some("+ undetermined 0 1 0.00"));
+        assert_eq!(at(&rows, 5).as_deref(), Some("+ undetermined 0 0 NA"));
+    }
+
+    /// #1237: a record without QUAL still has its bases called under `--five_base_baseq`.
+    #[test]
+    fn five_base_walk_counts_bases_without_qual() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        let clean = pass_outputs(&genome, dir.path(), "q", &[&t1, &t2, &b1, &b2], 0);
+        let bare: Vec<crate::io::BismarkRecord> = [&t1, &t2, &b1, &b2]
+            .iter()
+            .map(|r| with_qual(r, &[]))
+            .collect();
+        let refs: Vec<&crate::io::BismarkRecord> = bare.iter().collect();
+        assert!(bare[0].inner().quality_scores().as_ref().is_empty());
+        assert_eq!(pass_outputs(&genome, dir.path(), "noq", &refs, 20), clean);
+    }
+
+    /// A `R2_GENOME` pair: R1 `r1` on [2,12) (CIGAR `cigar1`), R2 `r2` on [8,18), top strand.
+    fn r2_genome_top_pair(
+        genome: &Genome,
+        name: &str,
+        cigar1: &str,
+        r1: &str,
+        r2: &str,
+        umi_len: usize,
+    ) -> (crate::io::BismarkRecord, crate::io::BismarkRecord) {
+        let q1 = "I".repeat(r1.len());
+        let q2 = "I".repeat(r2.len());
+        emit_test_pair(
+            genome,
+            name,
+            &format!("{name}\t99\tchr1\t3\t60\t{cigar1}\t=\t9\t16\t{r1}\t{q1}\tAS:i:0"),
+            &format!("{name}\t147\tchr1\t9\t60\t10M\t=\t3\t-16\t{r2}\t{q2}\tAS:i:0"),
+            umi_len,
+        )
+    }
+
+    const R2_LEFT: &str = "TTCGTTTCGT";
+    const R2_RIGHT: &str = "TCGTTTTCGT";
+
+    /// #1238: where R1 reads an `N` in the overlap, R2's base fills the CpG.
+    #[test]
+    fn five_base_deconvolution_r2_fills_r1_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0);
+        // R1's `N` at the overlap `+` cytosine at 0-based 9.
+        let (n1, n2) = r2_genome_top_pair(&genome, "p", "10M", "TTCGTTTNGT", R2_RIGHT, 0);
+        assert_eq!(
+            pass_outputs(&genome, dir.path(), "n", &[&n1, &n2], 0),
+            clean
+        );
+    }
+
+    /// #1238: where R1's base is below `--five_base_baseq` in the overlap, R2's base counts.
+    #[test]
+    fn five_base_duplex_pe_r2_fills_r1_low_quality() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&t1, &t2, &b1, &b2], 20);
+        // Phred 2 at R1's overlap `+` cytosine at 0-based 9 (R1 starts at 2).
+        let mut q = vec![40u8; 10];
+        q[7] = 2;
+        let t1q = with_qual(&t1, &q);
+        let low = pass_outputs(&genome, dir.path(), "low", &[&t1q, &t2, &b1, &b2], 20);
+        let family = low.1.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t6\t0", "{}", low.1);
+        assert_eq!(low, clean);
+    }
+
+    /// #1238: a mismatching R1 base is information, so it still hides R2's base.
+    #[test]
+    fn five_base_r1_mismatch_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0).0;
+        // A `C` at the overlap `-` cytosine at 0-based 10.
+        let (m1, m2) = r2_genome_top_pair(&genome, "p", "10M", "TTCGTTTCCT", R2_RIGHT, 0);
+        let rows = pass_outputs(&genome, dir.path(), "mm", &[&m1, &m2], 0).0;
+        let without_11: Vec<(u32, String)> = clean.into_iter().filter(|r| r.0 != 11).collect();
+        assert_eq!(rows, without_11);
+    }
+
+    /// #1238: where R1 has a deletion over an overlap CpG, R2's base fills it.
+    #[test]
+    fn five_base_deconvolution_r2_fills_r1_deletion() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (c1, c2) = r2_genome_top_pair(&genome, "p", "10M", R2_LEFT, R2_RIGHT, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&c1, &c2], 0);
+        // R1 deletes the `+` cytosine at 0-based 9.
+        let (d1, d2) = r2_genome_top_pair(&genome, "p", "7M1D2M", "TTCGTTTGT", R2_RIGHT, 0);
+        assert_eq!(u16::from(d1.inner().flags()) & 0x40, 0x40);
+        assert_eq!(
+            pass_outputs(&genome, dir.path(), "del", &[&d1, &d2], 0),
+            clean
+        );
+    }
+
+    /// #1238: a masked inline UMI in R1 still hides the R2 bases under it.
+    #[test]
+    fn five_base_r1_masked_umi_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let line = |f: u16, tlen: i32| {
+            format!("p\t{f}\tchr1\t3\t60\t10M\t=\t3\t{tlen}\t{R2_LEFT}\tIIIIIIIIII\tAS:i:0")
+        };
+        // Both mates on [2,12); R1's 3-base UMI covers 0-based 2-4.
+        let (r1, r2) = emit_test_pair(&genome, "p", &line(99, 10), &line(147, -10), 3);
+        let rows = pass_outputs(&genome, dir.path(), "umi", &[&r1, &r2], 0).0;
+        assert!(
+            rows.iter().all(|r| r.0 != 5),
+            "no call under R1's UMI: {rows:?}"
+        );
+    }
+
+    /// #1238: a deletion next to R1's masked UMI is not between called bases, so it still
+    /// hides R2's base.
+    #[test]
+    fn five_base_deletion_beside_r1_mask_still_blocks_r2() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        // Both mates on [2,12); R1 deletes the `+` cytosine at 0-based 4 inside its 3-base UMI.
+        let (r1, r2) = emit_test_pair(
+            &genome,
+            "p",
+            "p\t99\tchr1\t3\t60\t2M1D7M\t=\t3\t10\tTTGTTTCGT\tIIIIIIIII\tAS:i:0",
+            &format!("p\t147\tchr1\t3\t60\t10M\t=\t3\t-10\t{R2_LEFT}\tIIIIIIIIII\tAS:i:0"),
+            3,
+        );
+        let rows = pass_outputs(&genome, dir.path(), "mdel", &[&r1, &r2], 0).0;
+        assert!(rows.iter().all(|r| r.0 != 5), "{rows:?}");
+    }
+
+    /// #1238: an R1's no-call positions do not carry over to the next pair.
+    #[test]
+    fn five_base_r1_gaps_reset_per_pair() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (b1, b2) = r2_genome_top_pair(&genome, "b", "10M", R2_LEFT, R2_RIGHT, 0);
+        // The duplex pass drops a record without a mate position: B's R1 but not its R2.
+        let mut inner = b1.inner().clone();
+        *inner.mate_alignment_start_mut() = None;
+        let b1x = crate::io::BismarkRecord::from_noodles_record(inner).unwrap();
+        let (c1, c2) = r2_genome_pair(&genome, "c", false, 0);
+        let duplex = |a1_seq: &str, tag: &str| {
+            // A lone R1 before pair B, in a family of its own (mate at 10).
+            let (a1, _) = emit_test_pair(
+                &genome,
+                "a",
+                &format!("a\t99\tchr1\t3\t60\t10M\t=\t10\t17\t{a1_seq}\tIIIIIIIIII\tAS:i:0"),
+                "a\t147\tchr1\t10\t60\t10M\t=\t3\t-17\tCGTTTTCGTT\tIIIIIIIIII\tAS:i:0",
+                0,
+            );
+            pass_outputs(&genome, dir.path(), tag, &[&a1, &b1x, &b2, &c1, &c2], 0).1
+        };
+        // `N`s at the overlap cytosines 9 and 10 in A's R1 must not open B's R1 span.
+        let with_gaps = duplex("TTCGTTTNNT", "gaps");
+        assert!(with_gaps.contains("\t1+2\t"), "{with_gaps}");
+        assert_eq!(with_gaps, duplex(R2_LEFT, "clean"));
+    }
+
+    /// #1236: both passes ignore secondary and supplementary records.
+    #[test]
+    fn five_base_passes_skip_secondary_and_supplementary() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let (t1, t2) = r2_genome_pair(&genome, "t", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+        let clean = pass_outputs(&genome, dir.path(), "clean", &[&t1, &t2, &b1, &b2], 0);
+        // A secondary copy of R1 outside R1's span, between R1 and its R2.
+        let sec = with_flags(&t1, "t", 99 | 0x100, Some(13));
+        let with_sec = pass_outputs(&genome, dir.path(), "sec", &[&t1, &sec, &t2, &b1, &b2], 0);
+        assert_eq!(with_sec, clean, "secondary R1");
+        // A supplementary record of another read between R1 and its R2.
+        let sup = with_flags(&t2, "x", 147 | 0x800, None);
+        let with_sup = pass_outputs(&genome, dir.path(), "sup", &[&t1, &sup, &t2, &b1, &b2], 0);
+        assert_eq!(with_sup, clean, "supplementary R2");
+        // A supplementary part of R1 outside R1's span, between R1 and its R2.
+        let sup1 = with_flags(&t1, "t", 99 | 0x800, Some(13));
+        let with_sup1 = pass_outputs(&genome, dir.path(), "sup1", &[&t1, &sup1, &t2, &b1, &b2], 0);
+        assert_eq!(with_sup1, clean, "supplementary R1");
+    }
+
+    /// An R2 that does not directly follow its R1 stops the pass.
+    #[test]
+    fn five_base_deconvolution_rejects_an_r2_away_from_its_r1() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("interleaved.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (a1, a2) = r2_genome_pair(&genome, "a", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", true, 0);
+        for r in [&a1, &b1, &a2, &b2] {
+            write_record(&mut w, r).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("x.txt");
+        let err = staging::scope(|| run_five_base_deconvolution(&genome, &bam, &report, 0))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("R2 'a' does not follow its R1"), "{err}");
+    }
+
+    /// #1211: the duplex family pass counts no CpG from a dovetail overhang or an inline UMI.
+    #[test]
+    fn five_base_duplex_skips_overhang_and_umi_bases() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let family = |umi_len: usize| {
+            let (genome, _, bam) = five_base_dovetail_duplex_bam(dir.path(), umi_len);
+            let report = dir.path().join(format!("duplex{umi_len}.txt"));
+            staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0)).unwrap();
+            let text = std::fs::read_to_string(&report).unwrap();
+            let line = text.lines().find(|l| !l.starts_with('#')).unwrap();
+            let f: Vec<&str> = line.split('\t').collect();
+            let sites: u32 = f[5..8].iter().map(|n| n.parse::<u32>().unwrap()).sum();
+            (f[1..5].join(" "), sites)
+        };
+        let fam = "6 16 NA 2+2".to_string();
+        assert_eq!(
+            family(0),
+            (fam.clone(), 2),
+            "the fragment CpG's 2 cytosines"
+        );
+        assert_eq!(family(4), (fam, 0), "the UMI covers them");
+    }
+
+    /// #1222: in a PE duplex family, R2 counts on its molecule's strand. One molecule over
+    /// `TTTTTTTTTTTTTTTT CG TTTTTTTT`, the top-strand C at 16 methylated, as a top-strand pair
+    /// (R1 forward on [2,12), R2 reverse on [12,22)) and a bottom-strand pair (R1 reverse on
+    /// [12,22), R2 forward on [2,12)). The CpG is read only by the top pair's R2 and the
+    /// bottom pair's R1, both reverse.
+    #[test]
+    fn five_base_duplex_pe_counts_r2_on_its_molecule_strand() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", b"TTTTTTTTTTTTTTTTCGTTTTTTTT");
+        let refid = build_refid(&genome);
+        let bam = dir.path().join("pe.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (left, top, bottom) = ("TTTTTTTTTT", "TTTTTGTTTT", "TTTTCGTTTT");
+        for (q, f1, p1, s1, f2, p2, s2, t) in [
+            ("top", 99, 3, left, 147, 13, top, 20),
+            ("bot", 83, 13, bottom, 163, 3, left, -20),
+        ] {
+            let line = |flag: u16, pos: u32, mpos: u32, seq: &str, tlen: i32| {
+                sam(&format!(
+                    "{q}\t{flag}\tchr1\t{pos}\t60\t10M\t=\t{mpos}\t{tlen}\t{seq}\tIIIIIIIIII\tAS:i:0"
+                ))
+            };
+            let (r1, r2) = (line(f1, p1, p2, s1, t), line(f2, p2, p1, s2, -t));
+            let read = |rec: &SamRecord| {
+                let s = rec.seq.as_bytes();
+                if rec.flag & 0x10 != 0 {
+                    crate::aligner::output::revcomp(s)
+                } else {
+                    s.to_vec()
+                }
+            };
+            let (o1, o2) = five_base_emit_pe_record(
+                &r1,
+                &r2,
+                q,
+                &read(&r1),
+                b"IIIIIIIIII",
+                &read(&r2),
+                b"IIIIIIIIII",
+                &genome,
+                &refid,
+                false,
+                true,
+                false,
+                0,
+                0,
+                &mut Counters::default(),
+            )
+            .unwrap()
+            .expect("proper pair");
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+
+        let report = dir.path().join("duplex.txt");
+        staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        // Both cytosines of the CpG see their own strand and the opposite one: no variant,
+        // two methylation-class sites (the `+` one methylated, the `-` one not).
+        assert_eq!(family, "chr1\t2\t22\tNA\t2+2\t0\t2\t0", "{text}");
+    }
+
+    /// #1227: a CpG read by both mates of one pair counts once in the duplex totals.
+    #[test]
+    fn five_base_duplex_pe_counts_overlap_once() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("overlap.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        for (name, ot) in [("t", true), ("b", false)] {
+            let (o1, o2) = r2_genome_pair(&genome, name, ot, 0);
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("duplex.txt");
+        let s =
+            staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t6\t0", "{text}");
+        // Six CpG cytosines, one own-strand call each; the overlap [8,12) is not doubled.
+        assert_eq!((s.total_calls, s.methylated_calls), (6, 0));
+    }
+
+    /// #1227: in the overlap R1's call stands; a 5mC both mates show counts once.
+    #[test]
+    fn five_base_duplex_pe_overlap_keeps_r1s_call() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        // R1 reads a T (5mC) at the overlap CpG cytosine 9; R2 reads `r2_right` there.
+        let totals = |r2_right: &str| {
+            let bam = dir.path().join(format!("{r2_right}.bam"));
+            let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+            let (t1, t2) = emit_test_pair(
+                &genome,
+                "t",
+                "t\t99\tchr1\t3\t60\t10M\t=\t9\t16\tTTCGTTTTGT\tIIIIIIIIII\tAS:i:0",
+                &format!("t\t147\tchr1\t9\t60\t10M\t=\t3\t-16\t{r2_right}\tIIIIIIIIII\tAS:i:0"),
+                0,
+            );
+            let (b1, b2) = r2_genome_pair(&genome, "b", false, 0);
+            for r in [&t1, &t2, &b1, &b2] {
+                write_record(&mut w, r).unwrap();
+            }
+            w.finish().unwrap();
+            let report = dir.path().join(format!("{r2_right}.txt"));
+            let s = staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0))
+                .unwrap();
+            (s.total_calls, s.methylated_calls)
+        };
+        assert_eq!(totals("TTGTTTTCGT"), (6, 1), "both mates show the 5mC");
+        assert_eq!(totals("TCGTTTTCGT"), (6, 1), "R2 shows a C; R1's T stands");
+    }
+
+    /// #1227 with an inline UMI: the masked R2 end drops its site, the overlap still counts once.
+    #[test]
+    fn five_base_duplex_pe_overlap_with_inline_umi() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("umi.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        for (name, ot) in [("t", true), ("b", false)] {
+            let (o1, o2) = r2_genome_pair(&genome, name, ot, 2);
+            write_record(&mut w, &o1).unwrap();
+            write_record(&mut w, &o2).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("duplex.txt");
+        let s =
+            staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0)).unwrap();
+        let text = std::fs::read_to_string(&report).unwrap();
+        let family = text.lines().find(|l| !l.starts_with('#')).unwrap();
+        // The UMIs at the reverse mates' 5' ends cover the G at 16; it has no own-strand call.
+        assert_eq!(family, "chr1\t2\t18\tNA\t2+2\t0\t5\t0", "{text}");
+        assert_eq!((s.total_calls, s.methylated_calls), (5, 0));
+    }
+
+    /// An R2 that does not directly follow its R1 stops the PE duplex pass.
+    #[test]
+    fn five_base_duplex_pe_rejects_an_r2_away_from_its_r1() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let genome = five_base_genome("chr1", R2_GENOME);
+        let bam = dir.path().join("interleaved.bam");
+        let mut w = BamWriter::from_path(&bam, generate_sam_header(&genome, "test")).unwrap();
+        let (a1, a2) = r2_genome_pair(&genome, "a", true, 0);
+        let (b1, b2) = r2_genome_pair(&genome, "b", true, 0);
+        for r in [&a1, &b1, &a2, &b2] {
+            write_record(&mut w, r).unwrap();
+        }
+        w.finish().unwrap();
+        let report = dir.path().join("x.txt");
+        let err = staging::scope(|| run_five_base_duplex_pe(&genome, &bam, &report, None, 0))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("R2 'a' does not follow its R1"), "{err}");
+    }
+
+    /// #1211: the duplex consensus calls no CpG from a dovetail overhang or an inline UMI.
+    #[test]
+    fn five_base_consensus_skips_overhang_and_umi_bases() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let xms = |umi_len: usize| {
+            let (genome, refid, bam) = five_base_dovetail_duplex_bam(dir.path(), umi_len);
+            let out = dir.path().join(format!("cons{umi_len}.bam"));
+            let header = generate_sam_header(&genome, "test");
+            staging::scope(|| {
+                run_five_base_consensus(
+                    &genome,
+                    &refid,
+                    &[bam.as_path()],
+                    EmitPaths::Duplex(&out),
+                    &header,
+                    None,
+                    0,
+                )
+            })
+            .unwrap();
+            let mut reader = crate::io::BamReader::from_path_without_sort_check(&out).unwrap();
+            reader
+                .records()
+                .map(|r| {
+                    let r = r.unwrap();
+                    String::from_utf8(crate::io::tags::xm(r.inner().data()).unwrap().to_vec())
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        // Span [6,16): the `+` call of the fragment CpG at 10, the `-` call at 11.
+        assert_eq!(xms(0), vec!["....z.....", ".....z...."]);
+        assert_eq!(xms(4), vec![".........."; 2]);
+    }
+
+    /// Pointing-apart pairs are rejected and count as no alignment, like same-strand pairs.
+    #[test]
+    fn five_base_emit_pe_rejects_outward_pairs_and_counts_them_as_no_alignment() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAATTTT");
+        let refid = build_refid(&genome);
+        let r1 = sam("p\t99\tchr1\t11\t60\t4M\t=\t1\t0\tAACG\tIIII\tAS:i:0");
+        let r2 = sam("p\t147\tchr1\t1\t60\t4M\t=\t11\t0\tAACG\tIIII\tAS:i:0");
+        let mut c = Counters::default();
+        let out = five_base_emit_pe_record(
+            &r1, &r2, "p", b"AACG", b"IIII", b"CGTT", b"IIII", &genome, &refid, false, true, false,
+            0, 0, &mut c,
+        )
+        .unwrap();
+        assert!(out.is_none());
+        assert_eq!(c.five_base_pair_orientation_rejected, 1);
         assert_eq!(c.no_single_alignment_found, 1);
         assert_eq!(c.unique_best_alignment_count, 0);
     }
@@ -8084,6 +9985,11 @@ mod tests {
         ));
         assert!(!inprocess_rammap_selected(
             Aligner::Minimap2,
+            false,
+            ReadFormat::FastQ
+        ));
+        assert!(!inprocess_rammap_selected(
+            Aligner::BwaMem3,
             false,
             ReadFormat::FastQ
         ));
@@ -8419,10 +10325,88 @@ mod tests {
         c.five_base = true;
         c.aligner_options = match aligner {
             Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
+            Aligner::BwaMem3 => {
+                crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Illumina5Base)
+            }
             _ => "-q --score-min L,0,-0.6 --maxins 800".into(),
         };
         c.bowtie_threads = Some(4);
         c
+    }
+
+    #[test]
+    fn five_base_sq_header_is_read_without_consuming_the_first_record() {
+        let sam = "@HD\tVN:1.5\n@SQ\tSN:chr1\tLN:8\n@PG\tID:x\n\
+                   p\t99\tchr1\t1\t60\t4M\t=\t1\t4\tACGT\tIIII\n";
+        let mut r = std::io::BufReader::new(sam.as_bytes());
+        assert_eq!(
+            five_base_read_sq_header(&mut r).unwrap(),
+            vec![("chr1".to_string(), 8)]
+        );
+        let mut line = String::new();
+        let rec = five_base_next_primary(&mut r, &mut line).unwrap().unwrap();
+        assert_eq!(rec.qname, "p");
+    }
+
+    #[test]
+    fn bwa_ann_parse_and_contig_match_catches_length_mismatch() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("g.fa");
+        std::fs::write(
+            format!("{}.ann", p.display()),
+            "18 2 11\n0 chr1 (null)\n0 8 0\n0 chr2 some comment\n8 10 0\n",
+        )
+        .unwrap();
+        let ann = read_bwa_ann(&p).unwrap();
+        assert_eq!(ann, vec![("chr1".to_string(), 8), ("chr2".to_string(), 10)]);
+
+        let genome = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 10)];
+        assert!(check_contigs_match(&genome, &ann, "bwa-mem3 index").is_ok());
+
+        let same_names = vec![("chr1".to_string(), 8u64), ("chr2".to_string(), 11)];
+        let e = check_contigs_match(&same_names, &ann, "bwa-mem3 index")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("chr2:10") && e.contains("chr2:11"), "{e}");
+
+        let renamed = vec![("1".to_string(), 8u64), ("2".to_string(), 10)];
+        assert!(check_contigs_match(&renamed, &ann, "bwa-mem3 index").is_err());
+
+        std::fs::write(format!("{}.ann", p.display()), "18 2 11\n0 chr1\n").unwrap();
+        assert!(read_bwa_ann(&p).is_err());
+    }
+
+    #[test]
+    fn taps_bwamem3_options_append_threads() {
+        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        c.five_base_chemistry = config::FiveBaseChemistry::Taps;
+        c.aligner_options =
+            crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Taps);
+        c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
+        let opts = five_base_aligner_options(&c);
+        assert!(opts.starts_with("mem --meth=taps "), "{opts}");
+        assert!(opts.ends_with("-K 100000000 -t 4"), "{opts}");
+    }
+
+    #[test]
+    fn bwamem3_options_append_threads_and_argv_is_prefix_then_mates() {
+        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
+        let opts = five_base_aligner_options(&c);
+        assert!(opts.starts_with("mem --meth=5base"), "{opts}");
+        assert!(opts.ends_with("-K 100000000 -t 4"), "{opts}");
+        let argv: Vec<String> = five_base_build_argv(
+            &c,
+            &opts,
+            Path::new("/unused.fa"),
+            &[Path::new("r1.fq"), Path::new("r2.fq")],
+        )
+        .into_iter()
+        .map(|s| s.into_string().unwrap())
+        .collect();
+        assert_eq!(argv.first().map(String::as_str), Some("mem"));
+        assert_eq!(&argv[argv.len() - 3..], ["/idx/g.fa", "r1.fq", "r2.fq"]);
+        assert!(!argv.iter().any(|a| a == "/unused.fa"), "{argv:?}");
     }
 
     #[test]
@@ -8454,13 +10438,42 @@ mod tests {
     }
 
     #[test]
+    fn taps_notice_names_taps_and_bwamem3() {
+        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps);
+        assert!(
+            n.starts_with("Note: --taps is the TAPS (mC->T) mode"),
+            "{n}"
+        );
+        assert!(
+            n.contains("aligned with bwa-mem3 to the UNCONVERTED genome"),
+            "{n}"
+        );
+        assert!(
+            n.ends_with(
+                "NOT byte-identical (Perl Bismark has no TAPS oracle); validated on public TAPS \
+                 data (see the TAPS guide)."
+            ),
+            "{n}"
+        );
+        assert!(
+            !n.contains("5-Base") && !n.contains("DRAGEN") && !n.contains("rastair"),
+            "{n}"
+        );
+        assert!(
+            five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Illumina5Base)
+                .contains("concordance-validated vs DRAGEN")
+        );
+    }
+
+    #[test]
     fn five_base_notice_names_the_engine_that_runs() {
         for aligner in [
             config::Aligner::Minimap2,
             config::Aligner::Bowtie2,
             config::Aligner::Hisat2,
+            config::Aligner::BwaMem3,
         ] {
-            let notice = five_base_notice(aligner);
+            let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base);
             assert!(
                 notice.contains(&format!(
                     "aligned with {} to the UNCONVERTED",
@@ -8527,6 +10540,7 @@ mod tests {
             true,
             false,
             0,
+            0,
             &mut Counters::default(),
         )
         .unwrap_err()
@@ -8539,5 +10553,88 @@ mod tests {
         );
         assert!(five_base_check_cigar_covers_read("p", "R2", "2S2M", 4).is_ok());
         assert!(five_base_check_cigar_covers_read("p", "R2", "4Z", 4).is_err());
+    }
+
+    /// `output_stem` must name a binary input the way its transcoder does (#1260).
+    fn assert_output_stem_matches_transcode(dec: &dyn InputDecoder, input: &Path) {
+        let sub = input.parent().unwrap().join("decoded");
+        let decoded = if dec.is_paired(input).unwrap() {
+            dec.transcode_pe(input, &sub).unwrap().0
+        } else {
+            dec.transcode_se(input, &sub).unwrap()
+        };
+        let from_transcode = strip_fastq_suffix(&decoded.file_name().unwrap().to_string_lossy());
+        assert_eq!(
+            output_stem(input.to_str().unwrap(), true).unwrap(),
+            from_transcode
+        );
+    }
+
+    #[test]
+    fn output_stem_matches_ubam_transcode_names() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/aligner");
+        for (fixture, name, stem) in [
+            (
+                "tg_se_trimgalore.bam",
+                "s.trimmed.unaligned.bam",
+                "s.trimmed.unaligned",
+            ),
+            (
+                "tg_pe_trimgalore.bam",
+                "p.trimmed.unaligned.bam",
+                "p.trimmed.unaligned_1",
+            ),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let input = dir.path().join(name);
+            std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            assert_output_stem_matches_transcode(&UbamDecoder, &input);
+            assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
+        }
+    }
+
+    #[cfg(feature = "binseq-input")]
+    #[test]
+    fn output_stem_matches_vbq_transcode_name() {
+        use crate::aligner::binseq::SequencingRecordBuilder;
+        use crate::aligner::binseq::write::{BinseqWriterBuilder, Format};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let input = dir.path().join("s.trimmed.vbq");
+        let mut w = BinseqWriterBuilder::new(Format::Vbq)
+            .quality(true)
+            .headers(true)
+            .build(std::fs::File::create(&input).unwrap())
+            .unwrap();
+        let rec = SequencingRecordBuilder::default()
+            .s_header(b"r1")
+            .s_seq(b"ACGTAC")
+            .s_qual(b"FFFFFF")
+            .build()
+            .unwrap();
+        assert!(w.push(rec).unwrap());
+        w.finish().unwrap();
+        assert_output_stem_matches_transcode(&BinseqDecoder, &input);
+        assert_eq!(
+            output_stem(input.to_str().unwrap(), true).unwrap(),
+            "s.trimmed"
+        );
+    }
+
+    #[test]
+    fn output_stem_plain_fastq_and_paired_layout() {
+        assert_eq!(output_stem("/x/s.fq.gz", true).unwrap(), "s");
+        let dir = tempfile::TempDir::new().unwrap();
+        let bam = dir.path().join("s.bam");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/aligner/tg_se_trimgalore.bam"),
+            &bam,
+        )
+        .unwrap();
+        let bam = bam.to_str().unwrap();
+        assert_eq!(output_stem(bam, true).unwrap(), "s");
+        // `-1/-2` inputs are never decoded.
+        assert_eq!(output_stem(bam, false).unwrap(), "s.bam");
     }
 }

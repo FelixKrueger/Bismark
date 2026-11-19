@@ -103,28 +103,10 @@ pub struct DedupState {
 }
 
 impl DedupState {
-    /// Construct an empty state. Use [`DedupState::with_capacity`] if you
-    /// know the approximate record count up-front (saves rehashing).
+    /// Construct an empty state.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Pre-allocate the **seen-set** hash table to `capacity` records.
-    /// Useful at the start of a large input — saves rehashing as the set
-    /// grows. The duplicate-positions set is left at default capacity,
-    /// since it's bounded by the number of distinct duplicate positions
-    /// (typically much smaller than the seen-set on real data: e.g. on
-    /// the 10M PE WGBS audit dataset, seen ≈ 8.0M but
-    /// duplicate-positions ≈ 0.6M).
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            seen: FxHashSet::with_capacity_and_hasher(capacity, Default::default()),
-            duplicate_positions: FxHashSet::default(),
-            count: 0,
-            removed: 0,
-        }
     }
 
     /// Observe one record's dedup key. Returns `true` if the record is
@@ -288,17 +270,6 @@ impl UmiDedupState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Pre-allocate the seen-set to `capacity` records.
-    #[must_use]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            seen: FxHashSet::with_capacity_and_hasher(capacity, Default::default()),
-            duplicate_positions: FxHashSet::default(),
-            count: 0,
-            removed: 0,
-        }
     }
 
     /// Observe one record's UMI dedup key. Returns `true` if unique (caller

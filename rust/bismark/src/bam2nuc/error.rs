@@ -99,9 +99,39 @@ pub enum BismarkBam2nucError {
         flag: u16,
     },
 
+    /// A single-end read carried a FLAG with the paired bit (0x1): Perl's
+    /// `calc_single_end` die, plus a hint to force paired-end.
+    #[error(
+        "failed to detect valid Bismark FLAG tag: {flag}; the file looks paired-end, rerun with -p/--paired"
+    )]
+    PairedFlagInSeMode {
+        /// The offending SAM FLAG value.
+        flag: u16,
+    },
+
+    /// `-p/--paired` was given but a record lacks the paired bit (0x1).
+    #[error(
+        "-p/--paired was given but a record has FLAG {flag}, which is not paired-end; drop -p/--paired for single-end input"
+    )]
+    UnpairedFlagWithForcedPaired {
+        /// The offending SAM FLAG value.
+        flag: u16,
+    },
+
+    /// A file detected as paired-end from its first record has a record without FLAG `0x1`.
+    #[error(
+        "a record has FLAG {flag}, which is not paired-end, in a file whose first record is paired-end; the file mixes single-end and paired-end records"
+    )]
+    MixedLayout {
+        /// The offending SAM FLAG value.
+        flag: u16,
+    },
+
     /// Could not determine single-end vs paired-end from the BAM `@PG` header
     /// (Perl `test_file`: `die "Failed to figure out SE or PE..."`).
-    #[error("failed to determine single-end vs paired-end from the BAM @PG header")]
+    #[error(
+        "failed to determine single-end vs paired-end from the BAM @PG header; pass -s/--single or -p/--paired"
+    )]
     SePeUndetermined,
 
     /// The input filename does not end in `bam` or `cram`, so the output name
@@ -134,11 +164,21 @@ pub enum BismarkBam2nucError {
         "SAM input is not supported (only BAM is read in v1.0); convert to BAM with `samtools view -b`"
     )]
     SamNotSupported,
+}
 
-    /// A `.cram` input was supplied. Perl supports CRAM via samtools; the Rust
-    /// port defers CRAM to a later release (SPEC Q3).
-    #[error("CRAM input is not yet supported in the Rust port (v1.x); use Perl bam2nuc for CRAM")]
-    CramNotSupported,
+/// Keeps this tool's Perl-worded genome-reading messages on top of the shared
+/// [`crate::io::genome`] reader.
+impl From<crate::io::genome::GenomeError> for BismarkBam2nucError {
+    fn from(e: crate::io::genome::GenomeError) -> Self {
+        use crate::io::genome::GenomeError as G;
+        match e {
+            G::NoGenomeFasta { dir } => Self::NoGenomeFasta { dir },
+            G::MalformedFastaHeader { file } => Self::MalformedFastaHeader { file },
+            G::DuplicateChromosomeName { name } => Self::DuplicateChromosomeName { name },
+            G::ChromosomeTooLong { name, len } => Self::ChromosomeTooLong { name, len },
+            G::Io(e) => Self::Io(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +196,22 @@ mod tests {
             BismarkBam2nucError::InvalidSeFlag { flag: 4 }
                 .to_string()
                 .contains("FLAG tag: 4")
+        );
+        assert_eq!(
+            BismarkBam2nucError::PairedFlagInSeMode { flag: 99 }.to_string(),
+            "failed to detect valid Bismark FLAG tag: 99; the file looks paired-end, rerun with -p/--paired"
+        );
+        assert_eq!(
+            BismarkBam2nucError::UnpairedFlagWithForcedPaired { flag: 0 }.to_string(),
+            "-p/--paired was given but a record has FLAG 0, which is not paired-end; drop -p/--paired for single-end input"
+        );
+        assert_eq!(
+            BismarkBam2nucError::MixedLayout { flag: 0 }.to_string(),
+            "a record has FLAG 0, which is not paired-end, in a file whose first record is paired-end; the file mixes single-end and paired-end records"
+        );
+        assert_eq!(
+            BismarkBam2nucError::SePeUndetermined.to_string(),
+            "failed to determine single-end vs paired-end from the BAM @PG header; pass -s/--single or -p/--paired"
         );
         assert!(
             BismarkBam2nucError::NotBamOrCram {

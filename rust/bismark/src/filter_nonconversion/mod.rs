@@ -113,7 +113,12 @@ pub fn run(config: &ResolvedConfig) -> Result<(), BismarkFilterError> {
     let n = config.files.len();
 
     for (i, infile) in config.files.iter().enumerate() {
-        let report = pipeline::filter_one(infile, config.mode, config.explicit_mode)?;
+        let report = pipeline::filter_one(
+            infile,
+            config.mode,
+            config.explicit_mode,
+            config.cram_ref.as_deref(),
+        )?;
 
         // STDERR summary (NOT part of the byte-identity gate — the report
         // FILE is). Perl warns a per-file SUMMARY at lines 311–353.

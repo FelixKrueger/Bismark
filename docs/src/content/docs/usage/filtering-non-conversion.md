@@ -12,8 +12,11 @@ Writes out a file called _nonCG_filtered.bam_, also a file called _nonCG_removed
 **USAGE:**
 
 ```
-bismark filter [options] [Bismark BAM files]
+bismark filter [options] [Bismark BAM or CRAM files]
 ```
+
+Input can be BAM or CRAM (versions 3.0 and 3.1). A CRAM input needs `--cram_ref <genome.fa>`, with its `.fai` index next
+to it. The `.bam` or `.cram` ending is removed from the output names, and the outputs are always BAM.
 
 **Please also note** that for paired-end BAM files `bismark filter` expects Read 1 and Read 2 to follow each other in consecutive lines! If the file has been sorted by position make sure that you resort it by read name first (e.g. using `samtools sort -n`)
 
@@ -40,6 +43,11 @@ At least this number of cytosines in non-CG context (CHH or CHG) have to be seen
 - `--consecutive`
 
 Non-CG methylation has to be found on consecutive non-CGs. Any kind of unmethylated cytosine (in any context) resets the methylated non-CG counter to 0. [Default: OFF].
+
+- `--cram_ref <genome.fa>`
+
+The reference FASTA the CRAM input was compressed against. Required for CRAM input, ignored for BAM. The `.fai` index
+(`samtools faidx genome.fa`) must sit next to it.
 
 - `--samtools_path`
 

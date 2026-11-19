@@ -188,6 +188,53 @@ there ~90 % of the time); recall climbs steeply with depth (43 % → 82 % → **
 the deconvolution **reproduces DRAGEN's variant exclusions** — 90 % precision, 93 % recall
 over 167,978 DRAGEN homozygous CpG-disrupting SNVs. **PROVEN** (GA-candidate).
 
+### Lane-1 re-check after the #1211 / #1220 / #1222 fixes (2026-11-16)
+
+The deconvolution, duplex and consensus figures in this document predate the fixes that skip
+UMI and dovetail-overhang bases (#1211) and count R2 in the paired-end deconvolution (#1220)
+and duplex (#1222) passes. NA12878 Sample8 lane 1 (66M pairs, minimap2,
+`--five_base_umi_qname`), old binary `62df3e1` vs new `a278f60`, against DRAGEN:
+
+| check | old | new |
+|---|---|---|
+| core BAM (`mk` tag stripped), core CpG report | identical | identical |
+| deconvolution `variant` CpGs | 120,823 | 216,454 |
+| deconvolution precision (any DRAGEN C>T/G>A) | 93.0 % | 94.8 % |
+| deconvolution recall (DRAGEN hom, covered) | 43.5 % (67,331 / 154,894) | 72.7 % (120,280 / 165,492) |
+| duplex sites variant / methylation / undetermined | 483 / 19,766 / 128,201 | 2,150 / 273,953 / 860 |
+| duplex families | identical | identical |
+| consensus, chr1 mean `+` / `-` (DRAGEN 50.40 / 50.41 %) | 49.97 / 50.29 % | 49.97 / 50.29 % |
+
+With `--five_base_umi_len 4` the core BAM and CpG report are again identical, every record
+carries `mk`, and the duplex sites move from 107 / 1,022 / 230,207 to 7,180 / 431,284 / 8,264.
+A BAM without `mk` gives the same `--five_base_consensus_from_bam` output from both binaries,
+with one warning. The full-depth figures are re-measured before GA.
+
+The duplex pass then stopped counting a CpG read by both mates of a pair twice (#1227). Same
+lane, `--five_base_umi_qname`, before vs after: core BAM, deconvolution report, consensus BAM and
+duplex families identical; own-strand duplex calls 301,811 → 281,563 (−6.7 %), methylated
+47.0 % → 47.0 % (DRAGEN genome-wide 49.7 %); duplex sites variant / methylation / undetermined
+2,150 / 273,953 / 860 → 2,167 / 273,929 / 863.
+
+The deconvolution and duplex passes then called a CpG cytosine only from its two alleles (C/T,
+or G/A on the minus strand), at or above `--five_base_baseq` (#1237). Same lane, before vs after;
+the core BAM, consensus BAM and duplex families are identical at both settings:
+
+| `--five_base_baseq` | deconvolution calls | duplex calls | deconvolution precision / recall |
+|---|---|---|---|
+| 0 | 176,415,247 → 175,636,178 (−0.4 %) | 281,563 → 280,551 | 94.8 / 72.7 % → 94.7 / 72.7 % |
+| 20 | 176,415,247 → 172,503,185 (−2.2 %) | 281,563 → 277,068 | 94.8 / 72.7 % → 95.1 / 72.1 % |
+
+In the mate overlap, R2 then filled the CpGs where R1 has an `N`, a base below
+`--five_base_baseq` or a deletion (#1238). Same lane, before vs after; the core BAM, consensus BAM
+and duplex families are identical, and precision/recall is unchanged (94.7 / 72.7 % at 0,
+95.1 / 72.1 % at 20):
+
+| `--five_base_baseq` | deconvolution calls | duplex calls | deconvolution rows added |
+|---|---|---|---|
+| 0 | 175,636,178 → 175,639,120 | 280,551 → 280,552 | 71 |
+| 20 | 172,503,185 → 172,613,987 | 277,068 → 277,360 | 2,049 |
+
 ### Consensus — RAM-bounded rewrite (was OOM at WGS depth)
 
 The full-depth run exposed a real scalability bug: the consensus pass held every read's
@@ -294,28 +341,32 @@ bismark --illumina_5base --five_base_deconvolution --genome "$GENOME" \
 # consensus BAM for the per-molecule view)
 bismark_methylation_extractor -p --comprehensive --cytosine_report \
         --genome_folder "$GENOME" "$OUT"/*_pe.bam
+# the consensus BAM holds unpaired records (one per molecule strand): extract it with -s
+bismark_methylation_extractor -s --comprehensive --cytosine_report \
+        --genome_folder "$GENOME" "$OUT"/*_pe.5base_consensus.bam
 ```
 
 ### 2. Fetch the matching DRAGEN reference outputs (BaseSpace `bs` CLI)
 
 Each demo sample ships a DRAGEN `illumina.dragen.complete` dataset (project "Illumina
-5-Base DNA", id 471431965). **HG001 = NA12878, HG002 = NA24385** (the two real samples to
+5-Base DNA", id 11420409). **HG001 = NA12878, HG002 = NA24385** (the two real samples to
 validate). Use the `validation/fetch_dragen.sh` wrapper to pull only the small reference
 files (`CX_report.txt.gz`, `methyl_metrics.csv`, `hard-filtered.vcf.gz`), not the multi-TB
 BAM/FASTQ:
 
 ```sh
 # NA12878 (HG001), Sample8 100ng (the metrics sample)
-validation/fetch_dragen.sh ds.258e74420ab8417a89de572ec1571b55 "$OUT/dragen"
+validation/fetch_dragen.sh ds.a4a909aaec7c41478b90a1ad5c94c452 "$OUT/dragen"
 # HG002 (NA24385), Sample40 50ng
-validation/fetch_dragen.sh ds.48b7596730dd47ef97699b59ccd3641d "$OUT/dragen"
+validation/fetch_dragen.sh ds.75c97a1bad7345659341a2a1c4beb306 "$OUT/dragen"
 ```
 
 The matching RAW READS for alignment input are SEPARATE `illumina.fastq.v1.8` datasets;
 list and pull them with:
 
 ```sh
-bs list dataset --project-id 471431965 | grep -i fastq
+bs list dataset --project-id 11420409 | grep -i fastq
+# Sample8 = ds.b6834497fec442568113475fc76fcce1, Sample40 = ds.bf318453a0c64f98b61589998b46e879
 bs download dataset --id <fastq_ds_id> -o "$OUT/reads"
 ```
 

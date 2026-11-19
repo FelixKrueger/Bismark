@@ -196,7 +196,17 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
     // warn-and-fall-back to single-threaded; everything else →
     // existing single-threaded run_single.
     let kind = crate::io::AlignmentKind::from_path(input)?;
-    let use_parallel = config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Bam);
+    // The threaded writers emit BGZF, so `--sam` output must take the serial path.
+    let use_parallel =
+        config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Bam) && !config.sam_output;
+
+    if config.parallel > 1 && config.sam_output {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-output only; \
+             --sam output runs single-threaded in this release",
+            config.parallel
+        );
+    }
 
     if config.parallel > 1 && matches!(kind, crate::io::AlignmentKind::Cram) {
         eprintln!(
@@ -275,7 +285,16 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
     let all_bam = kinds.iter().all(|k| *k == crate::io::AlignmentKind::Bam);
     let any_cram = kinds.contains(&crate::io::AlignmentKind::Cram);
 
-    let use_parallel = config.parallel > 1 && all_bam;
+    // The threaded writers emit BGZF, so `--sam` output must take the serial path.
+    let use_parallel = config.parallel > 1 && all_bam && !config.sam_output;
+
+    if config.parallel > 1 && config.sam_output {
+        eprintln!(
+            "warning: --parallel {} is currently BAM-output only; \
+             --sam output runs single-threaded in this release",
+            config.parallel
+        );
+    }
 
     if config.parallel > 1 && any_cram {
         eprintln!(
@@ -351,7 +370,8 @@ fn check_bclconvert_format_conflict(
     input: &Path,
     config: &ResolvedConfig,
 ) -> Result<(), BismarkDedupError> {
-    let mut reader = crate::io::open_reader(input, config.cram_ref.as_deref())?;
+    // Peek only; the pipeline's own open enforces the PE-only sort check.
+    let mut reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
     // We only need the first record's qname — peek and discard.
     let first_record = reader.records().next();
     let first_qname: Vec<u8> = match first_record {
@@ -417,23 +437,37 @@ fn parse_bclconvert_groups(qname: &str) -> Option<(&str, &str)> {
 }
 
 /// Resolve the SE/PE mode: explicit flag wins, else auto-detect from the
-/// input's `@PG ID:Bismark` header line.
+/// input's `@PG ID:Bismark` header line and, when that says single-end, its first record.
 fn resolve_paired_mode(input: &Path, config: &ResolvedConfig) -> Result<bool, BismarkDedupError> {
     if let Some(mode) = config.explicit_mode {
         return Ok(mode);
     }
-    // Auto-detect: open the reader briefly to inspect the header. The
+    // Auto-detect: open the reader briefly to inspect the header and first record. The
     // file will be opened again by the pipeline; the redundant open is
     // cheap for BAM/SAM (microseconds) but **non-trivial for CRAM**
     // (must build the FASTA reference repository twice). For v1.0,
     // accepted as a known overhead; v1.1 will refactor auto-detect into
     // the pipeline itself to share the reader. Users who care can pass
     // `-s`/`-p` explicitly to skip auto-detect.
-    let reader = crate::io::open_reader(input, config.cram_ref.as_deref())?;
-    match pipeline::detect_paired_from_header(reader.header()) {
-        Some(is_paired) => {
+    // No sort check here: it applies to PE only, and the mode is not known yet.
+    let mut reader = crate::io::open_reader_without_sort_check(input, config.cram_ref.as_deref())?;
+    let first_flags = if crate::io::detect_paired_from_header(reader.header()) == Some(false) {
+        reader
+            .records()
+            .next()
+            .and_then(Result::ok)
+            .map(|r| r.inner().flags())
+    } else {
+        None
+    };
+    match crate::io::detect_paired(reader.header(), first_flags) {
+        Some((is_paired, source)) => {
             eprintln!(
-                "Auto-detected library type from @PG line: {}",
+                "Auto-detected library type from {}: {}",
+                match source {
+                    crate::io::LayoutSource::Pg => "@PG line",
+                    crate::io::LayoutSource::Flag => "the first record's FLAG",
+                },
                 if is_paired {
                     "paired-end"
                 } else {

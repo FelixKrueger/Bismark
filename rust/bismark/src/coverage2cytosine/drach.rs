@@ -28,18 +28,22 @@
 //! drops them; `validate()` adds no DRACH-specific mutex.
 
 use std::collections::HashMap;
-use std::io::BufRead;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 
 use crate::coverage2cytosine::cli::ResolvedConfig;
 use crate::coverage2cytosine::cov;
 use crate::coverage2cytosine::error::BismarkC2cError;
-use crate::coverage2cytosine::genome::Genome;
 use crate::coverage2cytosine::report::{self, ReportWriter, perl_substr, revcomp};
+use crate::io::genome::Genome;
 
 /// Standalone DRACH/m6A early-exit mode (Perl `generate_DRACH_report`).
-pub fn run_drach(config: &ResolvedConfig, genome: &Genome) -> Result<(), BismarkC2cError> {
-    let mut reader = cov::open_cov(&config.cov_infile)?;
+pub fn run_drach(
+    config: &ResolvedConfig,
+    genome: &Genome,
+    open_cov: cov::OpenCov,
+) -> Result<(), BismarkC2cError> {
+    let mut reader = open_cov()?;
     if config.split_by_chromosome {
         run_drach_split(config, genome, reader.as_mut())
     } else {
@@ -74,9 +78,14 @@ fn run_drach_single(
         };
         if cur_chr.as_deref() != Some(chr.as_slice()) {
             if let Some(prev) = cur_chr.take() {
-                let (rep, cov) = drach_chromosome_bytes(&prev, genome, &buffer, config.threshold);
-                report_w.write_all(&rep)?;
-                cov_w.write_all(&cov)?;
+                write_drach_chromosome(
+                    &prev,
+                    genome,
+                    &buffer,
+                    config.threshold,
+                    &mut report_w,
+                    &mut cov_w,
+                )?;
             }
             buffer.clear();
             cur_chr = Some(chr);
@@ -86,9 +95,14 @@ fn run_drach_single(
     // Final flush — guarded by `Option`, so a zero-line cov writes nothing here
     // (no phantom `""`-chromosome walk; the two empty files were already opened).
     if let Some(prev) = cur_chr.take() {
-        let (rep, cov) = drach_chromosome_bytes(&prev, genome, &buffer, config.threshold);
-        report_w.write_all(&rep)?;
-        cov_w.write_all(&cov)?;
+        write_drach_chromosome(
+            &prev,
+            genome,
+            &buffer,
+            config.threshold,
+            &mut report_w,
+            &mut cov_w,
+        )?;
     }
     report_w.finish()?;
     cov_w.finish()?;
@@ -138,34 +152,60 @@ fn flush_drach_split_chromosome(
     buffer: &HashMap<u32, (u32, u32)>,
     config: &ResolvedConfig,
 ) -> Result<(), BismarkC2cError> {
-    let (rep, cov) = drach_chromosome_bytes(name, genome, buffer, config.threshold);
     let mut rw = ReportWriter::create(&drach_report_path(config, Some(name)), config.gzip)?;
-    rw.write_all(&rep)?;
-    rw.finish()?;
     let mut cw = ReportWriter::create(&drach_cov_path(config, Some(name)), config.gzip)?;
-    cw.write_all(&cov)?;
+    write_drach_chromosome(name, genome, buffer, config.threshold, &mut rw, &mut cw)?;
+    rw.finish()?;
     cw.finish()?;
     Ok(())
 }
 
-/// Build one chromosome's DRACH `(report_bytes, cov_bytes)` — top strand fully,
-/// then bottom strand fully (Perl `:1166-1167`). A cov chromosome absent from
-/// the genome yields no bytes (Perl's empty `while`-walk over an undef sequence).
-fn drach_chromosome_bytes(
+/// Write one chromosome's DRACH report and cov lines to `report_w` / `cov_w` in
+/// [`report::CHUNK_FLUSH_BYTES`] chunks — top strand fully, then bottom strand
+/// fully (Perl `:1166-1167`). A cov chromosome absent from the genome writes
+/// nothing (Perl's empty `while`-walk over an undef sequence).
+fn write_drach_chromosome(
     name: &[u8],
     genome: &Genome,
     buffer: &HashMap<u32, (u32, u32)>,
     threshold: u32,
-) -> (Vec<u8>, Vec<u8>) {
+    report_w: &mut ReportWriter,
+    cov_w: &mut ReportWriter,
+) -> io::Result<()> {
     let mut report_out: Vec<u8> = Vec::new();
     let mut cov_out: Vec<u8> = Vec::new();
     let Some(seq) = genome.get(name) else {
-        return (report_out, cov_out);
+        return Ok(());
     };
-    drach_top(name, seq, buffer, threshold, &mut report_out, &mut cov_out);
-    drach_bottom(name, seq, buffer, threshold, &mut report_out, &mut cov_out);
-    (report_out, cov_out)
+    let mut flush = |rep: &mut Vec<u8>, cov: &mut Vec<u8>| {
+        report_w.write_if_full(rep)?;
+        cov_w.write_if_full(cov)
+    };
+    drach_top(
+        name,
+        seq,
+        buffer,
+        threshold,
+        &mut report_out,
+        &mut cov_out,
+        &mut flush,
+    )?;
+    drach_bottom(
+        name,
+        seq,
+        buffer,
+        threshold,
+        &mut report_out,
+        &mut cov_out,
+        &mut flush,
+    )?;
+    report_w.write_all(&report_out)?;
+    cov_w.write_all(&cov_out)
 }
+
+/// Called after each emitted line with the report / cov buffers, to write them
+/// out once full (a no-op in the in-memory unit-test walk).
+type Flush<'a> = dyn FnMut(&mut Vec<u8>, &mut Vec<u8>) -> io::Result<()> + 'a;
 
 /// Top strand (Perl `drach_filtering_top_strand:1207-1289`): scan every `AC`,
 /// DRACH-filter the forward 5-mer, look up coverage at the C (1-based `pos`),
@@ -178,7 +218,8 @@ fn drach_top(
     threshold: u32,
     report_out: &mut Vec<u8>,
     cov_out: &mut Vec<u8>,
-) {
+    flush: &mut Flush<'_>,
+) -> io::Result<()> {
     let mut i = 0usize;
     while i + 1 < seq.len() {
         if seq[i] == b'A' && seq[i + 1] == b'C' {
@@ -194,11 +235,13 @@ fn drach_top(
                     let pct = report::pct6(meth, nonmeth);
                     push_drach_cov(cov_out, name, pos, pos, &pct, meth, nonmeth);
                     push_drach_report(report_out, name, pos, b'+', meth, nonmeth, drach, tri);
+                    flush(report_out, cov_out)?;
                 }
             }
         }
         i += 1;
     }
+    Ok(())
 }
 
 /// Bottom strand (Perl `drach_filtering_bottom_strand:1291-1383`): scan every
@@ -211,7 +254,8 @@ fn drach_bottom(
     threshold: u32,
     report_out: &mut Vec<u8>,
     cov_out: &mut Vec<u8>,
-) {
+    flush: &mut Flush<'_>,
+) -> io::Result<()> {
     let mut i = 0usize;
     while i + 1 < seq.len() {
         if seq[i] == b'G' && seq[i + 1] == b'T' {
@@ -225,11 +269,13 @@ fn drach_bottom(
                     let pct = report::pct6(meth, nonmeth);
                     push_drach_cov(cov_out, name, key, key, &pct, meth, nonmeth);
                     push_drach_report(report_out, name, key, b'-', meth, nonmeth, &drach, &tri);
+                    flush(report_out, cov_out)?;
                 }
             }
         }
         i += 1;
     }
+    Ok(())
 }
 
 /// True iff the 5-mer is a DRACH motif (positions 3 `A` / 4 `C` are guaranteed
@@ -334,8 +380,27 @@ mod tests {
         }
         let mut rep = Vec::new();
         let mut cv = Vec::new();
-        drach_top(b"chr1", seq, &buf, threshold, &mut rep, &mut cv);
-        drach_bottom(b"chr1", seq, &buf, threshold, &mut rep, &mut cv);
+        let mut no_flush = |_: &mut Vec<u8>, _: &mut Vec<u8>| Ok(());
+        drach_top(
+            b"chr1",
+            seq,
+            &buf,
+            threshold,
+            &mut rep,
+            &mut cv,
+            &mut no_flush,
+        )
+        .unwrap();
+        drach_bottom(
+            b"chr1",
+            seq,
+            &buf,
+            threshold,
+            &mut rep,
+            &mut cv,
+            &mut no_flush,
+        )
+        .unwrap();
         (
             String::from_utf8(rep).unwrap(),
             String::from_utf8(cv).unwrap(),
@@ -362,6 +427,61 @@ mod tests {
             discordance: None,
             drach: true,
             ffs: false,
+        }
+    }
+
+    /// Write `seq` as the one-chromosome genome `chr1` and load it.
+    fn genome_of(dir: &std::path::Path, seq: &[u8]) -> Genome {
+        std::fs::write(
+            dir.join("g.fa"),
+            [b">chr1\n".as_slice(), seq, b"\n"].concat(),
+        )
+        .unwrap();
+        Genome::load(dir, &crate::io::genome::FASTA_TIERS_WITH_GZ).unwrap()
+    }
+
+    /// Read a plain or gzip output file back to a string.
+    fn read_out(p: &std::path::Path, gzip: bool) -> String {
+        use std::io::Read;
+        let mut s = String::new();
+        if gzip {
+            flate2::read::MultiGzDecoder::new(std::fs::File::open(p).unwrap())
+                .read_to_string(&mut s)
+                .unwrap();
+        } else {
+            s = std::fs::read_to_string(p).unwrap();
+        }
+        s
+    }
+
+    /// #1167 finding 32: a chromosome whose DRACH output is many times
+    /// `CHUNK_FLUSH_BYTES` is written in chunks, byte-identical to the
+    /// all-in-memory walk (report and cov, plain and gzip, both strands).
+    #[test]
+    fn drach_chromosome_streams_byte_identically() {
+        let seq = b"TTGAACATTTGTTCAGGACTT".repeat(40);
+        let t = tempfile::tempdir().unwrap();
+        let genome = genome_of(t.path(), &seq);
+        let cov: Vec<(u32, u32, u32)> = (1..=seq.len() as u32)
+            .map(|p| (p, p % 7, p % 3 + 1))
+            .collect();
+        let mut buf = HashMap::new();
+        for &(p, m, u) in &cov {
+            buf.insert(p, (m, u));
+        }
+        let (want, want_cov) = walk(&seq, &cov, 1);
+        assert!(want.contains("\t+\t") && want.contains("\t-\t"));
+        assert!(want.len() > 10 * report::CHUNK_FLUSH_BYTES);
+        assert!(want_cov.len() > 10 * report::CHUNK_FLUSH_BYTES);
+        for gzip in [false, true] {
+            let (rp, cp) = (t.path().join("r"), t.path().join("c"));
+            let mut rw = ReportWriter::create(&rp, gzip).unwrap();
+            let mut cw = ReportWriter::create(&cp, gzip).unwrap();
+            write_drach_chromosome(b"chr1", &genome, &buf, 1, &mut rw, &mut cw).unwrap();
+            rw.finish().unwrap();
+            cw.finish().unwrap();
+            assert_eq!(read_out(&rp, gzip), want);
+            assert_eq!(read_out(&cp, gzip), want_cov);
         }
     }
 

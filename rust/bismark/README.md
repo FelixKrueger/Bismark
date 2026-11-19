@@ -6,18 +6,29 @@ The **Bismark** bisulfite-sequencing suite (Rust) — install every tool with on
 cargo install bismark
 ```
 
-This installs all suite binaries: the `bismark` aligner, `deduplicate_bismark`,
-`bismark_methylation_extractor`, `bismark2bedGraph`, `coverage2cytosine`,
-`bismark_genome_preparation`, `bam2nuc`, `NOMe_filtering`, `filter_non_conversion`,
-`methylation_consistency`, `bismark2report`, and `bismark2summary`.
+This installs `bismark` and the eleven classic tool names into `~/.cargo/bin`. They are all the same program, so a
+tool runs either as `bismark <subcommand>` (e.g. `bismark align`, `bismark extract`, `bismark prepare`) or under its
+classic name: the `bismark` aligner, `deduplicate_bismark`, `bismark_methylation_extractor`, `bismark2bedGraph`,
+`coverage2cytosine`, `bismark_genome_preparation`, `bam2nuc`, `NOMe_filtering`, `filter_non_conversion`,
+`methylation_consistency`, `bismark2report` and `bismark2summary`. Output is byte-identical to Perl Bismark v0.25.1
+on the faithful default path, apart from the version string.
 
-`bismark` is a meta / batteries-included crate — it has no library API; each binary
-is a thin wrapper over the corresponding tool crate (byte-identical to installing
-that crate directly). To install a single tool instead, install its crate, e.g.
-`cargo install bismark-aligner`.
+Everything ships in this one crate. The older per-tool crates (`bismark-aligner`, …) are no longer updated. The
+library modules exist for the suite's own binaries and tests and are not a stable API.
 
-**External tools:** the aligner and genome-preparation steps shell out to an
-aligner on your `PATH` — **Bowtie 2** (default) or optionally **HISAT2** / **minimap2**.
-All BAM/SAM/CRAM I/O is pure-Rust (`noodles`) — **no samtools needed**.
+**Optional features:** the release binaries and the container image are built with the in-process rammap backend
+for `--rammap` and with BINSEQ (`.vbq`/`.cbq`) input. A plain `cargo install bismark` leaves both out, so `--rammap`
+runs an external `rammap` binary and BINSEQ input is rejected. To include them:
 
-See <https://github.com/FelixKrueger/Bismark> for documentation.
+```bash
+cargo install bismark --features rammap-inprocess,binseq-input
+```
+
+**External tools:** only alignment and genome preparation call an external program on your `PATH`:
+**Bowtie 2** (default), or optionally **HISAT2** or **minimap2**. `--taps`, `--illumina_5base --bwamem3` and
+`bismark prepare --bwamem3` also need **bwa-mem3** 0.16.0 or later (CI and the container use 0.18.0):
+`mamba install -c bioconda -c conda-forge bwa-mem3`. All BAM/SAM/CRAM I/O is pure-Rust (`noodles`), so
+**no samtools** is needed.
+
+Documentation, including the prebuilt binaries, the container image and the bioconda package:
+<https://felixkrueger.github.io/Bismark/>. Source: <https://github.com/FelixKrueger/Bismark>.
