@@ -214,9 +214,29 @@ libraries:
 | 250–400 bp | 12% | 0.18% | 59% | 0.13% |
 | ≥ 400 bp | 0.7% | 0.16% | 23% | 0.13% |
 
-From 250 bp up Bismark matches rastair (0.185% FFPE, 0.166% NA12878). In short fragments the mates
-overlap: where they disagree, the extractor keeps read 1's call, while rastair keeps the base with
-the higher quality. That difference is the likely cause, but it has not been tested yet.
+From 250 bp up Bismark matches rastair (0.185% FFPE, 0.166% NA12878). Below that the excess comes
+from the alignment, not from calling: on the same reads, plain `bwa mem` gives 0.25–0.28% below
+150 bp, against 0.61% for bwa-mem3 in its TAPS mode, and rastair run on Bismark's alignments shows
+the same excess. Most of the extra calls come from short reads that plain `bwa mem` treats as
+ambiguous or soft-clips, but that bwa-mem3 places with a high MAPQ. It is the other side of what
+bwa-mem3 does well: scoring a read T over a reference C as no mismatch is what keeps CpG-dense
+methylated regions covered.
+
+**Filtering for false-positive-sensitive work.** For short-fragment samples (FFPE, cfDNA) where a
+background of a few tenths of a percent matters, two filters before extraction help, each at a cost:
+
+| Filter | FFPE false positives, < 150 bp | Converted library kept | CpG-dense methylated coverage |
+|---|---|---|---|
+| none | 0.61% | 100% | 1.08 |
+| `samtools view -q 40` | 0.48% | 99% | 1.05 |
+| `filter_non_conversion -p --threshold 1` | 0.33% | 88% | 1.06 |
+| `samtools view -q 60`, then `filter_non_conversion -p --threshold 1` | 0.21% | 84% | 0.91 |
+
+The coverage column is relative to plain `bwa mem` (1.00), for CpGs at least 80% methylated with
+10–14 CpGs per 151 bp. `filter_non_conversion --threshold 1` removes pairs with any methylated
+non-CpG call; on a converted library that includes reads with TAPS's off-target conversion of
+unmodified C (about 0.3%), hence the 12%. MAPQ 60 gives up the CpG-dense coverage that bwa-mem3 is
+used for. For most samples neither is needed.
 
 **CpG-dense regions.** Against rastair's bwa-mem alignments, Bismark's relative coverage (as in
 [the table above](#coverage-in-cpg-dense-regions), CpGs at least 80% methylated, MAPQ ≥ 20) rises
