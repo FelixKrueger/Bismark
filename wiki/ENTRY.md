@@ -7,7 +7,7 @@ Bismark aligns bisulfite, EM-seq, Illumina 5-Base and TAPS sequencing reads to a
 | The task mentions | Read these pages, and stop |
 |---|---|
 | install, Bioconda, cargo, Docker, container, methylseq | `usage/install.md` |
-| genome index, `bismark_genome_preparation`, `Bisulfite_Genome` | `usage/prepare-a-genome.md` |
+| genome index, `bismark_genome_preparation`, `Bisulfite_Genome`, `Bwamem3_Index`, `prepare --bwamem3` | `usage/prepare-a-genome.md` |
 | align, map reads, paired-end, Bowtie 2, HISAT2, minimap2, threads | `usage/align-reads.md`, `reference/aligner-cli.md` |
 | directional, non-directional, PBAT, library type | `usage/align-reads.md`, `troubleshooting.md` |
 | 5-Base, `--illumina_5base`, bwa-mem3, `--bwamem3`, UMI, duplex, consensus | `usage/align-5-base-reads.md`, `reference/aligner-cli.md` |

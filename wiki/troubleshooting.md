@@ -5,50 +5,53 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-17
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 3fcbe21
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: 1dd7112
+    commit: dbd7c27
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/genome_prep/bwamem3.rs
+    commit: dbd7c27
 ---
 
 # Troubleshooting
@@ -114,11 +117,13 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `--include_overlap requires --paired-end` | Overlap option without `-p` | Add `-p` |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
 | `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
-| `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | Build it with `bwa-mem3 index --meth <genome.fa>` and pass that FASTA path as `--five_base_index` |
+| `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
+| `--illumina_5base --bwamem3 requires --five_base_index <prefix>` (or `--taps requires …`), or `--five_base_index <dir> is a folder; did you mean <dir>/Bwamem3_Index?` | No `--five_base_index` and no `Bwamem3_Index/` in the genome folder, or a genome folder given as the index (`resolve_five_base_index` in `aligner/config.rs`) | Build the index with `bismark prepare --bwamem3 <genome>` ([usage/prepare-a-genome.md](usage/prepare-a-genome.md)), then leave out `--five_base_index`; or pass the index prefix or its `Bwamem3_Index` folder |
 | `the bwa-mem3 index does not match the genome folder` (or `output header`) | The index was built from another FASTA or assembly; contig names or lengths differ (`check_contigs_match` in `aligner/mod.rs`) | Rebuild the index from the FASTA in the `--genome` folder |
 | `bwa-mem3 ended before writing its SAM header; bwa-mem3 exited with signal 9` | bwa-mem3 was killed while loading its index, usually for lack of memory (`five_base_align_and_call_pe`, `describe_exit` in `aligner/mod.rs`) | Give the job more memory |
 | `<file>.meth.fa in the genome folder is a bwa-mem3 index file` | The bwa-mem3 index sits in the `--genome` folder (`run_pe_five_base` in `aligner/mod.rs`) | Move the index to its own folder |
-| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.17.0, or pass `--path_to_bwamem3 <dir>` |
+| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.18.0 (`mamba install -c bioconda -c conda-forge bwa-mem3`), or pass `--path_to_bwamem3 <dir>` |
+| `bismark prepare --bwamem3`: `<file>: contig <name>, line <n>: …`, or `bwa-mem3 needs more memory than its budget to index <genome>` | A sequence line that bwa-mem3 reads differently from Bismark, such as whitespace, a non-ASCII byte or an empty contig (`stage_input`, `seq_line_len` in `genome_prep/bwamem3.rs`); or `bwa-mem3 index` exited 3 (`run_index`) | Fix that FASTA line (every rejected input: [usage/prepare-a-genome.md](usage/prepare-a-genome.md)); for memory, raise `--bwamem3_max_memory` or use a machine with more memory |
 | `--taps aligns with bwa-mem3 only` | `--taps` was given another aligner flag (`expand_taps` in `aligner/config.rs`) | Drop the aligner flag |
 | `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution, `--five_base_umi_qname` or `--five_base_emit_multiplicity` (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](usage/align-taps-reads.md) |
 | `--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure …` or `--five_base_min_mapq only filters the duplex/consensus pass …` | `--taps` with a non-zero `--five_base_umi_len` or `--five_base_min_mapq` (`expand_taps`) | Drop the option |

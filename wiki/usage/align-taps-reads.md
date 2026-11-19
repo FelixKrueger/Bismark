@@ -5,26 +5,26 @@ description: Run TAPS data with --taps, what it turns on, the options it accepts
 tags: [alignment, taps, bwa-mem3, 5-base]
 page_id: align-taps-reads
 subject_status: current
-updated: 2026-11-17
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 1dd7112
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 6aec899
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 3fcbe21
+    commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 1dd7112
+    commit: dbd7c27
 ---
 
 # Align TAPS reads
@@ -35,12 +35,11 @@ sources:
 
 ## Steps
 
-1. Build the bwa-mem3 methylation index once, from the same FASTA as the `--genome` folder, and keep it outside that folder: `bwa-mem3 index --meth <genome.fa>`.
+1. Build the bwa-mem3 methylation index once: `bismark prepare --bwamem3 <genome folder>` writes it to `<genome folder>/Bwamem3_Index/` ([usage/prepare-a-genome.md](prepare-a-genome.md)). An index built by hand with `bwa-mem3 index --meth <genome.fa>` works too: build it from the same FASTA as the `--genome` folder, keep it outside that folder, and pass it with `--five_base_index`.
 2. Run the aligner. Input is paired-end, directional FastQ:
 
    ```
-   bismark --taps --five_base_index /data/bwm3/GRCh38.fa \
-           --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
+   bismark --taps --genome /data/genomes/GRCh38/ -1 R1.fq.gz -2 R2.fq.gz
    ```
 
 3. Read the report: [reference/run-reports.md](../reference/run-reports.md). The output names are those of a bwa-mem3 5-Base run: `<name>_bismark_bwamem3_pe.bam` and `<name>_bismark_bwamem3_PE_report.txt` (`run_pe_five_base` in `aligner/mod.rs`). A record whose dovetail overhang bases are not called carries `mk:B:I` (`five_base_emit_pe_record`); the extractor ignores it: [reference/bam-output.md](../reference/bam-output.md).
@@ -64,7 +63,7 @@ After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply,
 
 | Option | With `--taps` |
 |---|---|
-| `--five_base_index <genome.fa>` | Required: the FASTA that the `bwa-mem3 index --meth` index was built from |
+| `--five_base_index <genome.fa or folder>` | Optional when `<genome folder>/Bwamem3_Index/` exists. Otherwise the FASTA that the `bwa-mem3 index --meth` index was built from, or a folder written by `bismark prepare --bwamem3` (`resolve_five_base_index` in `aligner/config.rs`) |
 | `--five_base_baseq <n>` | Bases below Phred n are not called (`mask_low_quality` in `aligner/mod.rs`); 0 is off |
 | `--five_base_bisulfite_bam <bam>` | Re-encodes a TAPS BAM to bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone` in `aligner/mod.rs`) |
 | `-p`, `--multicore`, `--path_to_bwamem3`, output options | As for `--illumina_5base --bwamem3`: [usage/align-5-base-reads.md](align-5-base-reads.md) |
@@ -78,7 +77,7 @@ The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-c
 |---|---|
 | Start-up notice (`five_base_notice` in `aligner/mod.rs`) | `Note: --taps is the TAPS (mC->T) mode`, aligned with bwa-mem3 to the unconverted genome, not byte-identical, validated on public TAPS data |
 | Resolved configuration | a `TAPS index:` line (`aligner/config.rs`) |
-| bwa-mem3 version messages (`detect_aligner` in `aligner/aligner.rs`) | `--taps needs bwa-mem3 >= 0.16.0`; a version other than 0.16.0 or 0.17.0 warns that the TAPS engine is validated against those two |
+| bwa-mem3 version messages (`detect_aligner` in `aligner/aligner.rs`) | `--taps needs bwa-mem3 >= 0.16.0`; a version other than 0.16.0, 0.17.0 or 0.18.0 warns that the TAPS engine is validated against those three |
 | Alignment report | `Library chemistry: TAPS (mC->T)` after the `bwa-mem3 version:` line (`run_pe_five_base`) |
 | BAM `@PG` | Bismark's line holds the command line with `--taps`; bwa-mem3's holds `--meth=taps` |
 
