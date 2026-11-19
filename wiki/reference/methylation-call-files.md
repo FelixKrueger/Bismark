@@ -5,26 +5,29 @@ description: Columns and file names of the extractor call files, M-bias.txt, the
 tags: [format, call-files, m-bias, bedgraph, coverage, cytosine-report]
 page_id: methylation-call-files
 subject_status: current
-updated: 2026-11-05
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: 4659679
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mbias_writer.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/output.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: f6a21fd
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/summary.rs
-    commit: f6a21fd
+    commit: a0059f4
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/bedgraph/filename.rs
+    commit: a0059f4
 ---
 
 # Methylation call files
@@ -85,7 +88,7 @@ Positions with fewer reads than `--cutoff` are left out of the bedGraph and the 
 | 5 | Count methylated |
 | 6 | Count unmethylated |
 
-`--zero_based` also writes a plain-text `.bismark.zero.cov` with a 0-based start.
+`--zero_based` also writes a plain-text `<name>.bedGraph.gz.bismark.zero.cov` with a 0-based start (`zero_name` in `bedgraph/filename.rs`).
 
 ## Cytosine report
 
@@ -101,7 +104,7 @@ Positions with fewer reads than `--cutoff` are left out of the bedGraph and the 
 | 6 | Context: `CG`, `CHG` or `CHH` |
 | 7 | Trinucleotide context, e.g. `CGT` |
 
-`--merge_CpGs` adds `<report>.merged_CpG_evidence.cov`, with both strands of each CpG pooled. `--coverage_threshold` drops positions below the given coverage.
+`--merge_CpGs` adds `<name>.CpG_report.merged_CpG_evidence.cov` (`.gz` with `--gzip`), with both strands of each CpG pooled. `--coverage_threshold` drops positions below the given coverage.
 
 ## Context summary
 

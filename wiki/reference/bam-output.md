@@ -5,26 +5,26 @@ description: The header, FLAG values and the XM, XR, XG, NM, MD, YS, CB and UR t
 tags: [bam, xm-tag, methylation-call-string, format]
 page_id: bam-output
 subject_status: current
-updated: 2026-11-16
+updated: 2026-11-19
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/output.rs
-    commit: 1dd7112
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: 1dd7112
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 1dd7112
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 1dd7112
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 1dd7112
+    commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bam2nuc/cli.rs
-    commit: 1dd7112
+    commit: a0059f4
 ---
 
 # Bismark BAM records
@@ -45,7 +45,7 @@ From `generate_sam_header` in `aligner/output.rs`:
 
 `bismark dedup`, `extract`, `bam2nuc`, `filter` and `consistency` read the `@PG ID:Bismark` line to tell single-end from paired-end. If that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end, as for a run on a positional paired uBAM, BINSEQ or unaligned CRAM file (`detect_paired` in `io/read.rs`). Each takes `-s`/`-p` to override it.
 
-A `--bwamem3` or `--taps` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>` (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection ignores it.
+A `--bwamem3` or `--taps` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>`, with the literal text `<R1> <R2>` rather than the file names (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection ignores it.
 
 ## Strand tags
 
@@ -108,7 +108,7 @@ A 5-Base record with UMI or overhang bases masked carries `mk:B:I,<5' bases>,<3'
 
 ## 5-Base consensus BAMs
 
-`<out>.5base_consensus.bam` and `<out>.5base_simplex.bam` carry `mx:i` (2 = duplex, 1 = simplex) when `--five_base_emit_multiplicity` is `simplex` or `both` (`--five_base_emit_multiplicity` in `aligner/cli.rs`).
+`<name>_bismark_<token>_pe.5base_consensus.bam` and `.5base_simplex.bam` carry `mx:i` (2 = duplex, 1 = simplex) when `--five_base_emit_multiplicity` is `simplex` or `both` (`--five_base_emit_multiplicity` in `aligner/cli.rs`).
 
 ## Links
 
@@ -118,4 +118,4 @@ A 5-Base record with UMI or overhang bases masked carries `mk:B:I,<5' bases>,<3'
 
 ## Open questions
 
-- Which records the unique-best-hit rule keeps, and how MAPQ is computed, is in `aligner/merge.rs` and `aligner/mapq.rs`; this page does not cover them yet.
+- None.
