@@ -26,6 +26,14 @@ pub const INDEX_DIR: &str = "Bwamem3_Index";
 pub const INDEX_PREFIX_NAME: &str = "genome.fa";
 const PARTIAL_PREFIX: &str = "Bwamem3_Index.partial.";
 const OLD_PREFIX: &str = "Bwamem3_Index.old.";
+/// The first bwa-mem3 release with `index --meth-only`.
+const MIN_METH_ONLY_VERSION: (u32, u32, u32) = (0, 18, 0);
+
+/// `true` if bwa-mem3 `version` (`x.y.z`) can skip the plain FM-index with `--meth-only`.
+pub(crate) fn bwamem3_has_meth_only(version: &str) -> bool {
+    let parts: Result<Vec<u32>, _> = version.split('.').map(str::parse).collect();
+    matches!(parts.as_deref(), Ok(&[a, b, c]) if (a, b, c) >= MIN_METH_ONLY_VERSION)
+}
 
 /// Contig names and lengths of the staged genome, in file order.
 type Contigs = Vec<(String, u64)>;
@@ -92,11 +100,12 @@ pub(crate) fn check_version(bin: &Path, logger: &Logger) -> Result<String, Genom
     Ok(version)
 }
 
-/// Build the index; returns its prefix `<genome>/Bwamem3_Index/genome.fa`.
+/// Build the index with bwa-mem3 `version`; returns its prefix `<genome>/Bwamem3_Index/genome.fa`.
 pub fn build(
     files: &[PathBuf],
     genome_folder: &Path,
     bin: &Path,
+    version: &str,
     threads: Option<u32>,
     max_memory: Option<&str>,
     logger: &Logger,
@@ -106,15 +115,13 @@ pub fn build(
     }
     let partial = create_partial(genome_folder)?;
 
-    if let Err(e) = stage_and_index(
-        files,
-        genome_folder,
-        &partial,
+    let run = IndexRun {
         bin,
+        meth_only: bwamem3_has_meth_only(version),
         threads,
         max_memory,
-        logger,
-    ) {
+    };
+    if let Err(e) = stage_and_index(files, genome_folder, &partial, &run, logger) {
         let _ = fs::remove_dir_all(&partial);
         return Err(e);
     }
@@ -218,23 +225,34 @@ fn newest_mtime(path: &Path, depth: u32) -> Option<SystemTime> {
     newest
 }
 
+/// How `bwa-mem3 index` is run.
+struct IndexRun<'a> {
+    bin: &'a Path,
+    meth_only: bool,
+    threads: Option<u32>,
+    max_memory: Option<&'a str>,
+}
+
 fn stage_and_index(
     files: &[PathBuf],
     genome_folder: &Path,
     partial: &Path,
-    bin: &Path,
-    threads: Option<u32>,
-    max_memory: Option<&str>,
+    run: &IndexRun,
     logger: &Logger,
 ) -> Result<(), GenomePrepError> {
     let contigs = stage_input(files, partial)?;
+    let (flags, disk) = if run.meth_only {
+        ("--meth --meth-only", "about 35 GB")
+    } else {
+        ("--meth", "up to 70 GB")
+    };
     logger.note(&format!(
-        "Indexing {} bp in {} contigs with `bwa-mem3 index --meth`. A human genome needs about \
-         104 GB of RAM and up to 70 GB of free disk; bwa-mem3 prints its exact memory requirement.",
+        "Indexing {} bp in {} contigs with `bwa-mem3 index {flags}`. A human genome needs about \
+         104 GB of RAM and {disk} of free disk; bwa-mem3 prints its exact memory requirement.",
         contigs.iter().map(|c| c.1).sum::<u64>(),
         contigs.len()
     ));
-    run_index(bin, partial, threads, max_memory, genome_folder)?;
+    run_index(run, partial, genome_folder)?;
     prune_and_check(partial, &contigs, genome_folder)
 }
 
@@ -383,19 +401,17 @@ fn reject_empty_contig(contig: Option<&(String, u64)>, file: &Path) -> Result<()
     }
 }
 
-/// `bwa-mem3 index --meth` with its scratch inside `dir`.
-fn run_index(
-    bin: &Path,
-    dir: &Path,
-    threads: Option<u32>,
-    max_memory: Option<&str>,
-    genome_folder: &Path,
-) -> Result<(), GenomePrepError> {
+/// `bwa-mem3 index --meth` (plus `--meth-only` if `run.meth_only`) with its scratch inside `dir`.
+fn run_index(run: &IndexRun, dir: &Path, genome_folder: &Path) -> Result<(), GenomePrepError> {
+    let (bin, max_memory) = (run.bin, run.max_memory);
     let tmp = dir.join("tmp");
     fs::create_dir(&tmp).map_err(at(&tmp))?;
     let mut cmd = Command::new(bin);
     cmd.current_dir(dir).arg("index").arg("--meth");
-    if let Some(t) = threads {
+    if run.meth_only {
+        cmd.arg("--meth-only");
+    }
+    if let Some(t) = run.threads {
         cmd.arg("-t").arg(t.to_string());
     }
     if let Some(m) = max_memory {
@@ -427,7 +443,7 @@ fn run_index(
     }
 }
 
-/// Drop what `mem --meth` never opens, then require the 7 index files and matching contigs.
+/// Drop what `mem --meth` never opens, then require exactly the 7 index files and matching contigs.
 fn prune_and_check(
     dir: &Path,
     contigs: &[(String, u64)],
@@ -459,6 +475,29 @@ fn prune_and_check(
                 "bwa-mem3 did not write {INDEX_PREFIX_NAME}.{suffix}"
             )));
         }
+    }
+    // A sidecar such as `.alt` or `.hdr` would change how `mem` aligns, so it is never published.
+    let expected: HashSet<String> = BWAMEM3_INDEX_SUFFIXES
+        .iter()
+        .map(|s| format!("{INDEX_PREFIX_NAME}.{s}"))
+        .collect();
+    let mut unexpected = Vec::new();
+    for entry in fs::read_dir(dir).map_err(at(dir))? {
+        let name = entry
+            .map_err(at(dir))?
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        if !expected.contains(&name) {
+            unexpected.push(name);
+        }
+    }
+    if !unexpected.is_empty() {
+        unexpected.sort();
+        return Err(failed(format!(
+            "bwa-mem3 wrote files Bismark does not expect in the index: {}",
+            unexpected.join(", ")
+        )));
     }
     let ann = crate::aligner::read_bwa_ann(&dir.join(INDEX_PREFIX_NAME))
         .map_err(|e| failed(e.to_string()))?;
@@ -656,6 +695,34 @@ mod tests {
             .collect();
         want.sort();
         assert_eq!(left, want);
+    }
+
+    #[test]
+    fn meth_only_from_bwamem3_0_18_0() {
+        for v in ["0.18.0", "0.18.1", "0.19.0", "1.0.0"] {
+            assert!(bwamem3_has_meth_only(v), "{v}");
+        }
+        for v in ["0.16.0", "0.17.0", "0.17.0-abc", "0.18", "unknown", ""] {
+            assert!(!bwamem3_has_meth_only(v), "{v}");
+        }
+    }
+
+    #[test]
+    fn prune_rejects_files_outside_the_seven() {
+        let two = [("chr1", 4), ("chr2", 4)];
+        for extra in [".alt", ".hdr"] {
+            let p = tempdir().unwrap();
+            all_index_files(p.path(), &two);
+            fs::write(p.path().join(format!("{INDEX_PREFIX_NAME}{extra}")), b"x").unwrap();
+            fs::write(p.path().join("genome.dict"), b"x").unwrap();
+            let e = prune_and_check(p.path(), &contigs(&two), Path::new("/g"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                e.contains(&format!("genome.dict, {INDEX_PREFIX_NAME}{extra}")) && e.contains("/g"),
+                "{e}"
+            );
+        }
     }
 
     #[test]

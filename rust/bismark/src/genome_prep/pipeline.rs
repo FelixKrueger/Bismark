@@ -137,6 +137,7 @@ fn run_bwamem3(
         files,
         &config.genome_folder,
         &bin,
+        &version,
         config.parallel,
         config.bwamem3_max_memory.as_deref(),
         logger,
