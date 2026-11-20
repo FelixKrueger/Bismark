@@ -37,6 +37,9 @@ sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
     commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/pipeline.rs
+    commit: c25f0a6
 ---
 
 # Bismark overview
@@ -78,7 +81,8 @@ The developer gave this order. Most workflows run these steps:
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
 - `--nucleotide_coverage` runs bam2nuc on each final BAM once alignment has finished (`run_nucleotide_coverage` in `aligner/mod.rs`); `--old_flag` stops the run (`reject_old_flag` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
-- `bismark dedup --umi_mismatches` above 0 needs `--barcode`/`--umi` or `--bclconvert`, and reads each input twice, so inputs must be regular files, not pipes (`Cli::validate` in `dedup/cli.rs`, `run` in `dedup/mod.rs`).
+- `bismark dedup --umi_mismatches` above 0 needs `--barcode`/`--umi` or `--bclconvert` (`Cli::validate` in `dedup/cli.rs`).
+- `bismark dedup --umi_mismatches` above 0 reads each input twice (`grouped_umi` in `dedup/pipeline.rs`), so inputs must be regular files, not pipes (`run` in `dedup/mod.rs`).
 - `extract --cytosine_report` needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
 - The extractor reads only BAMs with Bismark `XM`/`XR`/`XG` tags. For a BAM from another aligner, `extract --allow_discordant` handles cross-chromosome and discordant pairs, orphan reads, and secondary or supplementary records (`classify_pair` in `extractor/pair_class.rs`).
 
