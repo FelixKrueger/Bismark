@@ -44,6 +44,10 @@ Output directory, either relative or absolute. Output is written to the current 
 
 In addition to chromosome, start position and orientation this will also take a potential barcode into consideration while deduplicating. The barcode needs to be the last element of the read ID and separated by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
 
+- `--umi_mismatches [N]`
+
+With `--barcode`/`--umi` or `--bclconvert`: UMIs at the same position that differ by up to N bases are treated as one molecule, using the UMI-tools "directional" rule (see [Deduplication using UMIs or barcodes](/Bismark/usage/deduplication/#deduplication-using-umis-or-barcodes)). Inputs are read twice and must be regular files. Default: 0 (UMIs must match exactly).
+
 - `--bam`
 
 The output will be written out in BAM format. The Rust suite writes BAM directly via pure-Rust `noodles`, so no Samtools installation is required (the legacy `--samtools_path` and the `.sam.gz` fallback no longer apply). Default: ON.

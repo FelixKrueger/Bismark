@@ -35,8 +35,15 @@ In addition to chromosome, start (and end position for paired-end libraries) pos
 MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
 ```
 
-This option is equivalent to using [UmiBam](https://github.com/FelixKrueger/Umi-Grinder) in the following mode:
-`UmiBam --umi input.bam`, however UmiBam has additional functionality such as a double UMI feature or the option to allow mismatches in the UMI(s).
+By default UMIs have to match exactly. With `--umi_mismatches N` (alongside `--barcode`/`--umi` or `--bclconvert`), UMIs at the same position that differ by up to N bases count as one molecule, so a sequencing error in the UMI no longer leaves a PCR copy behind:
+
+```
+bismark dedup --barcode --umi_mismatches 1 sample_bismark_bt2_pe.bam
+```
+
+Grouping follows the UMI-tools "directional" rule: a UMI joins a more frequent one if they are at most N bases apart and the more frequent one was seen at least `2 × count − 1` times. So a single-read UMI joins a neighbour seen once or more, two UMIs seen twice each stay apart, and counts, not N, limit how far grouping reaches. An `N` in a UMI is an ordinary mismatch, and UMIs of different length are never grouped. Within a group the first record or pair in the file is kept, as without grouping, and the report keeps its usual four lines; stderr adds one line with the number of UMIs merged.
+
+With `--umi_mismatches` above 0 each input is read twice (about twice the run time), so inputs must be regular files, not pipes.
 
 ### Deduplication of multiple files of the same library
 

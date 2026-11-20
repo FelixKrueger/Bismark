@@ -192,6 +192,33 @@ pub enum BismarkDedupError {
         /// The offending qname (lossy UTF-8).
         qname: String,
     },
+
+    /// `--umi_mismatches` above 0 without a UMI mode.
+    #[error("--umi_mismatches needs --barcode (--umi) or --bclconvert")]
+    UmiMismatchesWithoutUmiMode,
+
+    /// `--umi_mismatches` reads its inputs twice, so they must be regular files.
+    #[error("--umi_mismatches reads each input twice, so it must be a regular file, not a pipe or stream: {}", path.display())]
+    InputNotRegularFile {
+        /// The offending input.
+        path: PathBuf,
+    },
+
+    /// An input's size or modification time changed between the two `--umi_mismatches` passes.
+    #[error("input changed while it was being deduplicated: {}", path.display())]
+    InputChangedBetweenPasses {
+        /// The input that changed.
+        path: PathBuf,
+    },
+
+    /// The two `--umi_mismatches` passes saw a different number of records or pairs.
+    #[error("the second pass read {pass2} records or pairs, the first {pass1}; no output written")]
+    PassUnitCountMismatch {
+        /// Units seen in pass 1.
+        pass1: u64,
+        /// Units seen in pass 2.
+        pass2: u64,
+    },
 }
 
 #[cfg(test)]
