@@ -1948,7 +1948,8 @@ fn resolve_layout(cli: &Cli, reads_positional: &[String]) -> Result<ReadLayout> 
     Ok(ReadLayout::SingleEnd { reads })
 }
 
-/// Fail when two inputs (or pairs) would write the same output name ([`crate::aligner::output_stem`]).
+/// Fail when two inputs (or pairs) would write the same output name ([`crate::aligner::output_stem`]),
+/// or two pairs the same mate-2 `--unmapped`/`--ambiguous` file.
 fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
     let (reads, single_end_layout) = match layout {
         ReadLayout::SingleEnd { reads } => (reads, true),
@@ -1976,6 +1977,36 @@ fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
             )));
         }
         seen.push((name, read));
+    }
+    if let ReadLayout::PairedEnd { mates2, .. } = layout
+        && (cli.unmapped || cli.ambiguous)
+        && cli.basename.is_none()
+    {
+        let mut seen: Vec<(String, &String)> = Vec::new();
+        for read in mates2 {
+            let name = crate::aligner::basename(read);
+            if let Some((_, first)) = seen.iter().find(|(n, _)| *n == name) {
+                let kind = if cli.unmapped {
+                    crate::aligner::aux_out::AuxKind::Unmapped
+                } else {
+                    crate::aligner::aux_out::AuxKind::Ambiguous
+                };
+                let prefix = cli.prefix.as_deref().map(|p| p.trim_end_matches('.'));
+                let aux = crate::aligner::aux_out::aux_filename(
+                    &name,
+                    prefix,
+                    None,
+                    kind,
+                    cli.fasta,
+                    Some(2),
+                );
+                return Err(AlignerError::Validation(format!(
+                    "{first} and {read} would both write their mate-2 reads to '{aux}', so the \
+                     second would overwrite the first. Rename one of them, or run them separately."
+                )));
+            }
+            seen.push((name, read));
+        }
     }
     Ok(())
 }

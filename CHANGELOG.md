@@ -3,9 +3,17 @@
 
 ## Bismark 3.4.0 (unreleased)
 
+### bismark (aligner)
+
+- **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name, since both would write the same mate-2 file ([#1263](https://github.com/FelixKrueger/Bismark/issues/1263)).**
+
 ### deduplicate_bismark
 
 - **New `--umi_mismatches N` treats UMIs at the same position that differ by up to N bases as one molecule, using the UMI-tools directional rule; the default 0 keeps exact matching ([#1264](https://github.com/FelixKrueger/Bismark/pull/1264)).**
+
+### bismark extract (methylation extractor)
+
+- **Two inputs that would write the same output files, such as `a/s.bam` and `b/s.cram`, now stop the run before anything is written ([#1263](https://github.com/FelixKrueger/Bismark/issues/1263)).**
 
 ## Bismark 3.3.0 (released 2026-11-19)
 

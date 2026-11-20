@@ -143,6 +143,22 @@ pub enum BismarkExtractorError {
     #[error("input file does not exist: {0}")]
     InputFileNotFound(PathBuf),
 
+    /// Two inputs would write an output file of the same name.
+    #[error(
+        "{} and {} would both write {name}, so the second would overwrite the first; \
+         rename one of them or run them separately",
+        first.display(),
+        second.display()
+    )]
+    OutputNameCollision {
+        /// The earlier input.
+        first: PathBuf,
+        /// The later input that would overwrite it.
+        second: PathBuf,
+        /// The shared output file name.
+        name: String,
+    },
+
     /// `--genome_folder <PATH>` does not exist on disk. Same rationale
     /// as `InputFileNotFound` — fail fast before the cytosine_report
     /// subprocess.
