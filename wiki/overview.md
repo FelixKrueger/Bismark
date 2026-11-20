@@ -9,37 +9,37 @@ updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: c25f0a6
+    commit: 855b812
 ---
 
 # Bismark overview

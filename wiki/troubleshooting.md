@@ -9,49 +9,49 @@ updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/error.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/bwamem3.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Troubleshooting

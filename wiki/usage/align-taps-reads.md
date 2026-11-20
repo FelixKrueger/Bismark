@@ -5,26 +5,26 @@ description: Run TAPS data with --taps, what it turns on, the options it accepts
 tags: [alignment, taps, bwa-mem3, 5-base]
 page_id: align-taps-reads
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: dbd7c27
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: dbd7c27
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: dbd7c27
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: dbd7c27
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: dbd7c27
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: dbd7c27
+    commit: 855b812
 ---
 
 # Align TAPS reads
