@@ -480,3 +480,201 @@ fn odd_paired_end_input_fails_without_output() {
         .stderr(predicate::str::contains("unpaired"));
     assert!(!dir.path().join("odd.deduplicated.bam").exists());
 }
+
+// ───────────────────────── checked-in fixtures ─────────────────────────
+
+fn fixture(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/data/dedup")
+        .join(name)
+}
+
+/// Run on `input` into a fresh `out_dir`; returns (BAM bytes, report bytes, stderr without the output-path line).
+fn dedup_bytes(out_dir: &Path, input: &Path, args: &[&str]) -> (Vec<u8>, Vec<u8>, String) {
+    let assert = Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .args(args)
+        .arg("--output_dir")
+        .arg(out_dir)
+        .arg(input)
+        .assert()
+        .success();
+    let stderr: String = String::from_utf8_lossy(&assert.get_output().stderr)
+        .lines()
+        .filter(|l| !l.starts_with("Output file is"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let stem = input.file_stem().unwrap().to_string_lossy().into_owned();
+    let bam = std::fs::read(out_dir.join(format!("{stem}.deduplicated.bam"))).unwrap();
+    let report = std::fs::read(out_dir.join(format!("{stem}.deduplication_report.txt"))).unwrap();
+    (bam, report, stderr)
+}
+
+const FIXTURES: [(&str, &str); 3] = [
+    ("synth_barcode_10k_R1_val_1_bismark_bt2_pe.bam", "--barcode"),
+    (
+        "synth_bclconvert_10k_R1_val_1_bismark_bt2_pe.bam",
+        "--bclconvert",
+    ),
+    ("nondir_pe_1030.bam", "--barcode"),
+];
+
+#[test]
+fn zero_mismatches_is_byte_identical_on_every_fixture() {
+    for (name, mode) in FIXTURES {
+        let dir = TempDir::new().unwrap();
+        let input = fixture(name);
+        let exact = dedup_bytes(&dir.path().join("exact"), &input, &[mode]);
+        let zero = dedup_bytes(
+            &dir.path().join("zero"),
+            &input,
+            &[mode, "--umi_mismatches", "0"],
+        );
+        assert!(exact.0 == zero.0, "{name}: BAM bytes differ");
+        assert!(exact.1 == zero.1, "{name}: report bytes differ");
+        assert_eq!(exact.2, zero.2, "{name}: stderr differs");
+    }
+}
+
+#[test]
+fn grouping_on_fixtures_keeps_an_in_order_subset_and_is_thread_invariant() {
+    for (name, mode) in FIXTURES {
+        let dir = TempDir::new().unwrap();
+        let input = fixture(name);
+        let (exact, _, _) = dedup(dir.path(), &input, &[mode]);
+        let (grouped, _, _) = dedup(dir.path(), &input, &[mode, "--umi_mismatches", "1"]);
+        let mut it = exact.iter();
+        assert!(
+            grouped.iter().all(|q| it.any(|e| e == q)),
+            "{name}: not an in-order subset"
+        );
+        // PE output stays R1, R2 per kept pair.
+        assert_eq!(grouped.len() % 2, 0, "{name}: odd record count");
+        assert!(
+            grouped.chunks(2).all(|p| p[0] == p[1]),
+            "{name}: mates not adjacent"
+        );
+
+        let one = dedup_bytes(
+            &dir.path().join("p1"),
+            &input,
+            &[mode, "--umi_mismatches", "1", "--parallel", "1"],
+        );
+        let four = dedup_bytes(
+            &dir.path().join("p4"),
+            &input,
+            &[mode, "--umi_mismatches", "1", "--parallel", "4"],
+        );
+        assert!(one.0 == four.0, "{name}: --parallel 4 BAM bytes differ");
+        assert!(one.1 == four.1, "{name}: --parallel 4 report differs");
+    }
+}
+
+#[test]
+fn removed_count_does_not_depend_on_record_order() {
+    let reads = [
+        ("r0:AAAAAAAA", 1000),
+        ("r1:AAAAAAAT", 1000),
+        ("r2:AAAAAAAA", 1000),
+        ("r3:AAAATTAA", 1000),
+        ("r4:CCCCCCCC", 2000),
+        ("r5:AAAAAAAA", 1000),
+        ("r6:CCCCCCCG", 2000),
+        ("r7:GGGGCCCC", 2000),
+        ("r8:GGGGCCCA", 2000),
+        ("r9:GGGGCCCA", 2000),
+    ];
+    let dir = TempDir::new().unwrap();
+    let mut counts = Vec::new();
+    for rotation in 0..reads.len() {
+        for reverse in [false, true] {
+            let mut order: Vec<(&str, usize)> = reads.to_vec();
+            order.rotate_left(rotation);
+            if reverse {
+                order.reverse();
+            }
+            let input = dir.path().join(format!("o{rotation}_{reverse}.bam"));
+            let records: Vec<RecordBuf> = order.iter().map(|(q, s)| se_ot(q, *s)).collect();
+            write_bam(&input, &records);
+            let (kept, report, _) = dedup(
+                dir.path(),
+                &input,
+                &["--single", "--barcode", "--umi_mismatches", "1"],
+            );
+            counts.push((kept.len(), removed_count(&report), positions_count(&report)));
+        }
+    }
+    assert!(counts.iter().all(|c| *c == counts[0]), "{counts:?}");
+}
+
+#[test]
+fn cram_input_groups_like_bam() {
+    let dir = TempDir::new().unwrap();
+    let len = 5_000;
+    let fasta = dir.path().join("ref.fa");
+    let mut seq = b">chr1\n".to_vec();
+    seq.extend(std::iter::repeat_n(b'N', len));
+    seq.push(b'\n');
+    std::fs::write(&fasta, &seq).unwrap();
+    std::fs::write(
+        dir.path().join("ref.fa.fai"),
+        format!("chr1\t{len}\t6\t{len}\t{}\n", len + 1),
+    )
+    .unwrap();
+
+    let reads = [
+        ("a:ACGTACGT", 100),
+        ("b:ACGTACGA", 100),
+        ("c:ACGTACGT", 100),
+        ("d:TTTTTTTT", 900),
+    ];
+    let records: Vec<RecordBuf> = reads.iter().map(|(q, s)| se_ot(q, *s)).collect();
+    let mut header = Header::default();
+    header.reference_sequences_mut().insert(
+        BString::from("chr1"),
+        Map::<ReferenceSequence>::new(NonZeroUsize::try_from(len).unwrap()),
+    );
+    let cram = dir.path().join("in.cram");
+    let mut writer = bismark::io::open_writer(&cram, header, Some(&fasta)).unwrap();
+    for r in &records {
+        writer
+            .write_record(&BismarkRecord::from_noodles_record(r.clone()).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+
+    let out_dir = dir.path().join("out");
+    let assert = Command::cargo_bin("deduplicate_bismark")
+        .unwrap()
+        .args([
+            "--single",
+            "--barcode",
+            "--umi_mismatches",
+            "1",
+            "--cram_ref",
+        ])
+        .arg(&fasta)
+        .arg("--output_dir")
+        .arg(&out_dir)
+        .arg(&cram)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("1 UMIs merged into 1 groups at 1 positions"),
+        "{stderr}"
+    );
+    let out = std::fs::read_dir(&out_dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().contains(".deduplicated."))
+        .unwrap();
+    let mut reader = bismark::io::open_reader(&out, Some(&fasta)).unwrap();
+    let kept: Vec<String> = reader
+        .records()
+        .map(|r| {
+            String::from_utf8_lossy(AsRef::as_ref(r.unwrap().inner().name().unwrap())).into_owned()
+        })
+        .collect();
+    assert_eq!(kept, ["a:ACGTACGT", "d:TTTTTTTT"]);
+}
