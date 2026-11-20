@@ -5,7 +5,7 @@
 
 ### deduplicate_bismark
 
-- **New `--umi_mismatches N` treats UMIs at the same position that differ by up to N bases as one molecule, using the UMI-tools directional rule; the default 0 keeps exact matching ([#NNNN](https://github.com/FelixKrueger/Bismark/pull/NNNN)).**
+- **New `--umi_mismatches N` treats UMIs at the same position that differ by up to N bases as one molecule, using the UMI-tools directional rule; the default 0 keeps exact matching ([#1264](https://github.com/FelixKrueger/Bismark/pull/1264)).**
 
 ## Bismark 3.3.0 (released 2026-11-19)
 
