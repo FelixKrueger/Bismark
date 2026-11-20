@@ -9,31 +9,31 @@ updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/dedup.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/umi_group.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: c25f0a6
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/logging.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Run reports

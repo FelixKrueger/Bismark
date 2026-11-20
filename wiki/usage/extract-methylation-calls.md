@@ -5,38 +5,38 @@ description: Turn a Bismark BAM into per-cytosine call files and an M-bias table
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/overlap.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Extract methylation calls
@@ -95,7 +95,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 | both | 2: `{CpG,Non_CpG}_context_<name>.txt` |
 | `--mbias_only` | none, only M-bias and the splitting report |
 
-`<name>` is the input file name without `.bam`, `.sam` or `.cram`. `--gzip` adds `.gz`. Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
+`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Inputs are extracted one after another, and nothing checks whether two of them get the same `<name>`: with `sample.bam` and `sample.cram` in one run, the second input's files replace the first's (`run` in `extractor/mod.rs`; `open_split_writer` in `extractor/output.rs` creates each file afresh). Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
 
 ## Other options
 
