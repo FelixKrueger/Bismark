@@ -5,7 +5,7 @@
 
 ### bismark (aligner)
 
-- **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name, since both would write the same mate-2 file ([#1263](https://github.com/FelixKrueger/Bismark/issues/1263)).**
+- **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
 
 ### deduplicate_bismark
 
@@ -13,7 +13,7 @@
 
 ### bismark extract (methylation extractor)
 
-- **Two inputs that would write the same output files, such as `a/s.bam` and `b/s.cram`, now stop the run before anything is written ([#1263](https://github.com/FelixKrueger/Bismark/issues/1263)).**
+- **Two inputs that would write the same output files, such as `a/s.bam` and `b/s.cram`, now stop the run before anything is written ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
 
 ## Bismark 3.3.0 (released 2026-11-19)
 

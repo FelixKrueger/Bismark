@@ -723,7 +723,8 @@ mod tests {
         let input = named_inputs(dir.path(), &["s.bam"]).remove(0);
         let err = parse(&[&input, &input]).unwrap().validate().unwrap_err();
         assert!(
-            matches!(err, BismarkExtractorError::OutputNameCollision { .. }),
+            matches!(&err, BismarkExtractorError::OutputNameCollision { name, .. }
+                if name == "s_splitting_report.txt"),
             "{err}"
         );
         assert!(err.to_string().contains("would both write"), "{err}");
@@ -750,6 +751,15 @@ mod tests {
     fn validate_compares_only_written_outputs() {
         assert_eq!(collision(&["--mbias_off"], &["s.bam", "s.txt"]), None);
         assert_eq!(collision(&[], &["s.bam", "t.bam"]), None);
+    }
+
+    #[test]
+    fn validate_compares_the_splitting_report_under_mbias_only() {
+        // `--mbias_only` writes no split files but still writes the splitting report.
+        assert_eq!(
+            collision(&["--mbias_only"], &["s.bam", "s"]).as_deref(),
+            Some("s_splitting_report.txt")
+        );
     }
 
     #[test]

@@ -146,7 +146,7 @@ pub enum BismarkExtractorError {
     /// Two inputs would write an output file of the same name.
     #[error(
         "{} and {} would both write {name}, so the second would overwrite the first; \
-         rename one of them or run them separately",
+         rename one of them or run each with its own --output_dir",
         first.display(),
         second.display()
     )]

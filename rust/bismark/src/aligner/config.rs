@@ -1967,8 +1967,8 @@ fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
         if let Some((_, first)) = seen.iter().find(|(n, _)| *n == name) {
             return Err(AlignerError::Validation(format!(
                 "{first} and {read} would both write their output to the name '{name}', so \
-                 the second would overwrite the first. Rename one of them, or run them \
-                 separately{}.",
+                 the second would overwrite the first. Rename one of them, or run each with \
+                 its own --output_dir{}.",
                 if cli.basename.is_some() {
                     " (--basename names the output of a single input)"
                 } else {
@@ -1980,7 +1980,6 @@ fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
     }
     if let ReadLayout::PairedEnd { mates2, .. } = layout
         && (cli.unmapped || cli.ambiguous)
-        && cli.basename.is_none()
     {
         let mut seen: Vec<(String, &String)> = Vec::new();
         for read in mates2 {
@@ -2002,7 +2001,8 @@ fn reject_output_name_collision(cli: &Cli, layout: &ReadLayout) -> Result<()> {
                 );
                 return Err(AlignerError::Validation(format!(
                     "{first} and {read} would both write their mate-2 reads to '{aux}', so the \
-                     second would overwrite the first. Rename one of them, or run them separately."
+                     second would overwrite the first. Rename one of them, or run each with its own \
+                     --output_dir."
                 )));
             }
             seen.push((name, read));

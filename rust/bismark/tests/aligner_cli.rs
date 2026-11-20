@@ -2146,12 +2146,16 @@ fn run_two_pairs(
 #[cfg(unix)]
 #[test]
 fn paired_inputs_sharing_a_mate2_aux_name_are_rejected() {
-    for (flag, aux) in [
-        ("--unmapped", "r_2.fq_unmapped_reads_2.fq.gz"),
-        ("--ambiguous", "r_2.fq_ambiguous_reads_2.fq.gz"),
+    for (flags, aux) in [
+        (&["--unmapped"][..], "'r_2.fq_unmapped_reads_2.fq.gz'"),
+        (&["--ambiguous"][..], "'r_2.fq_ambiguous_reads_2.fq.gz'"),
+        (
+            &["--unmapped", "--prefix", "foo.."][..],
+            "'foo.r_2.fq_unmapped_reads_2.fq.gz'",
+        ),
     ] {
         let (dir, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-        run_two_pairs(dir.path(), outdir.path(), ["r_2.fq", "r_2.fq"], &[flag])
+        run_two_pairs(dir.path(), outdir.path(), ["r_2.fq", "r_2.fq"], flags)
             .failure()
             .code(1)
             .stderr(
@@ -2172,7 +2176,7 @@ fn paired_inputs_sharing_an_r2_name_align_without_aux_output() {
     }
 }
 
-/// Pairs with distinct R2 names pass the mate-2 check and each write their own aux files.
+/// R2 names that differ only in their FastQ suffix write separate aux files, so both pairs run.
 #[cfg(unix)]
 #[test]
 fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
@@ -2180,7 +2184,7 @@ fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
     run_two_pairs(
         dir.path(),
         outdir.path(),
-        ["r_2.fq", "s_2.fq"],
+        ["r_2.fq", "r_2.fastq"],
         &["--unmapped", "--ambiguous"],
     )
     .success();
@@ -2189,7 +2193,7 @@ fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
             format!("x_1.fq_{kind}_reads_1.fq.gz"),
             format!("r_2.fq_{kind}_reads_2.fq.gz"),
             format!("y_1.fq_{kind}_reads_1.fq.gz"),
-            format!("s_2.fq_{kind}_reads_2.fq.gz"),
+            format!("r_2.fastq_{kind}_reads_2.fq.gz"),
         ] {
             assert!(outdir.path().join(&name).is_file(), "missing {name}");
         }
