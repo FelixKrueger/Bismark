@@ -1,37 +1,43 @@
 ---
 type: usage
 title: Deduplicate alignments
-description: Remove PCR duplicates from a Bismark BAM, when to skip this step, and the UMI modes.
-tags: [deduplication, pcr-duplicates, umi, rrbs]
+description: Remove PCR duplicates from a Bismark BAM, when to skip this step, the UMI modes, and UMI grouping with mismatches.
+tags: [deduplication, pcr-duplicates, umi, umi-mismatches, rrbs]
 page_id: deduplicate-alignments
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: a0059f4
+    commit: c25f0a6
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/dedup.rs
-    commit: a0059f4
+    commit: c25f0a6
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: a0059f4
+    commit: c25f0a6
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/filename.rs
-    commit: a0059f4
+    commit: c25f0a6
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
     commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
-    commit: a0059f4
+    commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/umi_group.rs
+    commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/error.rs
+    commit: c25f0a6
 ---
 
 # Deduplicate alignments
 
 ## Summary
 
-`bismark dedup` keeps the first alignment at each position and strand and removes the rest as PCR duplicates. The developer says most workflows need this step, and that RRBS, amplicon and implicon data should skip it. Run it on the BAM that `bismark` wrote, before methylation extraction.
+`bismark dedup` keeps the first alignment at each position and strand and removes the rest as PCR duplicates. The developer says most workflows need this step, and that RRBS, amplicon and implicon data should skip it. Run it on the BAM that `bismark` wrote, before methylation extraction. With a UMI mode, `--umi_mismatches N` also treats UMIs up to N bases apart at the same position as one molecule.
 
 ## When to run it
 
@@ -64,6 +70,34 @@ The key is strand, chromosome, start and end (`DedupKey` in `dedup/dedup.rs`):
 - Single-end: one position. Forward strands (OT, CTOB) use the alignment start; reverse strands (CTOT, OB) use the alignment end, counting deletions but not soft clips (`compute_se_key` in `dedup/pipeline.rs`).
 - Paired-end: the start and end of the pair (`compute_pe_key` in `dedup/pipeline.rs`).
 - UMI modes add the UMI to the key: `--barcode` (alias `--umi`) takes the UMI after the last `:` of the read name, and `--bclconvert` takes it from the bcl-convert read-name position.
+- With `--barcode`, the run stops if the first read name of an input is in bcl-convert format (`:<UMI>_<mate>:N:<d>:<i7>`), because the part after the last `:` is then the i7 index, not the UMI; use `--bclconvert` for those files. Only the first read name is checked (`check_bclconvert_format_conflict` in `dedup/mod.rs`).
+- By default UMIs must match exactly. `--umi_mismatches` groups near-identical UMIs: see the next section.
+
+## UMI mismatches (--umi_mismatches)
+
+```
+bismark dedup --barcode --umi_mismatches 1 sample_R1_bismark_bt2_pe.bam
+```
+
+`--umi_mismatches N` (0 to 255, default 0) needs `--barcode`/`--umi` or `--bclconvert` (`Cli::validate` in `dedup/cli.rs`). With 0 UMIs match exactly. Above 0, the UMIs at each position (strand, chromosome, start, end) are grouped with the UMI-tools "directional" rule (`group_position` in `dedup/umi_group.rs`):
+
+- UMI B joins UMI A when they differ at N or fewer bases and count(A) ≥ 2 × count(B) − 1. A UMI seen once joins any neighbour; two UMIs seen twice each stay apart.
+- Grouping chains (A takes B, B takes C), so a group can hold UMIs more than N apart.
+- Groups start from the most frequent UMI; with tied counts, the UMI that sorts first leads.
+- An `N` in a UMI is an ordinary mismatch. UMIs of different length never group (`hamming_within`).
+
+Each group keeps the first record or pair in the input, as without grouping (`UmiGroupCollector::resolve`). With `--multiple`, grouping spans all the input files.
+
+Each input is read twice (`grouped_umi` in `dedup/pipeline.rs`):
+
+1. Before any input is opened, every input must be a regular file, not a pipe or stream (`run` in `dedup/mod.rs`).
+2. Pass 1 counts each position+UMI key and notes its first record or pair. Memory grows with the number of distinct keys (`UmiGroupCollector`).
+3. If an input's size or modification time changed during pass 1, the run stops before any output is written (`input_snapshot`).
+4. Pass 2 writes the kept records, using 1 bit per record or pair (`KeepSet`). If it reads a different number of records or pairs than pass 1, the output is removed and the run stops. A change during pass 2 is caught only when that count changes.
+
+All modes work with grouping: `-s`/`-p`, `--multiple`, `--parallel` (also with `--multiple`), CRAM and `--sam`. CRAM and `--sam` run single-threaded, as without grouping (`process_one` and `process_multiple` in `dedup/mod.rs`).
+
+The report keeps its usual lines; `Duplicated alignments were found at` then counts groups with more than one record or pair ([reference/run-reports.md](../reference/run-reports.md)). Stderr adds `UMI grouping (up to N mismatch(es)): <n> UMIs merged into <n> groups at <n> positions` (`grouping_summary` in `dedup/mod.rs`).
 
 ## Options this task uses
 
@@ -77,6 +111,7 @@ The key is strand, chromosome, start and end (`DedupKey` in `dedup/dedup.rs`):
 | `--output_dir <dir>` | Output folder, created if missing |
 | `--multiple` | Treat all input files as one sample; all must have the same `@SQ` names in the same order (`validate_chr_consistency` in `dedup/pipeline.rs`) |
 | `--barcode`, `--bclconvert` | UMI-aware deduplication |
+| `--umi_mismatches <N>` | Group UMIs up to N bases apart at the same position; needs a UMI mode; default 0 (exact) |
 
 `--representative` is rejected.
 
@@ -90,11 +125,20 @@ From `dedup/filename.rs`:
 | `<stem>.cram` (with `--cram_ref`) | `<stem>.deduplicated.bam` and `<stem>.deduplication_report.txt` (`derive_output_stem` in `dedup/filename.rs`) |
 | With `--multiple` | `<stem>.multiple.deduplicated.bam` and `<stem>.multiple.deduplication_report.txt` |
 
+## Errors
+
+From `BismarkDedupError` in `dedup/error.rs`:
+
+| Message | Cause | Fix |
+|---|---|---|
+| `--umi_mismatches needs --barcode (--umi) or --bclconvert` | `--umi_mismatches` above 0 without a UMI mode | Add `--barcode` or `--bclconvert`, or drop `--umi_mismatches` |
+| `--umi_mismatches reads each input twice, so it must be a regular file, not a pipe or stream: <path>` | A pipe, FIFO or process substitution as input | Write the BAM to a file first |
+| `input changed while it was being deduplicated: <path>` | The input's size or modification time changed during pass 1 | Rerun when nothing else writes the file |
+| `the second pass read <n> records or pairs, the first <n>; the output was removed` | Pass 2 read a different number of records or pairs | Rerun when nothing else writes the file |
+| `input file's qnames look like bcl-convert format …` | `--barcode` on bcl-convert read names | Use `--bclconvert` |
+
 ## Links
 
 - [reference/bam-output.md](../reference/bam-output.md): the strand fields the key uses.
 - [troubleshooting.md](../troubleshooting.md): coverage questions.
-
-## Open questions
-
-- With `--barcode`, the tool takes whatever follows the last `:` of the read name. On bcl-convert read names that is the i7 index, not the UMI (doc comment in `dedup/cli.rs`); the tool cannot tell the two apart.
+- [reference/run-reports.md](../reference/run-reports.md): the deduplication report lines.

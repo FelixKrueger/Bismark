@@ -5,14 +5,23 @@ description: The lines of the alignment report, the deduplication report and the
 tags: [report, mapping-efficiency, deduplication, qc]
 page_id: run-reports
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
     commit: a0059f4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: a0059f4
+    commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/dedup.rs
+    commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/umi_group.rs
+    commit: c25f0a6
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/mod.rs
+    commit: c25f0a6
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
     commit: a0059f4
@@ -70,8 +79,10 @@ A 5-Base report adds 2 lines before that one (`run_pe_five_base` in `aligner/mod
 |---|---|
 | `Total number of alignments analysed in <file>` | Records (or pairs) read; ` (UMI mode)` is added with `--barcode`/`--bclconvert` |
 | `Total number duplicated alignments removed` | Count and % removed |
-| `Duplicated alignments were found at` | Distinct positions with at least one duplicate |
+| `Duplicated alignments were found at` | Without a UMI mode, distinct positions with at least one duplicate (`DedupState`); in a UMI mode, distinct position+UMI keys with at least one duplicate (`UmiDedupState` in `dedup/dedup.rs`); with `--umi_mismatches`, UMI groups with more than one record or pair (`UmiGrouping` in `dedup/umi_group.rs`) |
 | `Total count of deduplicated leftover sequences` | Count and % kept |
+
+With `--umi_mismatches` the report has the same lines; the grouping counts go only to stderr (`grouping_summary` in `dedup/mod.rs`).
 
 ## Splitting report
 

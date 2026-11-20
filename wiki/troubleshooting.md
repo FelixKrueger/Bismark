@@ -5,7 +5,7 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
@@ -113,6 +113,7 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 | `the Bowtie 2 index of the C->T-converted genome seems to be faulty` | An index file is missing (`FaultyIndex` in `aligner/error.rs`) | Run `bismark prepare` for the same aligner: [usage/prepare-a-genome.md](usage/prepare-a-genome.md) |
 | `failed to execute Bowtie 2 properly` | The aligner is not on `PATH` (`AlignerNotWorking`) | Install it, or pass `--path_to_bowtie2 <dir>` |
 | `input BAM is coordinate-sorted` | Paired-end dedup or paired-end extraction got a coordinate-sorted BAM (`UnsortedInput` in `io/error.rs`) | Use the BAM straight from the aligner, or name-sort it |
+| `--umi_mismatches needs …`, `--umi_mismatches reads each input twice …`, `input changed while it was being deduplicated`, `the second pass read …` | `bismark dedup --umi_mismatches` errors (`dedup/error.rs`) | See [usage/deduplicate-alignments.md](usage/deduplicate-alignments.md#errors) |
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
 | `--include_overlap requires --paired-end` | `--include_overlap` with `-s`, or on a file auto-detected as single-end (`process_one_file` in `extractor/mod.rs`) | Drop `--include_overlap`: single-end reads have no read 2 |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
