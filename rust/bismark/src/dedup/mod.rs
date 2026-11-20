@@ -39,6 +39,7 @@ pub mod error;
 pub mod filename;
 pub mod pipeline;
 pub mod report;
+pub mod umi_group;
 
 pub use cli::UmiMode;
 pub use dedup::{DedupKey, DedupState, UmiDedupKey, UmiDedupState};
@@ -106,6 +107,18 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
     // Ensure output directory exists. Matches Perl line 1248.
     if !config.output_dir.as_os_str().is_empty() && config.output_dir != Path::new(".") {
         std::fs::create_dir_all(&config.output_dir)?;
+    }
+
+    // Two passes need re-readable inputs; check before anything opens them.
+    if config.umi_mismatches > 0 {
+        for input in &config.files {
+            // A missing file falls through to the reader's own not-found error.
+            if std::fs::metadata(input).is_ok_and(|m| !m.file_type().is_file()) {
+                return Err(BismarkDedupError::InputNotRegularFile {
+                    path: input.clone(),
+                });
+            }
+        }
     }
 
     // v1.2.1-beta.1: bcl-convert auto-detect (closes #842, resolves the
@@ -221,15 +234,42 @@ fn process_one(input: &Path, config: &ResolvedConfig) -> Result<(), BismarkDedup
             let parallel = std::num::NonZero::new(config.parallel)
                 .expect("Cli::validate rejects parallel == 0");
             eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
-            pipeline::run_single_parallel_umi(
-                input, &out_path, is_paired, file_label, parallel, umi_mode,
-            )?
+            if config.umi_mismatches > 0 {
+                let (report, grouping) = pipeline::run_single_parallel_umi_grouped(
+                    input,
+                    &out_path,
+                    is_paired,
+                    file_label,
+                    parallel,
+                    umi_mode,
+                    config.umi_mismatches,
+                )?;
+                eprintln!("{}", grouping_summary(&grouping, config.umi_mismatches));
+                report
+            } else {
+                pipeline::run_single_parallel_umi(
+                    input, &out_path, is_paired, file_label, parallel, umi_mode,
+                )?
+            }
         }
         (true, None) => {
             let parallel = std::num::NonZero::new(config.parallel)
                 .expect("Cli::validate rejects parallel == 0");
             eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
             pipeline::run_single_parallel(input, &out_path, is_paired, file_label, parallel)?
+        }
+        (false, Some(umi_mode)) if config.umi_mismatches > 0 => {
+            let (report, grouping) = pipeline::run_single_umi_grouped(
+                input,
+                &out_path,
+                config.cram_ref.as_deref(),
+                is_paired,
+                file_label,
+                umi_mode,
+                config.umi_mismatches,
+            )?;
+            eprintln!("{}", grouping_summary(&grouping, config.umi_mismatches));
+            report
         }
         (false, Some(umi_mode)) => pipeline::run_single_umi(
             input,
@@ -309,14 +349,28 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
             let parallel = std::num::NonZero::new(config.parallel)
                 .expect("Cli::validate rejects parallel == 0");
             eprintln!("BGZF threading: {} worker(s) per reader/writer", parallel);
-            pipeline::run_multiple_parallel_umi(
-                &config.files,
-                &out_path,
-                is_paired,
-                file_label,
-                parallel,
-                umi_mode,
-            )?
+            if config.umi_mismatches > 0 {
+                let (report, grouping) = pipeline::run_multiple_parallel_umi_grouped(
+                    &config.files,
+                    &out_path,
+                    is_paired,
+                    file_label,
+                    parallel,
+                    umi_mode,
+                    config.umi_mismatches,
+                )?;
+                eprintln!("{}", grouping_summary(&grouping, config.umi_mismatches));
+                report
+            } else {
+                pipeline::run_multiple_parallel_umi(
+                    &config.files,
+                    &out_path,
+                    is_paired,
+                    file_label,
+                    parallel,
+                    umi_mode,
+                )?
+            }
         }
         (true, None) => {
             let parallel = std::num::NonZero::new(config.parallel)
@@ -329,6 +383,19 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
                 file_label,
                 parallel,
             )?
+        }
+        (false, Some(umi_mode)) if config.umi_mismatches > 0 => {
+            let (report, grouping) = pipeline::run_multiple_umi_grouped(
+                &config.files,
+                &out_path,
+                config.cram_ref.as_deref(),
+                is_paired,
+                file_label,
+                umi_mode,
+                config.umi_mismatches,
+            )?;
+            eprintln!("{}", grouping_summary(&grouping, config.umi_mismatches));
+            report
         }
         (false, Some(umi_mode)) => pipeline::run_multiple_umi(
             &config.files,
@@ -355,6 +422,17 @@ fn process_multiple(config: &ResolvedConfig) -> Result<(), BismarkDedupError> {
     report.write_to(&report_path)?;
     eprintln!("{}", report.format_stderr());
     Ok(())
+}
+
+/// One stderr line summarising what `--umi_mismatches` grouping merged.
+fn grouping_summary(grouping: &umi_group::UmiGrouping, max_mismatches: u8) -> String {
+    format!(
+        "UMI grouping (up to {max_mismatches} mismatch{}): {} UMIs merged into {} groups at {} positions",
+        if max_mismatches == 1 { "" } else { "es" },
+        grouping.umis_merged,
+        grouping.merged_groups,
+        grouping.merged_positions,
+    )
 }
 
 /// v1.2.1-beta.1: peek the first record's qname and reject if it looks

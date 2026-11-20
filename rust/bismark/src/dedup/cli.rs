@@ -105,6 +105,12 @@ pub struct Cli {
     #[arg(long = "bclconvert")]
     pub bclconvert: bool,
 
+    /// Treat UMIs up to N bases apart at the same position as one molecule
+    /// (UMI-tools directional rule; needs --barcode/--umi or --bclconvert).
+    /// 0 (default) matches UMIs exactly. Above 0 the input is read twice.
+    #[arg(long = "umi_mismatches", default_value_t = 0u8, value_name = "N")]
+    pub umi_mismatches: u8,
+
     /// Number of BGZF (de)compression worker threads for BAM I/O.
     /// `1` = single-threaded (the v1.0 path). `>= 2` spawns N BGZF
     /// workers for the input reader AND the output writer via noodles'
@@ -173,6 +179,8 @@ pub struct ResolvedConfig {
     /// UMI dedup mode (v1.2+). `None` = position-only (v1.0/v1.1
     /// behaviour, no behaviour change for non-UMI callers).
     pub umi_mode: Option<UmiMode>,
+    /// `--umi_mismatches`: UMIs up to this many bases apart are grouped; 0 = exact.
+    pub umi_mismatches: u8,
 }
 
 impl Cli {
@@ -221,6 +229,9 @@ impl Cli {
         } else {
             None
         };
+        if self.umi_mismatches > 0 && umi_mode.is_none() {
+            return Err(BismarkDedupError::UmiMismatchesWithoutUmiMode);
+        }
 
         let explicit_mode = match (self.single, self.paired) {
             (true, false) => Some(false),
@@ -245,6 +256,7 @@ impl Cli {
             multiple: self.multiple,
             parallel: self.parallel as usize,
             umi_mode,
+            umi_mismatches: self.umi_mismatches,
         })
     }
 }

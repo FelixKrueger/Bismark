@@ -53,3 +53,7 @@ UMI-collision-stress tests there).
 
 Captured at Phase 0 baseline-creation time on oxy. See `MANIFEST.sha256` in
 the matching `~/bismark_benchmarks/RRBS_PE/synth_*_10k/bismark_out/` dirs on oxy.
+
+## `umi_tools_directional_golden.tsv`
+
+UMI-tools 1.1.6 `UMIClusterer('directional')` clusters for 300 seeded random UMI sets at thresholds 1 and 2, written by `make_umi_tools_golden.py`. `tests/dedup_umi_mismatches.rs` checks that `--umi_mismatches` groups every set the same way.
