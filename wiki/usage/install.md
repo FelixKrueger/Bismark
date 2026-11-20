@@ -34,7 +34,7 @@ Bismark is one binary, `bismark`, that holds all 12 tools. The developer says pe
 
 | Channel | Command | Notes |
 |---|---|---|
-| Bioconda | `mamba install -c bioconda -c conda-forge bismark` | The developer gave this channel, and says the package installs bwa-mem3 from 3.3.0. The recipe is not in this repo. |
+| Bioconda | `mamba install -c bioconda -c conda-forge bismark` | The developer gave this channel, and says that from Bismark 3.3.0 the package also installs bwa-mem3. The recipe is not in this repo. |
 | crates.io | `cargo install bismark` | One crate, `bismark` (`rust/bismark/Cargo.toml`). It installs `bismark` and the 11 classic names as 12 executables, each the same program (one file per name in `rust/bismark/src/bin/`). The `rammap-inprocess` and `binseq-input` features are off by default; add `--features rammap-inprocess,binseq-input` to get them. |
 | Container | `docker pull ghcr.io/felixkrueger/bismark:latest` | Tags `:latest` and `:<version>` (`release.yml`). Bundles Bowtie 2 2.5.5, HISAT2 2.2.2, minimap2 2.31 and bwa-mem3 0.18.0, and builds with both optional features (`Dockerfile`). |
 | Prebuilt binaries | GitHub release assets | Built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` and `aarch64-apple-darwin` (`release.yml`). |

@@ -37,6 +37,12 @@ sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
     commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/io/read.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/downstream_filenames.rs
+    commit: 855b812
 ---
 
 # Extract methylation calls
@@ -54,7 +60,7 @@ sources:
    bismark extract --gzip sample_R1_bismark_bt2_pe.deduplicated.bam
    ```
 
-   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end (`detect_paired` in `io/read.rs`); with no Bismark `@PG` line the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each with its own outputs.
+   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end (`detect_paired` in `io/read.rs`); with no Bismark `@PG` line the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each writing outputs named from its own `<name>`.
 3. Open `<name>.M-bias.txt` and look for read positions where the methylation level departs from the flat middle of the read.
 4. If the ends are biased, run again with the trimming that removes them, for example `--ignore 2 --ignore_r2 2`.
 5. For bedGraph, coverage and cytosine reports in the same run, add `--bedGraph` or `--cytosine_report --genome_folder <dir>`: [usage/make-coverage-and-cytosine-reports.md](make-coverage-and-cytosine-reports.md).
@@ -95,7 +101,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 | both | 2: `{CpG,Non_CpG}_context_<name>.txt` |
 | `--mbias_only` | none, only M-bias and the splitting report |
 
-`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Inputs are extracted one after another, and nothing checks whether two of them get the same `<name>`: with `sample.bam` and `sample.cram` in one run, the second input's files replace the first's (`run` in `extractor/mod.rs`; `open_split_writer` in `extractor/output.rs` creates each file afresh). Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
+`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Nothing checks whether two inputs get the same `<name>` (`run` in `extractor/mod.rs`). With `sample.bam` and `sample.cram` in one run, the second input writes to the same paths: each call file is created on its first call (`open_split_writer`), the end-of-input sweep deletes the call files the second input did not write, and if the second input fails, its cleanup deletes the first input's call files too (`OutputFileMap` in `extractor/output.rs`). If the second input has no CpG calls (without `--CX`), its bedGraph step is skipped, so the first input's bedGraph, coverage file and cytosine report stay (`run_downstream_chain` in `extractor/downstream_filenames.rs`). Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
 
 ## Other options
 

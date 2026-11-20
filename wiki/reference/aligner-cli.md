@@ -129,7 +129,7 @@ With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth
 | `--bwamem3` with a missing index file, or bwa-mem3 older than 0.16.0 | `check_bwamem3_index_files`, `detect_aligner` in `aligner/aligner.rs` |
 | `--taps` with `--illumina_5base`, another aligner, a 5-Base-only option (duplex, consensus, deconvolution, UMI, `--five_base_min_mapq`, `--five_base_emit_multiplicity`), or the bwa-mem3 tuning options above | `expand_taps`, `reject_bwamem3_tuning` |
 | A uBAM, unaligned CRAM or BINSEQ file given with `-1`/`-2` | `resolve_alt_inputs` in `aligner/mod.rs` |
-| Two inputs whose outputs would get the same name (`output_stem`), or `--basename` with more than one input | `reject_output_name_collision` |
+| Two inputs whose outputs would get the same name (`output_stem` in `aligner/mod.rs`), or `--basename` with more than one input | `reject_output_name_collision` |
 
 `--most_valid_alignments` and `--dovetail` have no effect.
 
