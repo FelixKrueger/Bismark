@@ -167,8 +167,10 @@ impl UmiGroupCollector {
     #[must_use]
     pub fn resolve(self, max_mismatches: u8) -> UmiGrouping {
         let units = self.units;
-        let mut entries: Vec<(UmiDedupKey, u32, u64)> =
-            self.keys.into_iter().map(|(k, (c, f))| (k, c, f)).collect();
+        // Borrowed entries keep the sort buffer at 24 bytes per key, next to the map.
+        let keys = self.keys;
+        let mut entries: Vec<(&UmiDedupKey, u32, u64)> =
+            keys.iter().map(|(k, &(c, f))| (k, c, f)).collect();
         entries.sort_unstable_by(|a, b| {
             (a.0.strand as u8, a.0.chr_id, a.0.start, a.0.end)
                 .cmp(&(b.0.strand as u8, b.0.chr_id, b.0.start, b.0.end))
@@ -188,10 +190,19 @@ impl UmiGroupCollector {
         let mut start = 0;
         while start < entries.len() {
             let mut end = start + 1;
-            while end < entries.len() && same_position(&entries[start].0, &entries[end].0) {
+            while end < entries.len() && same_position(entries[start].0, entries[end].0) {
                 end += 1;
             }
             let run = &entries[start..end];
+            if let [(_, count, first)] = run {
+                groups += 1;
+                keep.insert(*first);
+                if *count > 1 {
+                    duplicate_groups += 1;
+                }
+                start = end;
+                continue;
+            }
             let umis: Vec<(&[u8], u32)> =
                 run.iter().map(|(k, c, _)| (k.umi.as_slice(), *c)).collect();
             let seed_of = group_position(&umis, max_mismatches);

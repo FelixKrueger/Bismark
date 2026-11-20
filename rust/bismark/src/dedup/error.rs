@@ -212,7 +212,9 @@ pub enum BismarkDedupError {
     },
 
     /// The two `--umi_mismatches` passes saw a different number of records or pairs.
-    #[error("the second pass read {pass2} records or pairs, the first {pass1}; no output written")]
+    #[error(
+        "the second pass read {pass2} records or pairs, the first {pass1}; the output was removed"
+    )]
     PassUnitCountMismatch {
         /// Units seen in pass 1.
         pass1: u64,

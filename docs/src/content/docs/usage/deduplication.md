@@ -41,7 +41,7 @@ By default UMIs have to match exactly. With `--umi_mismatches N` (alongside `--b
 bismark dedup --barcode --umi_mismatches 1 sample_bismark_bt2_pe.bam
 ```
 
-Grouping follows the UMI-tools "directional" rule: a UMI joins a more frequent one if they are at most N bases apart and the more frequent one was seen at least `2 × count − 1` times. So a single-read UMI joins a neighbour seen once or more, two UMIs seen twice each stay apart, and counts, not N, limit how far grouping reaches. An `N` in a UMI is an ordinary mismatch, and UMIs of different length are never grouped. Within a group the first record or pair in the file is kept, as without grouping, and the report keeps its usual four lines; stderr adds one line with the number of UMIs merged.
+Grouping follows the UMI-tools "directional" rule: UMI B joins UMI A if they are at most N bases apart and A was seen at least `2 × count(B) − 1` times. So a single-read UMI joins a neighbour seen once or more, two UMIs seen twice each stay apart, and counts, not N, limit how far grouping reaches. An `N` in a UMI is an ordinary mismatch, and UMIs of different length are never grouped. Within a group the first record or pair in the file is kept, as without grouping, and the report keeps its usual four lines; stderr adds one line with the number of UMIs merged.
 
 With `--umi_mismatches` above 0 each input is read twice (about twice the run time), so inputs must be regular files, not pipes.
 

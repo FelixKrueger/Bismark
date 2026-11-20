@@ -109,6 +109,18 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
         std::fs::create_dir_all(&config.output_dir)?;
     }
 
+    // Two passes need re-readable inputs; check before anything opens them.
+    if config.umi_mismatches > 0 {
+        for input in &config.files {
+            // A missing file falls through to the reader's own not-found error.
+            if std::fs::metadata(input).is_ok_and(|m| !m.file_type().is_file()) {
+                return Err(BismarkDedupError::InputNotRegularFile {
+                    path: input.clone(),
+                });
+            }
+        }
+    }
+
     // v1.2.1-beta.1: bcl-convert auto-detect (closes #842, resolves the
     // v1.2 deferral noted in #792's closing comment).
     //
@@ -135,17 +147,6 @@ fn run(cli: Cli) -> Result<(), BismarkDedupError> {
     // the first non-header record regardless of mapping flag. Harmless in
     // practice (uniform qnames across all records of a Bismark BAM) but
     // documented for future-Felix.
-    // Two passes need re-readable inputs; check before anything opens them.
-    if config.umi_mismatches > 0 {
-        for input in &config.files {
-            if !std::fs::metadata(input).is_ok_and(|m| m.file_type().is_file()) {
-                return Err(BismarkDedupError::InputNotRegularFile {
-                    path: input.clone(),
-                });
-            }
-        }
-    }
-
     if config.umi_mode == Some(crate::dedup::cli::UmiMode::Barcode) {
         for input in &config.files {
             check_bclconvert_format_conflict(input, &config)?;
