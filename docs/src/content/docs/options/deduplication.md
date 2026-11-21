@@ -44,9 +44,21 @@ Output directory, either relative or absolute. Output is written to the current 
 
 In addition to chromosome, start position and orientation this will also take a potential barcode into consideration while deduplicating. The barcode needs to be the last element of the read ID and separated by a ':', e.g.: MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
 
+- `--umi`
+
+Alias of `--barcode`.
+
+- `--bclconvert`
+
+UMI deduplication for bcl-convert read names, where the UMI sits inside the read ID (e.g. `A00001:…:CAAGAG_1:N:0:AATGACGC`). Use this instead of `--barcode` for bcl-convert output: `--barcode` would take the index sequence at the end of the read ID as the UMI.
+
 - `--umi_mismatches [N]`
 
-With `--barcode`/`--umi` or `--bclconvert`: UMIs at the same position that differ by up to N bases are treated as one molecule, using the UMI-tools "directional" rule (see [Deduplication using UMIs or barcodes](/Bismark/usage/deduplication/#deduplication-using-umis-or-barcodes)). Inputs are read twice and must be regular files. Default: 0 (UMIs must match exactly).
+With `--barcode`/`--umi` or `--bclconvert`: UMIs at the same position that differ by up to N bases are treated as one molecule, using the UMI-tools "directional" rule (see [Deduplication using UMIs or barcodes](/Bismark/usage/deduplication/#deduplication-using-umis-or-barcodes)). Above 0, each input is read twice, so it must be a regular file, not a pipe. Default: 0 (UMIs must match exactly).
+
+- `--parallel <int>`
+
+BGZF (de)compression threads for BAM input and output; the output is identical to `--parallel 1`. CRAM input or output runs single-threaded, with a warning. Default: 1.
 
 - `--bam`
 
