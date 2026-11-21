@@ -5,23 +5,35 @@ description: The lines of the alignment report, the deduplication report and the
 tags: [report, mapping-efficiency, deduplication, qc]
 page_id: run-reports
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/report.rs
-    commit: a0059f4
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/dedup.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/umi_group.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/mod.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/pipeline.rs
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/logging.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Run reports
@@ -70,8 +82,10 @@ A 5-Base report adds 2 lines before that one (`run_pe_five_base` in `aligner/mod
 |---|---|
 | `Total number of alignments analysed in <file>` | Records (or pairs) read; ` (UMI mode)` is added with `--barcode`/`--bclconvert` |
 | `Total number duplicated alignments removed` | Count and % removed |
-| `Duplicated alignments were found at` | Distinct positions with at least one duplicate |
+| `Duplicated alignments were found at` | Printed as `<n> different position(s)` in every mode. Without a UMI mode: distinct positions with at least one duplicate (`DedupState`). In a UMI mode with `--umi_mismatches 0`: distinct position+UMI keys with at least one duplicate (`UmiDedupState` in `dedup/dedup.rs`). With `--umi_mismatches` above 0: UMI groups with more than one record or pair (`UmiGrouping` in `dedup/umi_group.rs`, passed to the report by `grouped_umi` in `dedup/pipeline.rs`) |
 | `Total count of deduplicated leftover sequences` | Count and % kept |
+
+With `--umi_mismatches` above 0 the report has the same lines; the grouping counts go only to stderr (`grouping_summary` in `dedup/mod.rs`).
 
 ## Splitting report
 
@@ -88,7 +102,7 @@ With `--allow_discordant`, the report ends with a `Discordant read handling (--a
 
 ## Links
 
-- [troubleshooting.md](../troubleshooting.md): what a low mapping efficiency or odd strand counts point to.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): what a low mapping efficiency or odd strand counts point to.
 - [reference/bam-output.md](bam-output.md): the strand names.
 - [usage/align-reads.md](../usage/align-reads.md): where the report is written.
 

@@ -5,32 +5,41 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a0059f4
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/cli.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/mod.rs
+    commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/dedup/pipeline.rs
+    commit: 855b812
 ---
 
 # Bismark overview
@@ -65,13 +74,15 @@ The developer gave this order. Most workflows run these steps:
 - minimap2 and rammap align single-end reads only, except minimap2 in 5-Base runs; paired-end input, including a positional paired uBAM, unaligned CRAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
 - Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
 - `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam` or `--rammap` (`resolve` and `resolve_aligner` in `aligner/config.rs`). With Bowtie 2 it caps inserts at 800 bp unless `-X` is given, and rejects an `-I` above the cap (`build_five_base_aligner_options` in `aligner/options.rs`). `--bwamem3` works only with `--illumina_5base`, and needs bwa-mem3 0.16.0 or newer and a bwa-mem3 index: `<genome>/Bwamem3_Index/` from `bismark prepare --bwamem3`, or `--five_base_index` (`resolve_aligner` and `resolve_five_base_index` in `aligner/config.rs`, `detect_aligner` in `aligner/aligner.rs`).
-- 5-Base runs with minimap2, Bowtie 2 or HISAT2 align the raw reads to the unconverted genome with the engine's normal scoring, so each methylated CpG is a mismatch (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` and `default_linear_score` in `aligner/options.rs`). The developer measured that CpG-dense, heavily methylated regions are under-covered and under-called with minimap2 and Bowtie 2. `--bwamem3` runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`), and the developer measured that it covers them; see [troubleshooting.md](troubleshooting.md).
+- 5-Base runs with minimap2, Bowtie 2 or HISAT2 align the raw reads to the unconverted genome with the engine's normal scoring, so each methylated CpG is a mismatch (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` and `default_linear_score` in `aligner/options.rs`). The developer measured that CpG-dense, heavily methylated regions are under-covered and under-called with minimap2 and Bowtie 2. `--bwamem3` runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`), and the developer measured that it covers them; see [troubleshooting/data-quality.md](troubleshooting/data-quality.md).
 - 5-Base runs keep only pairs on one contig, on opposite strands, pointing at each other (`five_base_pair_geometry` in `aligner/mod.rs`).
 - `--taps` runs TAPS libraries on the 5-Base path with bwa-mem3 only, under the same paired-end, directional, FastQ limits, and rejects the 5-Base duplex, consensus, deconvolution, UMI, `--five_base_min_mapq` and `--five_base_emit_multiplicity` options (`expand_taps` in `aligner/config.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
 - `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
 - `--nucleotide_coverage` runs bam2nuc on each final BAM once alignment has finished (`run_nucleotide_coverage` in `aligner/mod.rs`); `--old_flag` stops the run (`reject_old_flag` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
+- `bismark dedup --umi_mismatches` above 0 needs `--barcode`/`--umi` or `--bclconvert` (`Cli::validate` in `dedup/cli.rs`).
+- `bismark dedup --umi_mismatches` above 0 reads each input twice (`grouped_umi` in `dedup/pipeline.rs`), so inputs must be regular files, not pipes (`run` in `dedup/mod.rs`).
 - `extract --cytosine_report` needs `--genome_folder` (`Cli::validate` in `extractor/cli.rs`).
 - The extractor reads only BAMs with Bismark `XM`/`XR`/`XG` tags. For a BAM from another aligner, `extract --allow_discordant` handles cross-chromosome and discordant pairs, orphan reads, and secondary or supplementary records (`classify_pair` in `extractor/pair_class.rs`).
 
@@ -104,7 +115,8 @@ Each tool runs as `bismark <subcommand>` or under its classic name (`run_legacy_
 ## Links
 
 - [usage/install.md](usage/install.md): how to get the binary and the aligners it needs.
-- [troubleshooting.md](troubleshooting.md): the questions users ask most often.
+- [troubleshooting/data-quality.md](troubleshooting/data-quality.md): the questions users ask most often.
+- [troubleshooting/errors.md](troubleshooting/errors.md): the errors that stop a run.
 - [reference/bam-output.md](reference/bam-output.md): the BAM format every downstream step reads.
 
 ## Open questions

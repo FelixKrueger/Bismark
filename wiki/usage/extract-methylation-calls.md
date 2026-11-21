@@ -5,38 +5,44 @@ description: Turn a Bismark BAM into per-cytosine call files and an M-bias table
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/overlap.rs
-    commit: a0059f4
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
-    commit: a0059f4
+    commit: 667e20b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/io/read.rs
+    commit: 667e20b
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/downstream_filenames.rs
+    commit: 667e20b
 ---
 
 # Extract methylation calls
@@ -54,7 +60,7 @@ sources:
    bismark extract --gzip sample_R1_bismark_bt2_pe.deduplicated.bam
    ```
 
-   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end (`detect_paired` in `io/read.rs`); with no Bismark `@PG` line the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each with its own outputs.
+   Single-end or paired-end comes from the `@PG ID:Bismark` header line; if that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end (`detect_paired` in `io/read.rs`); with no Bismark `@PG` line the run stops and asks for `-s` or `-p` (`process_one_file` in `extractor/mod.rs`). Several input files are processed one after the other, each writing outputs named from its own `<name>`.
 3. Open `<name>.M-bias.txt` and look for read positions where the methylation level departs from the flat middle of the read.
 4. If the ends are biased, run again with the trimming that removes them, for example `--ignore 2 --ignore_r2 2`.
 5. For bedGraph, coverage and cytosine reports in the same run, add `--bedGraph` or `--cytosine_report --genome_folder <dir>`: [usage/make-coverage-and-cytosine-reports.md](make-coverage-and-cytosine-reports.md).
@@ -95,7 +101,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 | both | 2: `{CpG,Non_CpG}_context_<name>.txt` |
 | `--mbias_only` | none, only M-bias and the splitting report |
 
-`<name>` is the input file name without `.bam`, `.sam` or `.cram`. `--gzip` adds `.gz`. Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
+`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Two inputs that would write a file of the same name stop the run before anything is written (`reject_output_name_collision` in `extractor/cli.rs`). The check compares 3 names, each only when the run writes that file: `<name>_splitting_report.txt`, which shares `<name>` with the call files (also with `--mbias_only`), the M-bias file (unless `--mbias_off`), and the bedGraph file (with `--bedGraph` or `--cytosine_report`), from which the coverage and cytosine-report names follow. So `a/s.bam` with `b/s.cram`, or one file given twice, stops the run on `s_splitting_report.txt`; `s.bam` with `s.txt` stops it on `s.M-bias.txt`, and with `--mbias_off --bedGraph` on `s.bedGraph.gz`. The error names both inputs and the shared file; rename one input, or run each with its own `-o` folder. Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
 
 ## Other options
 
@@ -113,7 +119,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 
 - [reference/methylation-call-files.md](../reference/methylation-call-files.md): call file, M-bias and splitting-report columns.
 - [reference/bam-output.md](../reference/bam-output.md): the `XM` string the calls come from.
-- [troubleshooting.md](../troubleshooting.md): reading an M-bias plot.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): reading an M-bias plot.
 
 ## Open questions
 

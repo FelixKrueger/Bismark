@@ -5,26 +5,26 @@ description: Build the bedGraph, the .bismark.cov.gz coverage file and the genom
 tags: [bedgraph, coverage, cytosine-report, coverage2cytosine]
 page_id: make-coverage-and-cytosine-reports
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/downstream_filenames.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/bedgraph/filename.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/coverage2cytosine/report.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Make coverage and cytosine reports
@@ -51,6 +51,8 @@ Outputs, for an input `sample.deduplicated.bam` (`derive_bedgraph_filename`, `de
 | `sample.deduplicated.bismark.cov.gz` | Coverage file with methylated and unmethylated counts |
 | `sample.deduplicated.CpG_report.txt` | Every CpG in the genome (`CX_report.txt` with `--CX`; `.gz` added with `--gzip`) |
 | `sample.deduplicated.cytosine_context_summary.txt` | Methylation per trinucleotide context |
+
+CRAM input is named the same way, with `.cram` stripped: `sample.cram` gives `sample.bedGraph.gz`, `sample.bismark.cov.gz`, `sample.CpG_report.txt` and `sample.cytosine_context_summary.txt` (`derive_bedgraph_filename`, `summary_name` in `coverage2cytosine/report.rs`).
 
 Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
 
@@ -96,7 +98,7 @@ bismark cov2cyt --genome_folder /data/genomes/GRCh38/ -o sample sample.bismark.c
 
 - [usage/extract-methylation-calls.md](extract-methylation-calls.md): the step before.
 - [reference/methylation-call-files.md](../reference/methylation-call-files.md): file columns.
-- [troubleshooting.md](../troubleshooting.md): low coverage.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): low coverage.
 
 ## Open questions
 

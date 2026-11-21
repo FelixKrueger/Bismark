@@ -4,8 +4,7 @@
 # at the PINNED versions the suite is byte-identity-validated against (a stock
 # `apt-get install bowtie2` would ship a non-matching build — see
 # rust/THIRD-PARTY-NOTICES.md). Pinned tool versions come from bioconda via
-# micromamba (using bioconda to INSTALL deps here is unrelated to the separate,
-# deferred decision not to PUBLISH Bismark to bioconda until GA).
+# micromamba.
 
 # ── Build stage ──────────────────────────────────────────────
 FROM rust:1.89-bookworm AS builder

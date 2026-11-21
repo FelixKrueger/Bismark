@@ -11,7 +11,7 @@
 - `usage/align-reads.md`: Run the aligner on single-end or paired-end reads, choose the library type, the aligner and the threads, and see how the converted reads reach the aligner.
 - `usage/align-5-base-reads.md`: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem3, which pairs Bismark keeps, which bases it does not call, and the optional 5-Base outputs.
 - `usage/align-taps-reads.md`: Run TAPS data with --taps, what it turns on, the options it accepts and rejects, and how the run names itself.
-- `usage/deduplicate-alignments.md`: Remove PCR duplicates from a Bismark BAM, when to skip this step, and the UMI modes.
+- `usage/deduplicate-alignments.md`: Remove PCR duplicates from a Bismark BAM, when to skip this step, the UMI modes, and UMI grouping with mismatches.
 - `usage/extract-methylation-calls.md`: Turn a Bismark BAM into per-cytosine call files and an M-bias table, use M-bias to set the --ignore trimming, and read BAMs from other aligners with --allow_discordant.
 - `usage/make-coverage-and-cytosine-reports.md`: Build the bedGraph, the .bismark.cov.gz coverage file and the genome-wide cytosine report, from the extractor or with the standalone tools.
 
@@ -24,4 +24,5 @@
 
 ## Troubleshooting
 
-- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, M-bias, the errors that stop a run (including bwa-mem3 errors), and the warnings that do not.
+- `troubleshooting/data-quality.md`: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, and M-bias trimming.
+- `troubleshooting/errors.md`: The messages that stop a run (including bwa-mem3 and streamed-run errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.

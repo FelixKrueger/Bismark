@@ -443,8 +443,7 @@ fn happy_path_resolves_and_prints_config() {
     );
 }
 
-/// An instance that exits cleanly without reading its pipe does not starve its sibling.
-/// The input exceeds the per-instance slack; the stub's output fits in one pipe buffer.
+/// An instance that exits cleanly without reading its pipe does not hold up its sibling.
 #[cfg(unix)]
 #[test]
 fn streamed_run_survives_an_instance_that_never_reads_its_input() {
@@ -479,10 +478,6 @@ esac
     for i in 0..N {
         fq.push_str(&format!("@r{i}\n{seq}\n+\n{qual}\n"));
     }
-    assert!(
-        fq.len() > 3 << 19,
-        "input must exceed the per-instance slack"
-    );
     fs::write(&read, fq).unwrap();
 
     let temp = TempDir::new().unwrap();
@@ -1040,21 +1035,24 @@ fn binary_inputs_sharing_an_output_name_are_rejected() {
     let bins = TempDir::new().unwrap();
     make_fake_bowtie2(bins.path());
     let dir = TempDir::new().unwrap();
-    let (a, b) = (dir.path().join("a"), dir.path().join("b"));
-    fs::create_dir_all(&a).unwrap();
-    fs::create_dir_all(&b).unwrap();
-    // Detection reads the magic bytes, so a BAM named `.cram` is handled as a uBAM.
-    for (fixture, dst) in [
-        ("tg_se_trimgalore.bam", a.join("s.bam")),
-        ("tg_se_trimgalore.bam", b.join("s.cram")),
-        ("tg_pe_trimgalore.bam", a.join("p.bam")),
-        ("tg_pe_trimgalore.bam", b.join("p.cram")),
-    ] {
-        fs::copy(ubam_fixture(fixture), dst).unwrap();
+    let (a, b, c) = (
+        dir.path().join("a"),
+        dir.path().join("b"),
+        dir.path().join("c"),
+    );
+    for d in [&a, &b, &c] {
+        fs::create_dir_all(d).unwrap();
     }
+    fs::copy(ubam_fixture("tg_se_trimgalore.bam"), a.join("s.bam")).unwrap();
+    fs::copy(ubam_fixture("tg_pe_trimgalore.bam"), a.join("p.bam")).unwrap();
+    write_unaligned_cram(&ubam_fixture("tg_se_trimgalore.bam"), &b.join("s.cram"));
+    write_unaligned_cram(&ubam_fixture("tg_pe_trimgalore.bam"), &b.join("p.cram"));
+    // Detection reads the magic bytes, so a BAM named `.cram` is handled as a uBAM.
+    fs::copy(ubam_fixture("tg_se_trimgalore.bam"), c.join("s.cram")).unwrap();
     fs::write(b.join("s.fq"), b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
 
     assert_rejected_as_collision(bins.path(), &[a.join("s.bam"), b.join("s.cram")]);
+    assert_rejected_as_collision(bins.path(), &[a.join("s.bam"), c.join("s.cram")]);
     assert_rejected_as_collision(bins.path(), &[a.join("s.bam"), b.join("s.fq")]);
     assert_rejected_as_collision(bins.path(), &[a.join("p.bam"), b.join("p.cram")]);
 }
@@ -1094,7 +1092,7 @@ fn vbq_and_fastq_sharing_an_output_name_are_rejected() {
     assert_rejected_as_collision(bins.path(), &[vbq, fq]);
 }
 
-/// A uBAM and a FastQ with different stems both align, each to its own output (#1260).
+/// A uBAM, a FastQ and an unaligned CRAM with different stems all align, each to its own output.
 #[cfg(unix)]
 #[test]
 fn binary_and_fastq_with_distinct_names_both_align() {
@@ -1108,6 +1106,8 @@ fn binary_and_fastq_with_distinct_names_both_align() {
     fs::copy(ubam_fixture("tg_se_trimgalore.bam"), &bam).unwrap();
     let fq = dir.path().join("t.fq");
     fs::write(&fq, b"@r1\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    let cram = dir.path().join("u.cram");
+    write_unaligned_cram(&ubam_fixture("tg_se_trimgalore.bam"), &cram);
 
     bin()
         .arg("--genome")
@@ -1122,6 +1122,7 @@ fn binary_and_fastq_with_distinct_names_both_align() {
         .arg("--no_stream_converted")
         .arg(&bam)
         .arg(&fq)
+        .arg(&cram)
         .assert()
         .success();
     for name in [
@@ -1129,6 +1130,8 @@ fn binary_and_fastq_with_distinct_names_both_align() {
         "s_bismark_bt2_SE_report.txt",
         "t_bismark_bt2.bam",
         "t_bismark_bt2_SE_report.txt",
+        "u_bismark_bt2.bam",
+        "u_bismark_bt2_SE_report.txt",
     ] {
         assert!(outdir.path().join(name).exists(), "missing {name}");
     }
@@ -2092,6 +2095,202 @@ fn pe_unmapped_routing_to_1_and_2_files() {
     assert!(bam.is_file());
     let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
     assert_eq!(reader.records().count(), 0);
+}
+
+/// Run two `-1/-2` pairs with the PE fake Bowtie 2 that leaves every pair unmapped.
+#[cfg(unix)]
+fn run_two_pairs(
+    dir: &Path,
+    outdir: &Path,
+    r2: [&str; 2],
+    flags: &[&str],
+) -> assert_cmd::assert::Assert {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_unmapped(bins.path());
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    fs::create_dir_all(&a).unwrap();
+    fs::create_dir_all(&b).unwrap();
+    let (a1, b1) = (a.join("x_1.fq"), b.join("y_1.fq"));
+    let (a2, b2) = (a.join(r2[0]), b.join(r2[1]));
+    for p in [&a1, &b1, &a2, &b2] {
+        fs::write(p, b"@r1\nACGTAC\n+\nFFFFFF\n").unwrap();
+    }
+    let temp = TempDir::new().unwrap();
+    let join = |x: &Path, y: &Path| format!("{},{}", x.display(), y.display());
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir)
+        .arg("--no_stream_converted")
+        .args(flags)
+        .arg("-1")
+        .arg(join(&a1, &b1))
+        .arg("-2")
+        .arg(join(&a2, &b2))
+        .assert()
+}
+
+/// Two pairs whose R2 files share a name would write the same mate-2 aux file.
+#[cfg(unix)]
+#[test]
+fn paired_inputs_sharing_a_mate2_aux_name_are_rejected() {
+    for (flags, aux) in [
+        (&["--unmapped"][..], "'r_2.fq_unmapped_reads_2.fq.gz'"),
+        (&["--ambiguous"][..], "'r_2.fq_ambiguous_reads_2.fq.gz'"),
+        (
+            &["--unmapped", "--prefix", "foo.."][..],
+            "'foo.r_2.fq_unmapped_reads_2.fq.gz'",
+        ),
+    ] {
+        let (dir, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        run_two_pairs(dir.path(), outdir.path(), ["r_2.fq", "r_2.fq"], flags)
+            .failure()
+            .code(1)
+            .stderr(
+                predicate::str::contains("would both write").and(predicate::str::contains(aux)),
+            );
+        assert_eq!(fs::read_dir(outdir.path()).unwrap().count(), 0);
+    }
+}
+
+/// Without `--unmapped`/`--ambiguous` a shared R2 name writes nothing twice.
+#[cfg(unix)]
+#[test]
+fn paired_inputs_sharing_an_r2_name_align_without_aux_output() {
+    let (dir, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    run_two_pairs(dir.path(), outdir.path(), ["r_2.fq", "r_2.fq"], &[]).success();
+    for name in ["x_1_bismark_bt2_pe.bam", "y_1_bismark_bt2_pe.bam"] {
+        assert!(outdir.path().join(name).is_file(), "missing {name}");
+    }
+}
+
+/// R2 names that differ only in their FastQ suffix write separate aux files, so both pairs run.
+#[cfg(unix)]
+#[test]
+fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
+    let (dir, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    run_two_pairs(
+        dir.path(),
+        outdir.path(),
+        ["r_2.fq", "r_2.fastq"],
+        &["--unmapped", "--ambiguous"],
+    )
+    .success();
+    for kind in ["unmapped", "ambiguous"] {
+        for name in [
+            format!("x_1.fq_{kind}_reads_1.fq.gz"),
+            format!("r_2.fq_{kind}_reads_2.fq.gz"),
+            format!("y_1.fq_{kind}_reads_1.fq.gz"),
+            format!("r_2.fastq_{kind}_reads_2.fq.gz"),
+        ] {
+            assert!(outdir.path().join(&name).is_file(), "missing {name}");
+        }
+    }
+}
+
+/// A PE fake `bowtie2` that logs the first record's header and sequence of its `-1` and `-2`
+/// files (one line per call) to `log`, then reports every pair unmapped.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_header_log(dir: &Path, log: &Path) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; m2=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; [ "$prev" = "-2" ] && m2="$a"; prev="$a"; done
+printf '%s %s\n' "$(head -n 2 "$m1" | tr '\n' ' ')" "$(head -n 2 "$m2" | tr '\n' ' ')" >> '{log}'
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$m1"
+"#,
+        log = log.display()
+    );
+    write_exec(&dir.join("bowtie2"), &script);
+}
+
+/// Run a non-directional PE alignment from converted-read files and return the sorted
+/// `-1`/`-2` header and sequence lines the aligner calls saw.
+#[cfg(unix)]
+fn nondir_pe_headers_seen(r1: &Path, r2: &Path) -> Vec<String> {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let (bins, temp, outdir) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let log = bins.path().join("calls.log");
+    make_fake_bowtie2_pe_header_log(bins.path(), &log);
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--non_directional")
+        .arg("--no_stream_converted")
+        .arg("-1")
+        .arg(r1)
+        .arg("-2")
+        .arg(r2)
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "temp dir not empty"
+    );
+    let mut lines: Vec<String> = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Mates that share a file name each keep their own converted temp files (#1265).
+#[cfg(unix)]
+#[test]
+fn nondir_pe_mates_sharing_a_file_name_keep_their_own_temp_files() {
+    let dir = TempDir::new().unwrap();
+    let (a, b, sep) = (
+        dir.path().join("a"),
+        dir.path().join("b"),
+        dir.path().join("sep"),
+    );
+    for d in [&a, &b, &sep] {
+        fs::create_dir_all(d).unwrap();
+    }
+    let (m1, m2) = (b"@p1\nACGTAC\n+\nFFFFFF\n", b"@p1\nTTGGCA\n+\nFFFFFF\n");
+    fs::write(a.join("r.fq"), m1).unwrap();
+    fs::write(b.join("r.fq"), m2).unwrap();
+    fs::write(sep.join("r_1.fq"), m1).unwrap();
+    fs::write(sep.join("r_2.fq"), m2).unwrap();
+
+    let same = nondir_pe_headers_seen(&a.join("r.fq"), &b.join("r.fq"));
+    assert_eq!(same.len(), 4);
+    for line in &same {
+        // Mate 1 is ACGTAC converted C->T or G->A; mate 2 is TTGGCA.
+        let f: Vec<&str> = line.split_whitespace().collect();
+        assert_eq!((f[0], f[2]), ("@p1/1/1", "@p1/2/2"), "{line}");
+        assert!(["ATGTAT", "ACATAC"].contains(&f[1]), "{line}");
+        assert!(["TTGGTA", "TTAACA"].contains(&f[3]), "{line}");
+    }
+    assert_eq!(
+        same,
+        nondir_pe_headers_seen(&sep.join("r_1.fq"), &sep.join("r_2.fq"))
+    );
 }
 
 #[cfg(unix)]
@@ -5153,6 +5352,70 @@ fn combined_index_pe_nondir_strands_end_to_end() {
     assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
 }
 
+/// Same-named mates in every combined-index non-directional PE model align like
+/// distinct names (#1265).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_nondir_mates_sharing_a_file_name() {
+    let reads =
+        b"@r_ot\nACGTAC\n+\nFFFFFF\n@r_ctot\nACGTAC\n+\nFFFFFF\n@r_ctob\nACGTAC\n+\nFFFFFF\n";
+    let models: [&[&str]; 3] = [
+        &[],
+        &["--combined_index_parallel"],
+        &["--combined_index_single_pass"],
+    ];
+    for flags in models {
+        let genome = TempDir::new().unwrap();
+        make_genome_combined(genome.path());
+        let bins = TempDir::new().unwrap();
+        if flags.contains(&"--combined_index_single_pass") {
+            make_fake_bowtie2_pe_combined_nondir_tagged(bins.path());
+        } else {
+            make_fake_bowtie2_pe_combined_nondir(bins.path());
+        }
+        let (a, b) = (genome.path().join("a"), genome.path().join("b"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("r.fq"), reads).unwrap();
+        fs::write(b.join("r.fq"), reads).unwrap();
+        let (temp, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+
+        bin()
+            .arg("--combined_index")
+            .arg("--non_directional")
+            .args(flags)
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(a.join("r.fq"))
+            .arg("-2")
+            .arg(b.join("r.fq"))
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("unique best alignments:   3"));
+        assert_eq!(
+            fs::read_dir(temp.path()).unwrap().count(),
+            0,
+            "temp dir not empty for {flags:?}"
+        );
+
+        let bam = outdir.path().join("r_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let flags_r1: Vec<u16> = reader
+            .records()
+            .map(|r| u16::from(r.unwrap().inner().flags()))
+            .step_by(2)
+            .collect();
+        assert_eq!(flags_r1, [99, 147, 163], "R1 FLAGs for {flags:?}");
+    }
+}
+
 // ===========================================================================
 // `--combined_index --pbat` (v2.x Phase 4) paired-end end-to-end. PBAT is the G→A-pass
 // half of non-dir, STANDALONE: ONE both-strands pass with `-1 G→A_R1 -2 C→T_R2` →
@@ -8000,6 +8263,22 @@ fn ubam_fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/aligner")
         .join(name)
+}
+
+/// Rewrite the uBAM `src` as an unaligned CRAM at `dst` (no reference needed).
+fn write_unaligned_cram(src: &Path, dst: &Path) {
+    use noodles_sam::alignment::io::Write as _;
+    let mut reader =
+        noodles_bam::io::Reader::new(std::io::BufReader::new(fs::File::open(src).unwrap()));
+    let header = reader.read_header().unwrap();
+    let mut w = noodles_cram::io::writer::Builder::default()
+        .build_from_path(dst)
+        .unwrap();
+    w.write_header(&header).unwrap();
+    for rec in reader.record_bufs(&header) {
+        w.write_alignment_record(&header, &rec.unwrap()).unwrap();
+    }
+    w.finish(&header).unwrap();
 }
 
 /// #1135: a positional paired uBAM gets the paired-end options, `-I`/`-X` included.

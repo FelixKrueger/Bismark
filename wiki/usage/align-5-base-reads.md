@@ -5,26 +5,26 @@ description: Run Illumina 5-Base data with minimap2, Bowtie 2, HISAT2 or bwa-mem
 tags: [alignment, 5-base, minimap2, bowtie2, hisat2, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-19
+updated: 2026-11-20
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a0059f4
+    commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
-    commit: a0059f4
+    commit: 855b812
 ---
 
 # Align 5-Base reads
@@ -56,7 +56,7 @@ sources:
 
 Only one engine can be selected; `--bwamem3` with another aligner flag is rejected, and `--bwamem3` needs `--illumina_5base` (`resolve_aligner` in `aligner/config.rs`). `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. A bisulfite `BS_CT`/`BS_GA` index is rejected. Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 
-The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 does not: see [troubleshooting.md](../troubleshooting.md).
+The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 does not: see [troubleshooting/data-quality.md](../troubleshooting/data-quality.md).
 
 ### Bowtie 2 and HISAT2
 
@@ -96,7 +96,8 @@ Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolut
 - [usage/align-taps-reads.md](align-taps-reads.md): `--taps`, which runs TAPS libraries on this path with bwa-mem3.
 - [reference/aligner-cli.md](../reference/aligner-cli.md): every 5-Base option and the combinations that stop the run.
 - [reference/bam-output.md](../reference/bam-output.md): the `@PG` lines and the records in the BAM.
-- [troubleshooting.md](../troubleshooting.md): low 5-Base coverage at methylated CpG islands, and bwa-mem3 errors.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): low 5-Base coverage at methylated CpG islands.
+- [troubleshooting/errors.md](../troubleshooting/errors.md): bwa-mem3 errors.
 
 ## Open questions
 

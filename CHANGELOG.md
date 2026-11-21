@@ -1,6 +1,22 @@
 # Bismark Changelog
 
 
+## Bismark 3.4.0 (released 2026-11-21)
+
+### bismark (aligner)
+
+- **Streamed runs (the default since 3.2.0) no longer hang under CPU contention when one aligner instance reads far ahead of another, or at start-up when minimap2's SAM header is larger than a pipe buffer ([#1272](https://github.com/FelixKrueger/Bismark/pull/1272)).**
+- **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
+- **Non-directional paired-end runs whose R1 and R2 files share a file name no longer overwrite R1's converted reads with R2's when those are written to `--temp_dir` (HISAT2, `--combined_index`, `--no_stream_converted`, or no named pipes in `--temp_dir`) ([#1270](https://github.com/FelixKrueger/Bismark/pull/1270)).**
+
+### deduplicate_bismark
+
+- **New `--umi_mismatches N` (with `--barcode`/`--umi` or `--bclconvert`) treats UMIs at the same position that differ by up to N bases as one molecule, using the UMI-tools directional rule; the default 0 keeps exact matching ([#1264](https://github.com/FelixKrueger/Bismark/pull/1264)).**
+
+### bismark extract (methylation extractor)
+
+- **Two inputs that would write the same output files, such as `a/s.bam` and `b/s.cram`, now stop the run before anything is written ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
+
 ## Bismark 3.3.0 (released 2026-11-19)
 
 Most fixes below come from [@BenjaminDEMAILLE](https://github.com/BenjaminDEMAILLE)'s code audit ([#1167](https://github.com/FelixKrueger/Bismark/issues/1167)).

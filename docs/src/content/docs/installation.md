@@ -21,7 +21,7 @@ mamba install -c bioconda -c conda-forge bismark
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need bwa-mem3, which no install route except the container includes; see [Dependencies](#dependencies).
+`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need bwa-mem3, which the bioconda package (from 3.3.0) and the container include; with Homebrew or `cargo`, install it separately (see [Dependencies](#dependencies)).
 
 ### Install with Homebrew (macOS / Linux)
 
@@ -63,7 +63,7 @@ A multi-arch image is published to the GitHub Container Registry, exposing the t
 
 ```bash
 docker pull ghcr.io/felixkrueger/bismark:latest        # latest release
-docker pull ghcr.io/felixkrueger/bismark:3.3.0         # pinned
+docker pull ghcr.io/felixkrueger/bismark:3.4.0         # pinned
 ```
 
 The Rust aligner also adds an opt-in, lower-memory [combined-index alignment mode](/Bismark/usage/alignment/) (one combined C→T + G→A index instead of separate per-strand instances) — see the Alignment page.
@@ -77,7 +77,7 @@ Bismark requires [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISA
 --path_to_hisat2 </../../hisat2>
 ```
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The container image includes it; with every other install route, including bioconda and Homebrew, install it from bioconda:
+`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The bioconda package (from 3.3.0) and the container image include it; with Homebrew or a `cargo` install, add it from bioconda:
 
 ```bash
 mamba install -c bioconda -c conda-forge bwa-mem3

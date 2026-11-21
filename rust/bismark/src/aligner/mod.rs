@@ -1330,6 +1330,27 @@ fn convert_pe_kind(
     }
 }
 
+/// Convert one pair's `(mate, kind)` list to temp files, in order. Mates with equal file
+/// names get the mate number in their temp names ([`convert::ConvertOptions::for_pair`]).
+fn convert_pe_pair(
+    fasta: bool,
+    read_1: &Path,
+    read_2: &Path,
+    td: &Path,
+    opts: &convert::ConvertOptions,
+    needed: &[(u8, convert::ConvKind)],
+) -> Result<Vec<convert::ConvertedReads>> {
+    let opts = opts.for_pair(read_1, read_2);
+    let mut converted = Vec::with_capacity(needed.len());
+    for &(mate, kind) in needed {
+        let input = if mate == 1 { read_1 } else { read_2 };
+        converted.push(convert_pe_kind(fasta, input, td, &opts, mate, kind)?);
+    }
+    let paths: Vec<&Path> = converted.iter().map(|cr| cr.path.as_path()).collect();
+    convert::reject_shared_temp_path(read_1, read_2, &paths)?;
+    Ok(converted)
+}
+
 /// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651 /
 /// `biTransformFastAFiles` 5169–5306): directional = `[C→T]`, pbat = `[G→A]`,
 /// non-directional = `[C→T, G→A]` (in that order — the [`se_instance_plan`] file
@@ -1539,7 +1560,7 @@ fn process_se_chunk(
 /// of written to `--temp_dir`.
 ///
 /// Same plan, argv shape and merge; only the aligner's input paths change. One
-/// conversion pass per converted stream, fanned out to the instances that read it.
+/// conversion pass per aligner instance.
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
 #[allow(clippy::too_many_arguments)]
@@ -1608,10 +1629,8 @@ fn process_se_chunk_streamed(
 
 /// Spawn, merge and reap the single-end aligner instances of a streamed chunk.
 ///
-/// Every child is spawned before any is primed: a writer blocks in its open until
-/// its child opens the pipe, and the instances share one bounded conversion pass,
-/// so priming child 0 before child 1 exists would deadlock. All children are
-/// reaped (or killed, on error) before this returns.
+/// Every child is spawned, then primed one at a time. All children are reaped (or
+/// killed, on error) before this returns.
 ///
 /// Returns what each instance emitted, as `(consumer, emitted)`.
 #[allow(clippy::too_many_arguments)]
@@ -1641,14 +1660,14 @@ fn run_se_instances_streamed(
             streamed.path(consumer),
         )?);
     }
-    // Every pipe needs its reader before any child is read, or a dead child stalls
-    // the shared pass. One FIFO per instance, so consumer index == child index.
-    streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
-
     let mut streams = Vec::with_capacity(unprimed.len());
     for u in unprimed {
         streams.push(u.prime()?);
     }
+    // Reports a child that died without opening its pipe. One FIFO per instance,
+    // so consumer index == child index.
+    let emitted: Vec<bool> = streams.iter().map(|s| s.current().is_some()).collect();
+    streamed.await_readers(|c| emitted[c], |c| streams[c].try_wait())?;
 
     let pbat = matches!(config.library, LibraryType::Pbat);
     if let Err(e) = drive_merge(
@@ -1674,8 +1693,7 @@ fn run_se_instances_streamed(
         .collect())
 }
 
-/// Reap every instance at once: they share one conversion pass, so an instance
-/// left unread stalls the others.
+/// Reap every instance at once.
 fn finish_concurrently<S: Send>(
     streams: Vec<S>,
     finish: fn(S) -> Result<Emitted>,
@@ -1697,8 +1715,8 @@ fn finish_concurrently<S: Send>(
 ///
 /// This backend aligns inside the Bismark process, so a temp file or FIFO would be
 /// a pointless round trip. One reader per instance, fed by one conversion pass per
-/// source as on the FIFO path. The conversion loop is the shared one, so the bytes
-/// parsed here are the bytes the file path would write.
+/// source. The conversion loop is the shared one, so the bytes parsed here are the
+/// bytes the file path would write.
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
 #[cfg(feature = "rammap-inprocess")]
@@ -5983,10 +6001,17 @@ fn process_pe_chunk(
     // files for directional/pbat (shared by both instances) and 4 for non-dir (each
     // pair shared by two slots). Preserve first-seen order.
     let needed = pe_conv_sources(&plan);
+    let files = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        &config.output.temp_dir,
+        opts,
+        &needed,
+    )?;
     let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
-    for &(mate, kind) in &needed {
+    for (&(mate, kind), cr) in needed.iter().zip(files) {
         let input = if mate == 1 { read_1 } else { read_2 };
-        let cr = convert_pe_kind(fasta, input, &config.output.temp_dir, opts, mate, kind)?;
         eprintln!(
             "Created {} converted version of {} -> {} ({} sequences)",
             conv_label(&cr.name),
@@ -6096,14 +6121,31 @@ fn run_pe_instances_streamed(
             )?,
         ));
     }
-    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
-    // `-2` = consumer 2i+1), both mapping back to child i.
-    streamed.await_readers(|consumer| unprimed[consumer / 2].1.try_wait())?;
-
     let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
     for (slot, u) in unprimed {
         streams[slot] = Some(u.prime()?);
     }
+    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
+    // `-2` = consumer 2i+1), both mapping back to child i at slot `plan[i].0`.
+    let emitted: Vec<bool> = plan
+        .iter()
+        .map(|p| {
+            streams[p.0]
+                .as_ref()
+                .expect("every planned slot is primed")
+                .current_pair()
+                .is_some()
+        })
+        .collect();
+    streamed.await_readers(
+        |c| emitted[c / 2],
+        |c| {
+            streams[plan[c / 2].0]
+                .as_mut()
+                .expect("every planned slot is primed")
+                .try_wait()
+        },
+    )?;
 
     // See `process_pe_chunk` for why the TLEN sign comes from `config.dovetail`
     // and not from a scan of `aligner_options`.
@@ -6146,10 +6188,9 @@ fn run_pe_instances_streamed(
 /// [`process_pe_chunk`], with the converted reads streamed through FIFOs instead
 /// of written to `--temp_dir`.
 ///
-/// Two FIFOs per instance (`-1` and `-2`), one conversion pass per distinct
-/// `(mate, kind)`: four pipes and two passes for directional/pbat, eight and four
-/// for non-directional. Children are spawned before any is primed, as in
-/// [`process_se_chunk_streamed`].
+/// Two FIFOs per instance (`-1` and `-2`), each with its own conversion pass: four
+/// for directional/pbat, eight for non-directional. Children are spawned and
+/// primed as in [`process_se_chunk_streamed`].
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
 #[allow(clippy::too_many_arguments)]
@@ -6969,7 +7010,10 @@ fn process_pe_chunk_combined(
     let fasta = matches!(config.format, ReadFormat::FastA);
     let td = &config.output.temp_dir;
 
-    let cr1 = convert_pe_kind(fasta, read_1, td, opts, 1, k1)?;
+    let [cr1, cr2]: [convert::ConvertedReads; 2] =
+        convert_pe_pair(fasta, read_1, read_2, td, opts, &[(1, k1), (2, k2)])?
+            .try_into()
+            .map_err(|_| AlignerError::Validation("internal: expected 2 converted files".into()))?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr1.name),
@@ -6977,7 +7021,6 @@ fn process_pe_chunk_combined(
         cr1.path.display(),
         cr1.count
     );
-    let cr2 = convert_pe_kind(fasta, read_2, td, opts, 2, k2)?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr2.name),
@@ -7316,10 +7359,21 @@ fn process_pe_chunk_combined_nondir(
     let td = &config.output.temp_dir;
 
     // 4 converted files: pass 1 = (R1 C→T, R2 G→A); pass 2 = (R1 G→A, R2 C→T).
-    let r1_ct = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
-    let r2_ga = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
-    let r1_ga = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ga)?;
-    let r2_ct = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ct)?;
+    let [r1_ct, r2_ga, r1_ga, r2_ct]: [convert::ConvertedReads; 4] = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        td,
+        opts,
+        &[
+            (1, convert::ConvKind::Ct),
+            (2, convert::ConvKind::Ga),
+            (1, convert::ConvKind::Ga),
+            (2, convert::ConvKind::Ct),
+        ],
+    )?
+    .try_into()
+    .map_err(|_| AlignerError::Validation("internal: expected 4 converted files".into()))?;
     for (cr, src) in [
         (&r1_ct, read_1),
         (&r2_ga, read_2),
@@ -7884,10 +7938,21 @@ fn process_pe_chunk_combined_nondir_sequential(
     // 4 converted files: pass 1 = (R1 C→T, R2 G→A); pass 2 = (R1 G→A, R2 C→T) — IDENTICAL
     // to parallel model (a) (`process_pe_chunk_combined_nondir`), so the alignments — and
     // thus the BAM — are byte-identical regardless of the exec model.
-    let r1_ct = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
-    let r2_ga = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
-    let r1_ga = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ga)?;
-    let r2_ct = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ct)?;
+    let [r1_ct, r2_ga, r1_ga, r2_ct]: [convert::ConvertedReads; 4] = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        td,
+        opts,
+        &[
+            (1, convert::ConvKind::Ct),
+            (2, convert::ConvKind::Ga),
+            (1, convert::ConvKind::Ga),
+            (2, convert::ConvKind::Ct),
+        ],
+    )?
+    .try_into()
+    .map_err(|_| AlignerError::Validation("internal: expected 4 converted files".into()))?;
     for (cr, src) in [
         (&r1_ct, read_1),
         (&r2_ga, read_2),
@@ -8120,7 +8185,7 @@ fn process_pe_chunk_combined_nondir_tagged(
         read_1,
         read_2,
         &config.output.temp_dir,
-        opts,
+        &opts.for_pair(read_1, read_2),
         fasta,
     )?;
     eprintln!(
@@ -10570,6 +10635,22 @@ mod tests {
         );
     }
 
+    /// Rewrite the uBAM `src` as an unaligned CRAM at `dst` (no reference needed).
+    fn write_unaligned_cram(src: &Path, dst: &Path) {
+        use noodles_sam::alignment::io::Write as _;
+        let mut reader =
+            noodles_bam::io::Reader::new(std::io::BufReader::new(File::open(src).unwrap()));
+        let header = reader.read_header().unwrap();
+        let mut w = noodles_cram::io::writer::Builder::default()
+            .build_from_path(dst)
+            .unwrap();
+        w.write_header(&header).unwrap();
+        for rec in reader.record_bufs(&header) {
+            w.write_alignment_record(&header, &rec.unwrap()).unwrap();
+        }
+        w.finish(&header).unwrap();
+    }
+
     #[test]
     fn output_stem_matches_ubam_transcode_names() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/aligner");
@@ -10584,10 +10665,28 @@ mod tests {
                 "p.trimmed.unaligned.bam",
                 "p.trimmed.unaligned_1",
             ),
+            (
+                "tg_se_trimgalore.bam",
+                "s.trimmed.unaligned.cram",
+                "s.trimmed.unaligned",
+            ),
+            (
+                "tg_pe_trimgalore.bam",
+                "p.trimmed.unaligned.cram",
+                "p.trimmed.unaligned_1",
+            ),
         ] {
             let dir = tempfile::TempDir::new().unwrap();
             let input = dir.path().join(name);
-            std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            if name.ends_with(".cram") {
+                write_unaligned_cram(&fixtures.join(fixture), &input);
+                assert!(matches!(
+                    crate::io::AlignmentKind::from_path(&input),
+                    Ok(crate::io::AlignmentKind::Cram)
+                ));
+            } else {
+                std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            }
             assert_output_stem_matches_transcode(&UbamDecoder, &input);
             assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
         }
@@ -10595,30 +10694,36 @@ mod tests {
 
     #[cfg(feature = "binseq-input")]
     #[test]
-    fn output_stem_matches_vbq_transcode_name() {
+    fn output_stem_matches_binseq_transcode_names() {
         use crate::aligner::binseq::SequencingRecordBuilder;
         use crate::aligner::binseq::write::{BinseqWriterBuilder, Format};
 
-        let dir = tempfile::TempDir::new().unwrap();
-        let input = dir.path().join("s.trimmed.vbq");
-        let mut w = BinseqWriterBuilder::new(Format::Vbq)
-            .quality(true)
-            .headers(true)
-            .build(std::fs::File::create(&input).unwrap())
-            .unwrap();
-        let rec = SequencingRecordBuilder::default()
-            .s_header(b"r1")
-            .s_seq(b"ACGTAC")
-            .s_qual(b"FFFFFF")
-            .build()
-            .unwrap();
-        assert!(w.push(rec).unwrap());
-        w.finish().unwrap();
-        assert_output_stem_matches_transcode(&BinseqDecoder, &input);
-        assert_eq!(
-            output_stem(input.to_str().unwrap(), true).unwrap(),
-            "s.trimmed"
-        );
+        for (format, paired, name, stem) in [
+            (Format::Vbq, false, "s.trimmed.vbq", "s.trimmed"),
+            (Format::Vbq, true, "p.trimmed.vbq", "p.trimmed_1"),
+            (Format::Cbq, false, "s.trimmed.cbq", "s.trimmed"),
+            (Format::Cbq, true, "p.trimmed.cbq", "p.trimmed_1"),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let input = dir.path().join(name);
+            let mut w = BinseqWriterBuilder::new(format)
+                .paired(paired)
+                .quality(true)
+                .headers(true)
+                .build(std::fs::File::create(&input).unwrap())
+                .unwrap();
+            let mut rec = SequencingRecordBuilder::default()
+                .s_header(b"r1")
+                .s_seq(b"ACGTAC")
+                .s_qual(b"FFFFFF");
+            if paired {
+                rec = rec.x_header(b"r1").x_seq(b"TTGGCA").x_qual(b"FFFFFF");
+            }
+            assert!(w.push(rec.build().unwrap()).unwrap());
+            w.finish().unwrap();
+            assert_output_stem_matches_transcode(&BinseqDecoder, &input);
+            assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
+        }
     }
 
     #[test]
