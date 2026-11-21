@@ -114,7 +114,7 @@ The index is `<genome>/Bwamem3_Index/genome.fa.{amb,ann,pac,meth.amb,meth.ann,me
 ## Links
 
 - [usage/align-reads.md](align-reads.md): the next step.
-- [troubleshooting.md](../troubleshooting.md): what the aligner says when an index file is missing, and the bwa-mem3 index errors.
+- [troubleshooting/errors.md](../troubleshooting/errors.md): what the aligner says when an index file is missing, and the bwa-mem3 index errors.
 - [usage/align-taps-reads.md](align-taps-reads.md), [usage/align-5-base-reads.md](align-5-base-reads.md): the runs that use the bwa-mem3 index.
 
 ## Open questions

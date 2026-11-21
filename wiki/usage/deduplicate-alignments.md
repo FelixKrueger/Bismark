@@ -144,5 +144,5 @@ From `BismarkDedupError` in `dedup/error.rs`:
 ## Links
 
 - [reference/bam-output.md](../reference/bam-output.md): the strand fields the key uses.
-- [troubleshooting.md](../troubleshooting.md): coverage questions.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): coverage questions.
 - [reference/run-reports.md](../reference/run-reports.md): the deduplication report lines.
