@@ -27,6 +27,3 @@ Built from crates.io. The dependency tree is predominantly **MIT** and/or
 `Cargo.lock`; per-crate licenses are resolvable via `cargo metadata` /
 `cargo-about`. No dependency imposes terms incompatible with GPL-3.0-only
 distribution of the suite.
-
-> A machine-generated, exhaustive dependency-license manifest (via `cargo-about`)
-> will accompany the GA release; this notice covers the beta track.

@@ -1,7 +1,7 @@
 # Bismark Rust rewrite
 
-Active rewrite of Bismark from Perl to Rust. Progress is tracked at
-the [Bismark Rust rewrite project](https://github.com/users/FelixKrueger/projects/1).
+The Rust rewrite of Bismark, the supported codebase since 3.0.0. Issues and pull requests are on
+[GitHub](https://github.com/FelixKrueger/Bismark/issues).
 
 Developed on [`master`](https://github.com/FelixKrueger/Bismark) (the `rust/iron-chancellor` integration branch was retired once the suite landed on `master`).
 
@@ -177,7 +177,11 @@ The per-tool crate/version columns are the historical/frozen record: since the P
 
 Reverse-chronological log of the main Rust-rewrite shipping events. One headline per event; per-crate detail is in the crate READMEs/CHANGELOGs.
 
-- **2026-11-21** — `bismark` aligner **streamed-conversion deadlock fix** (#1268, `plans/11202026_aligner-fifo-deadlock/`) — one conversion pass per aligner instance, and every child primed before the FIFOs are checked; fixes a hang under CPU contention (seen on methylseq CI) and a minimap2 start-up stall on genomes with large headers.
+- **2026-11-21** — `bismark` aligner **streamed-conversion deadlock fix** ([#1272](https://github.com/FelixKrueger/Bismark/pull/1272), #1268; `plans/11202026_aligner-fifo-deadlock/`) — one conversion pass per aligner instance, and every child primed before the FIFOs are checked; fixes a hang under CPU contention (seen on methylseq CI) and a minimap2 start-up stall on genomes with large headers.
+- **2026-11-21** — `bismark` aligner **mates that share a file name keep their own converted temp files** ([#1270](https://github.com/FelixKrueger/Bismark/pull/1270); `plans/11212026_issue-1265-nondir-temp-names/`) — non-directional pairs whose R1 and R2 have the same file name get the mate number in their temp names, so runs that write converted reads to `--temp_dir` no longer overwrite R1's converted reads with R2's.
+- **2026-11-21** — `bismark` aligner + extractor **output-name checks for binary inputs** ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266); `plans/11202026_issue-1263-binary-input-followups/`) — `-1/-2` runs with `--unmapped`/`--ambiguous` stop when two pairs' R2 files share a name, and `bismark extract` stops when two inputs would write the same output files.
+- **2026-11-20** — `deduplicate_bismark` **`--umi_mismatches N`** ([#1264](https://github.com/FelixKrueger/Bismark/pull/1264); `plans/11202026_dedup-umi-mismatches/`) — groups UMIs up to N bases apart at one position with the UMI-tools directional rule, identical to UMI-tools 1.1.6 on the golden set; the default 0 keeps exact matching.
+- **2026-11-19** — `bismark` aligner + extractor **binary-input output names** ([#1261](https://github.com/FelixKrueger/Bismark/pull/1261); `plans/11192026_issue-1260-binary-input-names/`) — the aligner's output-name check covers uBAM, CRAM and BINSEQ inputs, and CRAM input gets the same bedGraph, coverage and cytosine-report names as BAM input.
 - **2026-11-19** — `bismark` aligner + genome prep **bwa-mem3 0.18.0 pin** (`plans/11182026_bwamem3-018/`) — CI and the container move to bwa-mem3 0.18.0; 0.16.0, 0.17.0 and 0.18.0 are validated (identical BAMs, raw SAMs and extractor output for `--taps` and `--illumina_5base --bwamem3` on avx512bw; `--taps` also on avx2 and NEON); `bismark prepare --bwamem3` passes `--meth-only` on 0.18.0+ and refuses any index file beyond the seven.
 - **2026-11-18** — `bismark_genome_preparation` **`--bwamem3`** (`plans/11182026_genome-prep-bwamem3/`) — builds the pruned bwa-mem3 methylation index in `<genome>/Bwamem3_Index/`; `--taps` and `--illumina_5base --bwamem3` use it when `--five_base_index` is absent.
 - **2026-11-17** — `bismark` aligner **bwa-mem3 0.17.0 pin** (`plans/11162026_bwamem3-017-pin/`) — CI and the container move to bwa-mem3 0.17.0; 0.16.0 and 0.17.0 are both validated (identical BAMs, reports and extractor output for `--taps` and `--illumina_5base --bwamem3` on AVX-512; `--taps` also on AVX2 and NEON).

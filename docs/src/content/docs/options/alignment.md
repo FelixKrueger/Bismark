@@ -163,7 +163,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
 - `--un`
 
-  Write all reads that could not be aligned to the file `_unmapped_reads.fq.gz` in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `unmapped_reads_1.fq.gz` and `unmapped_reads_2.fq.gz`. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to `unmapped_reads.fq.gz` unless `--ambiguous` is also specified.
+  Write all reads that could not be aligned to the file `_unmapped_reads.fq.gz` in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `unmapped_reads_1.fq.gz` and `unmapped_reads_2.fq.gz`. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to `unmapped_reads.fq.gz` unless `--ambiguous` is also specified. With several `-1`/`-2` pairs, two pairs whose read-2 files share a file name stop the run before anything is written, since both would write the same `_2` file.
 
 - `--ambiguous`
 
@@ -200,6 +200,8 @@ For non-directional paired-end libraries, the strands identity is encoded by the
   While a run streams, its named pipes sit in `--temp_dir` (one `*.fifo.*` entry per aligner input) and are removed when it finishes. A run that is killed can leave them behind; they hold no data and are safe to delete.
 
   An aligner wrapper (`--path_to_bowtie2` or `--path_to_minimap2`) that reads part of the input before the aligner does cannot be streamed: Bismark stops with an error naming `--no_stream_converted`, which runs it with files. A wrapper that leaves a background process holding the input open without reading it fails the same way, but the run can wait until that process exits.
+
+  On Bismark 3.2.0 and 3.3.0, a streamed run can stop making progress under CPU contention, or at start-up with `--minimap2` on a genome with a large SAM header; on those versions, re-run with `--no_stream_converted`.
 
 - `--sam`
 

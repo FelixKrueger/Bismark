@@ -13,7 +13,7 @@ A brief description of the Bismark methylation extractor and a full list of opti
 
 - `<filenames>`
 
-A space-separated list of Bismark result files in SAM format from which methylation information is extracted for every cytosine in the reads.
+A space-separated list of Bismark result files in BAM, SAM or CRAM format from which methylation information is extracted for every cytosine in the reads. Each file is processed on its own, with its own output files; two inputs that would write files of the same name (e.g. `a/s.bam` and `b/s.cram`) stop the run before anything is written.
 
 #### OPTIONS:
 
