@@ -29,7 +29,7 @@ The number of reads kept is the same. Call counts and methylation values move sl
 
 ### Deduplication using UMIs or barcodes
 
-In addition to chromosome, start (and end position for paired-end libraries) position and strand orientation the option `--barcode` will also take a potential barcodes or UMIs (unique molecular identifiers) into consideration while deduplicating. The barcode needs to be the last element of the read ID and has to beseparated by a `:`, e.g.:
+In addition to chromosome, start (and end position for paired-end libraries) position and strand orientation the option `--barcode` will also take a potential barcodes or UMIs (unique molecular identifiers) into consideration while deduplicating. The barcode needs to be the last element of the read ID and has to be separated by a `:`, e.g.:
 
 ```
 MISEQ:14:000000000-A55D0:1:1101:18024:2858_1:N:0:CTCCT
