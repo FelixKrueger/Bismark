@@ -9,34 +9,34 @@ updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/staging.rs
-    commit: 667e20b
+    commit: 08f57e9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/ubam.rs
-    commit: 667e20b
+    commit: 08f57e9
 ---
 
 # Align reads
@@ -108,7 +108,7 @@ Each read file is converted (C→T, G→A) before it is aligned. By default the 
 | HISAT2, `--combined_index*`, rammap through the external binary (`--rammap_subprocess`, FastA input, or a build without the in-process backend), or a `--temp_dir` where a FIFO cannot be made | Written as files; a `Note:` line says why (`run` in `aligner/mod.rs`) |
 | `--illumina_5base` | None; the raw reads are aligned |
 
-Converted-read files are temporary: each is deleted once its input file has been aligned (`run_se` and `run_pe` in `aligner/mod.rs`). `--gzip` has no effect on streamed reads. Streaming does not remove every temp file: with Bowtie 2, minimap2 or external rammap, `--multicore` above 1 writes plain input chunks `<file>.temp.<pid>.<i>` (paired-end: `<file>.temp.<pid>.<mate>.<i>`) to `--temp_dir` (`split_contiguous`, `split_contiguous_pe` in `aligner/parallel.rs`), and uBAM, unaligned CRAM or BINSEQ input is decoded to FastQ under `<temp_dir>/.bismark_ubam/<pid>.<i>/` or `.bismark_binseq/<pid>.<i>/` (`resolve_alt_inputs` in `aligner/mod.rs`).
+Converted-read files are temporary: each is deleted once its input file has been aligned (`run_se` and `run_pe` in `aligner/mod.rs`). A converted file is named after its input file, `<file name>_C_to_T.fastq` or `<file name>_G_to_A.fastq` (`converted_name` in `aligner/convert.rs`). When the two files of a pair have the same file name, ignoring ASCII case, each mate's converted files also carry its number, for example `r.fq_1_C_to_T.fastq` and `r.fq_2_C_to_T.fastq`, so the mates never write to the same file (`ConvertOptions::for_pair` in `aligner/convert.rs`). `--gzip` has no effect on streamed reads. Streaming does not remove every temp file: with Bowtie 2, minimap2 or external rammap, `--multicore` above 1 writes plain input chunks `<file>.temp.<pid>.<i>` (paired-end: `<file>.temp.<pid>.<mate>.<i>`) to `--temp_dir` (`split_contiguous`, `split_contiguous_pe` in `aligner/parallel.rs`), and uBAM, unaligned CRAM or BINSEQ input is decoded to FastQ under `<temp_dir>/.bismark_ubam/<pid>.<i>/` or `.bismark_binseq/<pid>.<i>/` (`resolve_alt_inputs` in `aligner/mod.rs`).
 
 If something reads the converted input before the aligner does (for example an aligner wrapper script), use `--no_stream_converted`.
 
