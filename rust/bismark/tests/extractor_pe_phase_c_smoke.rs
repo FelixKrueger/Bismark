@@ -402,3 +402,29 @@ fn smoke_pe_auto_detect_yacht_rejected() {
         .failure()
         .stderr(predicates::str::contains("--yacht is single-end only"));
 }
+
+/// Two inputs that would write the same output names fail before any output is made (#1263).
+#[test]
+fn inputs_sharing_an_output_name_are_rejected() {
+    let workdir = tempfile::tempdir().unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/cram_pe/tlen_pe.bam");
+    let (a, b) = (workdir.path().join("a"), workdir.path().join("b"));
+    for d in [&a, &b] {
+        fs::create_dir_all(d).unwrap();
+        fs::copy(&fixture, d.join("s.bam")).unwrap();
+    }
+    let out = workdir.path().join("out");
+    Command::cargo_bin("bismark_methylation_extractor")
+        .unwrap()
+        .arg(a.join("s.bam"))
+        .arg(b.join("s.bam"))
+        .arg("--output_dir")
+        .arg(&out)
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicates::str::contains(
+            "s.bam would both write s_splitting_report.txt",
+        ));
+    assert!(!out.exists());
+}

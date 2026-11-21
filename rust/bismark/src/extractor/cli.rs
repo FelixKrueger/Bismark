@@ -538,6 +538,13 @@ impl Cli {
         // bismark-dedup precedent at `cli.rs:228-230`.
         let _ = self.samtools_path;
 
+        reject_output_name_collision(
+            &self.files,
+            output_mode != OutputMode::MbiasOnly || self.report,
+            !self.mbias_off,
+            bedgraph,
+        )?;
+
         Ok(ResolvedConfig {
             files: self.files,
             paired_mode,
@@ -575,10 +582,56 @@ impl Cli {
     }
 }
 
+/// Fail when two inputs would write an output of the same name. `split` covers the split
+/// files and splitting report, `mbias` the M-bias file, `bedgraph` the bedGraph chain.
+fn reject_output_name_collision(
+    files: &[PathBuf],
+    split: bool,
+    mbias: bool,
+    bedgraph: bool,
+) -> Result<(), BismarkExtractorError> {
+    use crate::extractor::downstream_filenames::derive_bedgraph_filename;
+    use crate::extractor::mbias_writer::derive_mbias_basename;
+    use crate::extractor::pipeline::derive_basename;
+
+    if files.len() < 2 {
+        return Ok(());
+    }
+    // One output file name per enabled kind, for each input that has a file name.
+    let names = |path: &PathBuf| -> Option<[Option<String>; 3]> {
+        let file_name = path.file_name()?.to_string_lossy();
+        Some([
+            split.then(|| format!("{}_splitting_report.txt", derive_basename(path))),
+            mbias.then(|| format!("{}M-bias.txt", derive_mbias_basename(path))),
+            bedgraph.then(|| format!("{}.gz", derive_bedgraph_filename(&file_name))),
+        ])
+    };
+    let mut seen: Vec<(&PathBuf, [Option<String>; 3])> = Vec::new();
+    for path in files {
+        let Some(own) = names(path) else { continue };
+        for (first, earlier) in &seen {
+            if let Some(name) = own
+                .iter()
+                .zip(earlier)
+                .find_map(|(a, b)| a.as_ref().filter(|a| Some(*a) == b.as_ref()))
+            {
+                return Err(BismarkExtractorError::OutputNameCollision {
+                    first: (*first).clone(),
+                    second: path.clone(),
+                    name: name.clone(),
+                });
+            }
+        }
+        seen.push((path, own));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::path::Path;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         let mut full = vec!["bismark_methylation_extractor"];
@@ -626,6 +679,106 @@ mod tests {
             err.to_string().contains("cannot be used with"),
             "got: {err}"
         );
+    }
+
+    // ─── validate(): output-name collisions (#1263) ──────────────────
+
+    /// Create each relative path under `dir` (parents included) and return the full paths.
+    fn named_inputs(dir: &Path, names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .map(|n| {
+                let p = dir.join(n);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(&p, b"x").unwrap();
+                p.to_str().unwrap().to_string()
+            })
+            .collect()
+    }
+
+    /// Validate `flags` + inputs `names` and return the collision's file name, if any.
+    fn collision(flags: &[&str], names: &[&str]) -> Option<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = named_inputs(dir.path(), names);
+        let mut args: Vec<&str> = flags.to_vec();
+        args.extend(inputs.iter().map(String::as_str));
+        match parse(&args).unwrap().validate() {
+            Ok(_) => None,
+            Err(BismarkExtractorError::OutputNameCollision { name, .. }) => Some(name),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bam_and_cram_with_one_stem() {
+        assert_eq!(
+            collision(&[], &["a/s.bam", "b/s.cram"]).as_deref(),
+            Some("s_splitting_report.txt")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_the_same_input_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = named_inputs(dir.path(), &["s.bam"]).remove(0);
+        let err = parse(&[&input, &input]).unwrap().validate().unwrap_err();
+        assert!(
+            matches!(&err, BismarkExtractorError::OutputNameCollision { name, .. }
+                if name == "s_splitting_report.txt"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("would both write"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_a_shared_mbias_name() {
+        // Split names differ (`s` vs `s.txt`); both write `s.M-bias.txt`.
+        assert_eq!(
+            collision(&[], &["s.bam", "s.txt"]).as_deref(),
+            Some("s.M-bias.txt")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_a_shared_bedgraph_name() {
+        assert_eq!(
+            collision(&["--mbias_off", "--bedGraph"], &["s.bam", "s.txt"]).as_deref(),
+            Some("s.bedGraph.gz")
+        );
+    }
+
+    #[test]
+    fn validate_compares_only_written_outputs() {
+        assert_eq!(collision(&["--mbias_off"], &["s.bam", "s.txt"]), None);
+        assert_eq!(collision(&[], &["s.bam", "t.bam"]), None);
+    }
+
+    #[test]
+    fn validate_compares_the_splitting_report_under_mbias_only() {
+        // `--mbias_only` writes no split files but still writes the splitting report.
+        assert_eq!(
+            collision(&["--mbias_only"], &["s.bam", "s"]).as_deref(),
+            Some("s_splitting_report.txt")
+        );
+    }
+
+    #[test]
+    fn validate_skips_split_names_without_split_files_or_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = named_inputs(dir.path(), &["s.bam", "s"]);
+        let mut cli = parse(&["--mbias_only", &inputs[0], &inputs[1]]).unwrap();
+        cli.report = false;
+        assert!(cli.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_collision_check_skips_inputs_without_a_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = named_inputs(dir.path(), &["d/s.bam"]);
+        let dotdot = dir.path().join("d").join("..");
+        assert!(dotdot.file_name().is_none());
+        let cli = parse(&[&inputs[0], dotdot.to_str().unwrap()]).unwrap();
+        assert!(cli.validate().is_ok());
     }
 
     // ─── validate(): mutex rejections ────────────────────────────────

@@ -10570,6 +10570,22 @@ mod tests {
         );
     }
 
+    /// Rewrite the uBAM `src` as an unaligned CRAM at `dst` (no reference needed).
+    fn write_unaligned_cram(src: &Path, dst: &Path) {
+        use noodles_sam::alignment::io::Write as _;
+        let mut reader =
+            noodles_bam::io::Reader::new(std::io::BufReader::new(File::open(src).unwrap()));
+        let header = reader.read_header().unwrap();
+        let mut w = noodles_cram::io::writer::Builder::default()
+            .build_from_path(dst)
+            .unwrap();
+        w.write_header(&header).unwrap();
+        for rec in reader.record_bufs(&header) {
+            w.write_alignment_record(&header, &rec.unwrap()).unwrap();
+        }
+        w.finish(&header).unwrap();
+    }
+
     #[test]
     fn output_stem_matches_ubam_transcode_names() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/aligner");
@@ -10584,10 +10600,28 @@ mod tests {
                 "p.trimmed.unaligned.bam",
                 "p.trimmed.unaligned_1",
             ),
+            (
+                "tg_se_trimgalore.bam",
+                "s.trimmed.unaligned.cram",
+                "s.trimmed.unaligned",
+            ),
+            (
+                "tg_pe_trimgalore.bam",
+                "p.trimmed.unaligned.cram",
+                "p.trimmed.unaligned_1",
+            ),
         ] {
             let dir = tempfile::TempDir::new().unwrap();
             let input = dir.path().join(name);
-            std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            if name.ends_with(".cram") {
+                write_unaligned_cram(&fixtures.join(fixture), &input);
+                assert!(matches!(
+                    crate::io::AlignmentKind::from_path(&input),
+                    Ok(crate::io::AlignmentKind::Cram)
+                ));
+            } else {
+                std::fs::copy(fixtures.join(fixture), &input).unwrap();
+            }
             assert_output_stem_matches_transcode(&UbamDecoder, &input);
             assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
         }
@@ -10595,30 +10629,36 @@ mod tests {
 
     #[cfg(feature = "binseq-input")]
     #[test]
-    fn output_stem_matches_vbq_transcode_name() {
+    fn output_stem_matches_binseq_transcode_names() {
         use crate::aligner::binseq::SequencingRecordBuilder;
         use crate::aligner::binseq::write::{BinseqWriterBuilder, Format};
 
-        let dir = tempfile::TempDir::new().unwrap();
-        let input = dir.path().join("s.trimmed.vbq");
-        let mut w = BinseqWriterBuilder::new(Format::Vbq)
-            .quality(true)
-            .headers(true)
-            .build(std::fs::File::create(&input).unwrap())
-            .unwrap();
-        let rec = SequencingRecordBuilder::default()
-            .s_header(b"r1")
-            .s_seq(b"ACGTAC")
-            .s_qual(b"FFFFFF")
-            .build()
-            .unwrap();
-        assert!(w.push(rec).unwrap());
-        w.finish().unwrap();
-        assert_output_stem_matches_transcode(&BinseqDecoder, &input);
-        assert_eq!(
-            output_stem(input.to_str().unwrap(), true).unwrap(),
-            "s.trimmed"
-        );
+        for (format, paired, name, stem) in [
+            (Format::Vbq, false, "s.trimmed.vbq", "s.trimmed"),
+            (Format::Vbq, true, "p.trimmed.vbq", "p.trimmed_1"),
+            (Format::Cbq, false, "s.trimmed.cbq", "s.trimmed"),
+            (Format::Cbq, true, "p.trimmed.cbq", "p.trimmed_1"),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            let input = dir.path().join(name);
+            let mut w = BinseqWriterBuilder::new(format)
+                .paired(paired)
+                .quality(true)
+                .headers(true)
+                .build(std::fs::File::create(&input).unwrap())
+                .unwrap();
+            let mut rec = SequencingRecordBuilder::default()
+                .s_header(b"r1")
+                .s_seq(b"ACGTAC")
+                .s_qual(b"FFFFFF");
+            if paired {
+                rec = rec.x_header(b"r1").x_seq(b"TTGGCA").x_qual(b"FFFFFF");
+            }
+            assert!(w.push(rec.build().unwrap()).unwrap());
+            w.finish().unwrap();
+            assert_output_stem_matches_transcode(&BinseqDecoder, &input);
+            assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
+        }
     }
 
     #[test]
