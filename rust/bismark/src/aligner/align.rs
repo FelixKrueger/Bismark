@@ -376,10 +376,9 @@ impl AlignerStream {
     /// Spawn the child without reading anything from it (the first half of
     /// [`AlignerStream::spawn`]).
     ///
-    /// On the streaming path, the first record only arrives once the converter's
-    /// writers are past their blocking FIFO opens, and several children share one
-    /// conversion pass. So every child must be spawned before any is primed, or
-    /// the run deadlocks.
+    /// On the streaming path every child is spawned before any is primed, and each
+    /// is primed before the pipes are checked: minimap2 writes its header before it
+    /// opens its FIFO, so its stdout must be read first.
     pub fn spawn_unprimed(
         aligner: Aligner,
         bin: &Path,
@@ -458,6 +457,11 @@ impl AlignerStream {
             )))
         }
     }
+    /// Has this child already exited, and with what status? Non-blocking.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.child.try_wait()?)
+    }
+
     /// The error for this child if it has already exited unsuccessfully.
     /// Non-blocking; for reporting the instance that actually failed when the
     /// merge stops on a symptom.
@@ -859,6 +863,11 @@ impl PairedAlignerStream {
             )))
         }
     }
+    /// Has this child already exited, and with what status? Non-blocking.
+    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
+        Ok(self.child.try_wait()?)
+    }
+
     /// The error for this child if it has already exited unsuccessfully.
     /// Non-blocking; for reporting the instance that actually failed when the
     /// merge stops on a symptom.

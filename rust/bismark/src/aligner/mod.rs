@@ -1560,7 +1560,7 @@ fn process_se_chunk(
 /// of written to `--temp_dir`.
 ///
 /// Same plan, argv shape and merge; only the aligner's input paths change. One
-/// conversion pass per converted stream, fanned out to the instances that read it.
+/// conversion pass per aligner instance.
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
 #[allow(clippy::too_many_arguments)]
@@ -1629,9 +1629,8 @@ fn process_se_chunk_streamed(
 
 /// Spawn, merge and reap the single-end aligner instances of a streamed chunk.
 ///
-/// Every child is spawned before any is primed: a writer blocks in its open until
-/// its child opens the pipe, and the instances share one bounded conversion pass,
-/// so priming child 0 before child 1 exists would deadlock. All children are
+/// Every child is spawned, then primed one at a time: each has its own conversion
+/// pass, so priming one never waits on another. All children are
 /// reaped (or killed, on error) before this returns.
 ///
 /// Returns what each instance emitted, as `(consumer, emitted)`.
@@ -1662,14 +1661,13 @@ fn run_se_instances_streamed(
             streamed.path(consumer),
         )?);
     }
-    // Every pipe needs its reader before any child is read, or a dead child stalls
-    // the shared pass. One FIFO per instance, so consumer index == child index.
-    streamed.await_readers(|consumer| unprimed[consumer].try_wait())?;
-
     let mut streams = Vec::with_capacity(unprimed.len());
     for u in unprimed {
         streams.push(u.prime()?);
     }
+    // Reports a child that died without opening its pipe. One FIFO per instance,
+    // so consumer index == child index.
+    streamed.await_readers(|consumer| streams[consumer].try_wait())?;
 
     let pbat = matches!(config.library, LibraryType::Pbat);
     if let Err(e) = drive_merge(
@@ -1695,8 +1693,7 @@ fn run_se_instances_streamed(
         .collect())
 }
 
-/// Reap every instance at once: they share one conversion pass, so an instance
-/// left unread stalls the others.
+/// Reap every instance at once.
 fn finish_concurrently<S: Send>(
     streams: Vec<S>,
     finish: fn(S) -> Result<Emitted>,
@@ -1718,7 +1715,7 @@ fn finish_concurrently<S: Send>(
 ///
 /// This backend aligns inside the Bismark process, so a temp file or FIFO would be
 /// a pointless round trip. One reader per instance, fed by one conversion pass per
-/// source as on the FIFO path. The conversion loop is the shared one, so the bytes
+/// source. The conversion loop is the shared one, so the bytes
 /// parsed here are the bytes the file path would write.
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
@@ -6124,14 +6121,18 @@ fn run_pe_instances_streamed(
             )?,
         ));
     }
-    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
-    // `-2` = consumer 2i+1), both mapping back to child i.
-    streamed.await_readers(|consumer| unprimed[consumer / 2].1.try_wait())?;
-
     let mut streams: Vec<Option<PairedAlignerStream>> = vec![None, None, None, None];
     for (slot, u) in unprimed {
         streams[slot] = Some(u.prime()?);
     }
+    // As in the SE sibling, but each child owns two pipes (`-1` = consumer 2i,
+    // `-2` = consumer 2i+1), both mapping back to child i at slot `plan[i].0`.
+    streamed.await_readers(|consumer| {
+        streams[plan[consumer / 2].0]
+            .as_mut()
+            .expect("every planned slot is primed")
+            .try_wait()
+    })?;
 
     // See `process_pe_chunk` for why the TLEN sign comes from `config.dovetail`
     // and not from a scan of `aligner_options`.
@@ -6174,10 +6175,9 @@ fn run_pe_instances_streamed(
 /// [`process_pe_chunk`], with the converted reads streamed through FIFOs instead
 /// of written to `--temp_dir`.
 ///
-/// Two FIFOs per instance (`-1` and `-2`), one conversion pass per distinct
-/// `(mate, kind)`: four pipes and two passes for directional/pbat, eight and four
-/// for non-directional. Children are spawned before any is primed, as in
-/// [`process_se_chunk_streamed`].
+/// Two FIFOs per instance (`-1` and `-2`), each with its own conversion pass: four
+/// for directional/pbat, eight for non-directional. Children are spawned and
+/// primed as in [`process_se_chunk_streamed`].
 ///
 /// Returns an empty vector: there is nothing on disk for the caller to delete.
 #[allow(clippy::too_many_arguments)]

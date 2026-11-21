@@ -443,8 +443,8 @@ fn happy_path_resolves_and_prints_config() {
     );
 }
 
-/// An instance that exits cleanly without reading its pipe does not starve its sibling.
-/// The input exceeds the per-instance slack; the stub's output fits in one pipe buffer.
+/// An instance that exits cleanly without reading its pipe does not hold up its sibling.
+/// The input exceeds the per-instance slack.
 #[cfg(unix)]
 #[test]
 fn streamed_run_survives_an_instance_that_never_reads_its_input() {
