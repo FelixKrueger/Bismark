@@ -5,7 +5,7 @@
 
 ### bismark (aligner)
 
-- **Streamed runs no longer hang when one Bowtie 2 instance reads far ahead of another or when minimap2's header is larger than a pipe, because each instance now gets its own conversion pass ([#1268](https://github.com/FelixKrueger/Bismark/issues/1268)).**
+- **Streamed runs no longer hang when one aligner instance reads far ahead of another, or at start-up when minimap2's SAM header is larger than a pipe buffer ([#1268](https://github.com/FelixKrueger/Bismark/issues/1268)).**
 - **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
 - **Non-directional paired-end runs whose R1 and R2 files share a file name no longer give each mate the other's converted reads when those are written to `--temp_dir` (HISAT2, `--combined_index`, `--no_stream_converted`, or no named pipes in `--temp_dir`) ([#1270](https://github.com/FelixKrueger/Bismark/pull/1270)).**
 

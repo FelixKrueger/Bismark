@@ -1,10 +1,10 @@
 //! Streamed conversion must not deadlock however the aligner instances pace their
 //! reads and writes (#1268).
 //!
-//! The fakes force the two orders that hang a shared conversion pass or a late
-//! stdout read: one instance reads all of its input before writing anything while
-//! its sibling writes as it reads, and minimap2 writes a header larger than a pipe
-//! before it opens its input.
+//! The fakes pair an instance that reads all of its input before writing with one
+//! that writes as it reads, have minimap2 write a header larger than a pipe buffer
+//! before it opens its input, and have an instance write more than a pipe buffer
+//! without ever opening its input.
 #![cfg(unix)]
 
 use std::fs;
@@ -118,11 +118,33 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"
     write_exec(&dir.join("minimap2"), script);
 }
 
+/// SE: the CT-index instance writes one unmapped record per read as it reads; the
+/// GA-index instance writes the same records without opening its input, then exits.
+fn make_fake_bowtie2_se_never_opens(dir: &Path, n: usize) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+inp=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-U" ] && inp="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" ;;
+  *)       awk 'BEGIN {{ for (i = 0; i < {n}; i++) print "r" i "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' ;;
+esac
+"#
+    );
+    write_exec(&dir.join("bowtie2"), &script);
+}
+
 /// Run `bismark` with the converted reads streamed, assert it finishes and
 /// streamed, and return its stderr.
 ///
-/// The run gets its own process group, killed whole on timeout: a hung run's
-/// aligner children would otherwise keep the output pipes open past `bismark`.
+/// The run gets its own process group, killed whole on timeout, so a hung run's
+/// aligner children do not outlive the test.
 fn assert_streamed_run(genome: &Path, aligner_args: &[&str], reads: &[&Path]) -> String {
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
@@ -162,10 +184,10 @@ fn assert_streamed_run(genome: &Path, aligner_args: &[&str], reads: &[&Path]) ->
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    // Reap the whole group either way, so no aligner child outlives the test.
-    let _ = Command::new("kill")
-        .args(["-KILL", &format!("-{}", child.id())])
-        .status();
+    if status.is_none() {
+        // SAFETY: the group leader is unreaped, so the pgid is still this run's.
+        unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+    }
     let _ = child.wait();
     let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
     let Some(status) = status else {
@@ -278,5 +300,19 @@ fn minimap2_header_larger_than_a_pipe_does_not_stall_start_up() {
         &["--minimap2", "--path_to_minimap2", bins_dir],
         &[&read],
     );
+    assert_all_reads(&stderr, N);
+}
+
+#[test]
+fn an_instance_that_writes_without_opening_its_input_does_not_stall_start_up() {
+    const N: usize = 6_000;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_se_never_opens(bins.path(), N);
+    let read = genome.path().join("reads.fq");
+    fs::write(&read, fastq(N)).unwrap();
+    let bins_dir = bins.path().to_str().unwrap();
+    let stderr = assert_streamed_run(genome.path(), &["--path_to_bowtie2", bins_dir], &[&read]);
     assert_all_reads(&stderr, N);
 }

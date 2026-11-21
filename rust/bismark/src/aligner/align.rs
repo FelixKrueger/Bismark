@@ -329,14 +329,6 @@ fn build_pe_argv(
 pub struct UnprimedAlignerStream(AlignerStream);
 
 impl UnprimedAlignerStream {
-    /// Has this child already exited, and with what status? Non-blocking.
-    ///
-    /// Distinguishes a child that is still starting from one that died without
-    /// opening its FIFO, which would otherwise leave its writer blocked forever.
-    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        Ok(self.0.child.try_wait()?)
-    }
-
     /// Read past the `@` header to the first alignment record (the second half of
     /// [`AlignerStream::spawn`]). Blocks until the aligner produces output.
     pub fn prime(mut self) -> Result<AlignerStream> {
@@ -376,9 +368,8 @@ impl AlignerStream {
     /// Spawn the child without reading anything from it (the first half of
     /// [`AlignerStream::spawn`]).
     ///
-    /// On the streaming path every child is spawned before any is primed, and each
-    /// is primed before the pipes are checked: minimap2 writes its header before it
-    /// opens its FIFO, so its stdout must be read first.
+    /// On the streaming path every child is spawned, then primed, before the pipes
+    /// are checked.
     pub fn spawn_unprimed(
         aligner: Aligner,
         bin: &Path,
@@ -457,6 +448,7 @@ impl AlignerStream {
             )))
         }
     }
+
     /// Has this child already exited, and with what status? Non-blocking.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         Ok(self.child.try_wait()?)
@@ -728,14 +720,6 @@ pub struct PairedAlignerStream {
 pub struct UnprimedPairedAlignerStream(PairedAlignerStream);
 
 impl UnprimedPairedAlignerStream {
-    /// Has this child already exited, and with what status? Non-blocking.
-    ///
-    /// Distinguishes a child that is still starting from one that died without
-    /// opening its FIFO, which would otherwise leave its writer blocked forever.
-    pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        Ok(self.0.child.try_wait()?)
-    }
-
     /// Read past the `@` header to the first alignment *pair* (Perl 6477–6488).
     pub fn prime(mut self) -> Result<PairedAlignerStream> {
         let mut line1 = String::new();
@@ -863,6 +847,7 @@ impl PairedAlignerStream {
             )))
         }
     }
+
     /// Has this child already exited, and with what status? Non-blocking.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         Ok(self.child.try_wait()?)

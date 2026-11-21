@@ -6,8 +6,7 @@
 //! This module creates and removes the pipes and runs one conversion pass, with its
 //! own writer thread, per aligner instance, so no instance's input waits on another
 //! instance. It also provides the in-memory variant used by the in-process rammap
-//! backend. The routing decision
-//! lives in [`super::config`].
+//! backend. The routing decision lives in [`super::config`].
 //!
 //! Pipes are made with `mkfifo(1)`, which keeps the fallback to files (taken when
 //! `mkfifo` is missing or fails) a live code path.
@@ -356,10 +355,10 @@ impl Write for FanOut {
 /// drained every instance, or [`input_failure`](Self::input_failure) on an error.
 ///
 /// Opening a FIFO for write blocks until a reader opens it, so `start` leaves
-/// every writer thread parked in `open`. The caller must spawn all aligner
-/// children before priming any
-/// ([`super::align::AlignerStream::spawn_unprimed`]); each child's open releases
-/// its writer.
+/// every writer thread parked in `open` until its aligner child opens the pipe.
+/// The caller primes every child
+/// ([`super::align::AlignerStream::spawn_unprimed`]) before
+/// [`await_readers`](Self::await_readers).
 pub(crate) struct StreamedConversion {
     /// One FIFO path per consumer, in the caller's demand order.
     paths: Vec<PathBuf>,
@@ -386,7 +385,7 @@ pub(crate) struct StreamedConversion {
 }
 
 impl StreamedConversion {
-    /// Start converting `sources`, fanning each out to the consumers that want it.
+    /// Start one conversion pass per consumer.
     ///
     /// `demands[c]` is the index into `sources` that consumer `c` reads; the
     /// returned [`path`](Self::path)`(c)` is the FIFO to put in that instance's
@@ -435,8 +434,7 @@ impl StreamedConversion {
         let fifos = FifoSet::create(temp_dir, &names)?;
         let paths = fifos.paths().to_vec();
 
-        // A pass shared by two instances deadlocks when one reads far ahead of its
-        // sibling (#1268), so every instance gets its own.
+        // One pass per consumer, so no instance's input waits on another's.
         let per_consumer: Vec<ConvSource> = demands.iter().map(|&s| sources[s].clone()).collect();
         let identity: Vec<usize> = (0..demands.len()).collect();
         let (receivers, converters) =
@@ -483,20 +481,23 @@ impl StreamedConversion {
             .any(|p| p.to_string_lossy().ends_with(".gz"))
     }
 
-    /// Block until every consumer has opened its pipe, or until one of them has
-    /// died without doing so.
+    /// Block until every consumer has opened its pipe, has emitted a record, or
+    /// has exited.
     ///
     /// Called once every child is primed, so it reports a child that died without
     /// opening its pipe rather than leaving that pipe's writer parked.
     ///
-    /// `child_status` reports whether the child behind a consumer has exited
-    /// (`UnprimedAlignerStream::try_wait`). It is polled rather than given a
-    /// deadline, since loading a large index can take minutes.
+    /// `emitted` reports whether the child behind a consumer has produced a record;
+    /// such a child is past start-up and is not waited for, since nothing reads its
+    /// stdout here. `child_status` reports whether it has exited
+    /// (`AlignerStream::try_wait`), polled rather than given a deadline, since
+    /// loading a large index can take minutes.
     ///
     /// Only a non-zero exit before opening is an error. A child that exits cleanly
     /// without reading has its writer released, so teardown does not wait for it.
-    pub(crate) fn await_readers<F>(&self, mut child_status: F) -> Result<()>
+    pub(crate) fn await_readers<E, F>(&self, emitted: E, mut child_status: F) -> Result<()>
     where
+        E: Fn(usize) -> bool,
         F: FnMut(usize) -> Result<Option<std::process::ExitStatus>>,
     {
         let mut pending: Vec<usize> = (0..self.opened.len()).collect();
@@ -505,6 +506,9 @@ impl StreamedConversion {
             for &c in &pending {
                 if self.opened[c].load(Ordering::Acquire) != writer_state::PARKED {
                     continue; // reader arrived (or the open failed outright)
+                }
+                if emitted(c) {
+                    continue; // released at teardown, once the child is reaped
                 }
                 match child_status(c)? {
                     None => still_waiting.push(c), // still starting up
@@ -586,6 +590,7 @@ impl StreamedConversion {
         if let Some(e) = first_err {
             return Err(e);
         }
+        let per_source = fold_by_source(&self.demands, &self.inputs, &self.paths, &counts)?;
         let input = |c: usize| self.inputs[self.demands[c]].display();
         let unit = if paired { "pair" } else { "read" };
         for &(consumer, e) in returned {
@@ -611,36 +616,7 @@ impl StreamedConversion {
                 )));
             }
         }
-        self.fold_by_source(&counts)
-    }
-
-    /// One record count per source, from its consumers' passes, which must agree.
-    fn fold_by_source(&self, counts: &[SourceCounts]) -> Result<Vec<u64>> {
-        let mut first: Vec<Option<usize>> = vec![None; self.inputs.len()];
-        for (consumer, &source) in self.demands.iter().enumerate() {
-            match first[source] {
-                None => first[source] = Some(consumer),
-                Some(c) if counts[c] != counts[consumer] => {
-                    let (a, b) = (counts[c], counts[consumer]);
-                    return Err(AlignerError::Validation(format!(
-                        "the conversion passes over {} disagree: {} got {} records ({} sent), \
-                         {} got {} ({} sent)",
-                        self.inputs[source].display(),
-                        self.paths[c].display(),
-                        a.count,
-                        a.sent,
-                        self.paths[consumer].display(),
-                        b.count,
-                        b.sent
-                    )));
-                }
-                Some(_) => {}
-            }
-        }
-        Ok(first
-            .into_iter()
-            .map(|c| counts[c.expect("every source has a consumer, checked in start")].count)
-            .collect())
+        Ok(per_source)
     }
 
     /// The error-path teardown: the input error of a conversion pass that failed on
@@ -680,6 +656,42 @@ impl StreamedConversion {
             self.released[c].store(true, Ordering::SeqCst);
         }
     }
+}
+
+/// One record count per source, from its consumers' passes, which must agree.
+///
+/// `demands[c]` is consumer `c`'s source; `paths[c]` its pipe; `counts[c]` its pass.
+fn fold_by_source(
+    demands: &[usize],
+    inputs: &[PathBuf],
+    paths: &[PathBuf],
+    counts: &[SourceCounts],
+) -> Result<Vec<u64>> {
+    let mut first: Vec<Option<usize>> = vec![None; inputs.len()];
+    for (consumer, &source) in demands.iter().enumerate() {
+        match first[source] {
+            None => first[source] = Some(consumer),
+            Some(c) if counts[c] != counts[consumer] => {
+                let (a, b) = (counts[c], counts[consumer]);
+                return Err(AlignerError::Validation(format!(
+                    "the conversion passes over {} disagree: {} got {} records ({} sent), \
+                     {} got {} ({} sent)",
+                    inputs[source].display(),
+                    paths[c].display(),
+                    a.count,
+                    a.sent,
+                    paths[consumer].display(),
+                    b.count,
+                    b.sent
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(first
+        .into_iter()
+        .map(|c| counts[c.expect("every source has a consumer, checked in start")].count)
+        .collect())
 }
 
 /// Read and discard `path` on a detached thread until its writer is done, so the
@@ -1207,11 +1219,8 @@ mod tests {
         assert_eq!(counts, vec![20_000]);
     }
 
-    /// An instance that dies before opening its pipe is reported as an error
-    /// naming it, rather than stalling its siblings.
-    ///
-    /// No reader is attached to consumer 0: the stalled consumer 1 would starve it,
-    /// so joining it would hang the test.
+    /// An instance that dies before opening its pipe is reported as an error naming
+    /// its pipe.
     #[test]
     fn await_readers_reports_an_instance_that_died_before_opening() {
         let tmp = TempDir::new().unwrap();
@@ -1227,7 +1236,10 @@ mod tests {
         let dead = std::process::Command::new("false").status().unwrap();
         assert!(!dead.success());
         let err = streamed
-            .await_readers(|consumer| Ok(if consumer == 1 { Some(dead) } else { None }))
+            .await_readers(
+                |_| false,
+                |consumer| Ok(if consumer == 1 { Some(dead) } else { None }),
+            )
             .unwrap_err();
         let msg = err.to_string();
         assert!(
@@ -1257,7 +1269,7 @@ mod tests {
         let ok = std::process::Command::new("true").status().unwrap();
         assert!(ok.success());
         // Neither pipe is opened and both "children" exited 0: must return Ok.
-        streamed.await_readers(|_| Ok(Some(ok))).unwrap();
+        streamed.await_readers(|_| false, |_| Ok(Some(ok))).unwrap();
         streamed.finish().unwrap();
     }
 
@@ -1280,12 +1292,37 @@ mod tests {
             })
             .collect();
 
-        streamed.await_readers(|_| Ok(None)).unwrap();
+        streamed.await_readers(|_| false, |_| Ok(None)).unwrap();
 
         for h in readers {
             assert!(!h.join().unwrap().is_empty());
         }
         streamed.finish().unwrap();
+    }
+
+    /// A live child that has emitted a record without opening its pipe is not
+    /// waited for; its writer is released at teardown.
+    #[test]
+    fn await_readers_does_not_wait_for_an_instance_that_has_emitted() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+        let p0 = streamed.path(0).to_path_buf();
+        let reader = std::thread::spawn(move || std::fs::read(p0).unwrap().len());
+
+        let counts = within(30, move || {
+            // Consumer 1's child never exits here and never opens its pipe.
+            streamed.await_readers(|c| c == 1, |_| Ok(None)).unwrap();
+            assert!(reader.join().unwrap() > 0);
+            streamed.finish().unwrap()
+        });
+        assert_eq!(counts, vec![20_000]);
     }
 
     /// Dropping without `finish` must not leave a parked writer behind.
@@ -1505,7 +1542,7 @@ mod tests {
             let ok = std::process::Command::new("true").status().unwrap();
             // Consumer 0 is alive and reading; consumer 1 exited 0 unread.
             streamed
-                .await_readers(|c| Ok(if c == 1 { Some(ok) } else { None }))
+                .await_readers(|_| false, |c| Ok(if c == 1 { Some(ok) } else { None }))
                 .unwrap();
             let n = reader.join().unwrap();
             (n, streamed.finish().unwrap())
@@ -1766,8 +1803,11 @@ mod tests {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
         gz.write_all(&fq).unwrap();
         let gz = gz.finish().unwrap();
+        let cut = gz.len() * 3 / 4;
+        // Past what one pass buffers: channel blocks, the block being built, one pipe.
+        assert!(cut > (CHANNEL_DEPTH + 2) * BLOCK_BYTES + (64 << 10));
         let path = dir.join("cut.fq.gz");
-        std::fs::write(&path, &gz[..gz.len() * 3 / 4]).unwrap();
+        std::fs::write(&path, &gz[..cut]).unwrap();
         path
     }
 
@@ -1857,35 +1897,33 @@ mod tests {
 
     #[test]
     fn counts_fold_to_one_per_source() {
-        let tmp = TempDir::new().unwrap();
-        let sources = vec![
-            ConvSource {
-                input: write_fixture(tmp.path()),
-                kind: ConvKind::Ct,
-                id_suffix: b"",
-            },
-            ConvSource {
-                input: write_fixture(tmp.path()),
-                kind: ConvKind::Ga,
-                id_suffix: b"",
-            },
-        ];
-        let streamed =
-            StreamedConversion::start(tmp.path(), false, &opts(), &sources, &[0, 1, 1, 0]).unwrap();
-        let folded = streamed
-            .fold_by_source(&[counts(5, 5), counts(7, 6), counts(7, 6), counts(5, 5)])
-            .unwrap();
+        let inputs = [PathBuf::from("ct_in.fq"), PathBuf::from("ga_in.fq")];
+        let paths: Vec<PathBuf> = (0..4)
+            .map(|c| PathBuf::from(format!("s{c}.fifo")))
+            .collect();
+        let demands = [0, 1, 1, 0];
+        let folded = fold_by_source(
+            &demands,
+            &inputs,
+            &paths,
+            &[counts(5, 5), counts(7, 6), counts(7, 6), counts(5, 5)],
+        )
+        .unwrap();
         assert_eq!(folded, vec![5, 7]);
-        let err = streamed
-            .fold_by_source(&[counts(5, 5), counts(7, 6), counts(7, 6), counts(4, 4)])
-            .unwrap_err()
-            .to_string();
+        let err = fold_by_source(
+            &demands,
+            &inputs,
+            &paths,
+            &[counts(5, 5), counts(7, 6), counts(7, 6), counts(4, 4)],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("disagree"), "{err}");
+        assert!(err.contains("ct_in.fq"), "must name the input: {err}");
         assert!(
-            err.contains(&streamed.path(3).display().to_string()),
-            "{err}"
+            err.contains("s0.fifo") && err.contains("s3.fifo"),
+            "must name both pipes: {err}"
         );
-        drop(streamed.input_failure());
     }
 
     /// Paired-end shape: two sources (one per mate), two consumers each, one
