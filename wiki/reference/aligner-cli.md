@@ -5,29 +5,29 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 855b812
+    commit: 667e20b
 ---
 
 # Aligner options
@@ -130,6 +130,7 @@ With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth
 | `--taps` with `--illumina_5base`, another aligner, a 5-Base-only option (duplex, consensus, deconvolution, UMI, `--five_base_min_mapq`, `--five_base_emit_multiplicity`), or the bwa-mem3 tuning options above | `expand_taps`, `reject_bwamem3_tuning` |
 | A uBAM, unaligned CRAM or BINSEQ file given with `-1`/`-2` | `resolve_alt_inputs` in `aligner/mod.rs` |
 | Two inputs whose outputs would get the same name (`output_stem` in `aligner/mod.rs`), or `--basename` with more than one input | `reject_output_name_collision` |
+| `--unmapped` or `--ambiguous` with two `-1`/`-2` pairs whose read-2 files have the same file name | `reject_output_name_collision` |
 
 `--most_valid_alignments` and `--dovetail` have no effect.
 
