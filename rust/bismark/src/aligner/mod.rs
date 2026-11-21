@@ -1346,21 +1346,9 @@ fn convert_pe_pair(
         let input = if mate == 1 { read_1 } else { read_2 };
         converted.push(convert_pe_kind(fasta, input, td, &opts, mate, kind)?);
     }
-    reject_shared_converted_path(&converted.iter().collect::<Vec<_>>())?;
+    let paths: Vec<&Path> = converted.iter().map(|cr| cr.path.as_path()).collect();
+    convert::reject_shared_temp_path(read_1, read_2, &paths)?;
     Ok(converted)
-}
-
-/// Fail when two converted read files of one pair have the same path.
-fn reject_shared_converted_path(converted: &[&convert::ConvertedReads]) -> Result<()> {
-    for (i, cr) in converted.iter().enumerate() {
-        if converted[..i].iter().any(|earlier| earlier.path == cr.path) {
-            return Err(AlignerError::Validation(format!(
-                "two converted read files of this pair would share the path {}",
-                cr.path.display()
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651 /
@@ -8187,7 +8175,6 @@ fn process_pe_chunk_combined_nondir_tagged(
         &opts.for_pair(read_1, read_2),
         fasta,
     )?;
-    reject_shared_converted_path(&[&tagged1, &tagged2])?;
     eprintln!(
         "Created conversion-tagged interleaved versions of {} / {} -> {} , {} ({} base pairs, 2x tagged pairs)",
         read_1.display(),
@@ -10724,22 +10711,6 @@ mod tests {
             assert_output_stem_matches_transcode(&BinseqDecoder, &input);
             assert_eq!(output_stem(input.to_str().unwrap(), true).unwrap(), stem);
         }
-    }
-
-    #[test]
-    fn reject_shared_converted_path_names_the_shared_path() {
-        let cr = |p: &str| convert::ConvertedReads {
-            name: p.into(),
-            path: PathBuf::from(p),
-            count: 0,
-            seqid_tab_count: 0,
-        };
-        let (a, b) = (cr("/t/r.fq_C_to_T.fastq"), cr("/t/r.fq_G_to_A.fastq"));
-        assert!(reject_shared_converted_path(&[&a, &b]).is_ok());
-        let err = reject_shared_converted_path(&[&a, &b, &a])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("/t/r.fq_C_to_T.fastq"), "{err}");
     }
 
     #[test]

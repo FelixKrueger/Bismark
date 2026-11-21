@@ -2200,8 +2200,8 @@ fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
     }
 }
 
-/// A PE fake `bowtie2` that logs the first header of its `-1` and `-2` files (one line per
-/// call) to `log`, then reports every pair unmapped.
+/// A PE fake `bowtie2` that logs the first record's header and sequence of its `-1` and `-2`
+/// files (one line per call) to `log`, then reports every pair unmapped.
 #[cfg(unix)]
 fn make_fake_bowtie2_pe_header_log(dir: &Path, log: &Path) {
     let script = format!(
@@ -2209,7 +2209,7 @@ fn make_fake_bowtie2_pe_header_log(dir: &Path, log: &Path) {
 case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
 m1=""; m2=""; prev=""
 for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; [ "$prev" = "-2" ] && m2="$a"; prev="$a"; done
-printf '%s %s\n' "$(head -n 1 "$m1")" "$(head -n 1 "$m2")" >> '{log}'
+printf '%s %s\n' "$(head -n 2 "$m1" | tr '\n' ' ')" "$(head -n 2 "$m2" | tr '\n' ' ')" >> '{log}'
 printf '@HD\tVN:1.0\n'
 awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
     print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
@@ -2221,7 +2221,7 @@ awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
 }
 
 /// Run a non-directional PE alignment from converted-read files and return the sorted
-/// `-1`/`-2` header lines the aligner calls saw.
+/// `-1`/`-2` header and sequence lines the aligner calls saw.
 #[cfg(unix)]
 fn nondir_pe_headers_seen(r1: &Path, r2: &Path) -> Vec<String> {
     let genome = TempDir::new().unwrap();
@@ -2284,7 +2284,14 @@ fn nondir_pe_mates_sharing_a_file_name_keep_their_own_temp_files() {
     fs::write(sep.join("r_2.fq"), m2).unwrap();
 
     let same = nondir_pe_headers_seen(&a.join("r.fq"), &b.join("r.fq"));
-    assert_eq!(same, vec!["@p1/1/1 @p1/2/2"; 4]);
+    assert_eq!(same.len(), 4);
+    for line in &same {
+        // Mate 1 is ACGTAC converted C->T or G->A; mate 2 is TTGGCA.
+        let f: Vec<&str> = line.split_whitespace().collect();
+        assert_eq!((f[0], f[2]), ("@p1/1/1", "@p1/2/2"), "{line}");
+        assert!(["ATGTAT", "ACATAC"].contains(&f[1]), "{line}");
+        assert!(["TTGGTA", "TTAACA"].contains(&f[3]), "{line}");
+    }
     assert_eq!(
         same,
         nondir_pe_headers_seen(&sep.join("r_1.fq"), &sep.join("r_2.fq"))

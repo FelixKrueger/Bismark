@@ -208,6 +208,25 @@ pub(crate) fn file_base_for(kind: ConvKind) -> &'static str {
     }
 }
 
+/// Fail when two converted read files of the pair `read_1` / `read_2` have the same path,
+/// ignoring ASCII case.
+pub(crate) fn reject_shared_temp_path(read_1: &Path, read_2: &Path, paths: &[&Path]) -> Result<()> {
+    for (i, path) in paths.iter().enumerate() {
+        if paths[..i]
+            .iter()
+            .any(|earlier| earlier.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
+        {
+            return Err(AlignerError::Validation(format!(
+                "the converted reads of {} and {} share the temp file {}",
+                read_1.display(),
+                read_2.display(),
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A paired-end temp-file stem: `file_base`, after `_<read_number>` when
 /// `opts.mate_in_name` is set.
 fn pe_file_base(opts: &ConvertOptions, read_number: u8, file_base: &str) -> String {
@@ -473,8 +492,8 @@ pub fn bisulfite_convert_fasta_se_ga(
 /// Library-aware paired-end per-mate **FastA** conversion (Perl 5308+). Same
 /// `(library, read_number) → kind` contract as the FastQ PE converter (caller
 /// passes the explicit `kind`), `/1/1`,`/2/2` tag per mate, `_C_to_T`/`_G_to_A`
-/// stem (mate number as in [`bisulfite_convert_fastq_pe_kind`]). 🔴 **PE FastA does NOT honor `--gzip`** — Perl warns and writes
-/// uncompressed `.fa` (5311–5314); SE FastA gzips. gzip is forced off here
+/// stem (mate number as in [`bisulfite_convert_fastq_pe_kind`]). 🔴 **PE FastA does NOT
+/// honor `--gzip`** — Perl warns and writes uncompressed `.fa` (5311–5314); SE FastA gzips. gzip is forced off here
 /// (byte-invisible: the converted temp is intermediate, fed straight to Bowtie 2).
 pub(crate) fn bisulfite_convert_fasta_pe_kind(
     input: &Path,
@@ -814,6 +833,7 @@ pub fn convert_pe_tagged_interleaved(
     };
     let (name1, path1) = build_name(input1, 1)?;
     let (name2, path2) = build_name(input2, 2)?;
+    reject_shared_temp_path(input1, input2, &[&path1, &path2])?;
 
     let mut r1 = open_reader(input1)?;
     let mut r2 = open_reader(input2)?;
@@ -1798,6 +1818,41 @@ mod tests {
         assert_eq!(cr.name, "p.r.fq_1_G_to_A.fastq");
         let (cr, _) = run_pe_kind_mate_in_name(GOLDEN_FA_IN, "r.fa", &gz, 2, ConvKind::Ga, true);
         assert_eq!(cr.name, "r.fa_2_G_to_A.fa");
+    }
+
+    #[test]
+    fn reject_shared_temp_path_names_the_pair() {
+        let (r1, r2) = (Path::new("a/r.fq"), Path::new("b/r.fq"));
+        let ct = Path::new("/t/r.fq_C_to_T.fastq");
+        let ga = Path::new("/t/r.fq_G_to_A.fastq");
+        assert!(reject_shared_temp_path(r1, r2, &[ct, ga]).is_ok());
+        let err = reject_shared_temp_path(r1, r2, &[ct, ga, Path::new("/t/R.FQ_C_TO_T.FASTQ")])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("a/r.fq and b/r.fq share the temp file /t/R.FQ_C_TO_T.FASTQ"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn pe_tagged_rejects_a_shared_name_before_writing() {
+        let tmp = TempDir::new().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("r.fq"), b"@x\nACGT\n+\nIIII\n").unwrap();
+        std::fs::write(b.join("r.fq"), b"@x\nTTGG\n+\nIIII\n").unwrap();
+        let td = tmp.path().join("t");
+        let o = opts(false, None, None, false);
+        let err = convert_pe_tagged_interleaved(&a.join("r.fq"), &b.join("r.fq"), &td, &o, false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("share the temp file"), "{err}");
+        assert!(
+            !td.join("r.fq_CT_GA_tagged.fastq").exists(),
+            "nothing written"
+        );
     }
 
     #[test]
