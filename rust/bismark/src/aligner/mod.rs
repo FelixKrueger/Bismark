@@ -6132,7 +6132,9 @@ fn run_pe_instances_streamed(
         .map(|p| {
             streams[p.0]
                 .as_ref()
-                .is_some_and(|s| s.current_pair().is_some())
+                .expect("every planned slot is primed")
+                .current_pair()
+                .is_some()
         })
         .collect();
     streamed.await_readers(

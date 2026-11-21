@@ -487,11 +487,11 @@ impl StreamedConversion {
     /// Called once every child is primed, so it reports a child that died without
     /// opening its pipe rather than leaving that pipe's writer parked.
     ///
-    /// `emitted` reports whether the child behind a consumer has produced a record;
-    /// such a child is past start-up and is not waited for, since nothing reads its
-    /// stdout here. `child_status` reports whether it has exited
+    /// `child_status` reports whether the child behind a consumer has exited
     /// (`AlignerStream::try_wait`), polled rather than given a deadline, since
-    /// loading a large index can take minutes.
+    /// loading a large index can take minutes. `emitted` reports whether it has
+    /// produced a record; a running child that has is past start-up and is not
+    /// waited for.
     ///
     /// Only a non-zero exit before opening is an error. A child that exits cleanly
     /// without reading has its writer released, so teardown does not wait for it.
@@ -507,10 +507,8 @@ impl StreamedConversion {
                 if self.opened[c].load(Ordering::Acquire) != writer_state::PARKED {
                     continue; // reader arrived (or the open failed outright)
                 }
-                if emitted(c) {
-                    continue; // released at teardown, once the child is reaped
-                }
                 match child_status(c)? {
+                    None if emitted(c) => {}       // released at teardown, once reaped
                     None => still_waiting.push(c), // still starting up
                     Some(status) => {
                         // It may have opened the pipe and exited between the two
@@ -1300,6 +1298,34 @@ mod tests {
         streamed.finish().unwrap();
     }
 
+    /// A child that emitted a record and exited cleanly without opening its pipe
+    /// has its writer released at once.
+    #[test]
+    fn await_readers_releases_an_emitted_instance_that_exited_cleanly() {
+        let tmp = TempDir::new().unwrap();
+        let input = write_fixture(tmp.path());
+        let o = opts();
+        let sources = vec![ConvSource {
+            input,
+            kind: ConvKind::Ct,
+            id_suffix: b"",
+        }];
+        let streamed = StreamedConversion::start(tmp.path(), false, &o, &sources, &[0, 0]).unwrap();
+        let p0 = streamed.path(0).to_path_buf();
+        let reader = std::thread::spawn(move || std::fs::read(p0).unwrap().len());
+
+        let counts = within(30, move || {
+            let ok = std::process::Command::new("true").status().unwrap();
+            streamed
+                .await_readers(|_| true, |c| Ok(if c == 1 { Some(ok) } else { None }))
+                .unwrap();
+            assert!(streamed.released[1].load(Ordering::SeqCst));
+            assert!(reader.join().unwrap() > 0);
+            streamed.finish().unwrap()
+        });
+        assert_eq!(counts, vec![20_000]);
+    }
+
     /// A live child that has emitted a record without opening its pipe is not
     /// waited for; its writer is released at teardown.
     #[test]
@@ -1804,7 +1830,8 @@ mod tests {
         gz.write_all(&fq).unwrap();
         let gz = gz.finish().unwrap();
         let cut = gz.len() * 3 / 4;
-        // Past what one pass buffers: channel blocks, the block being built, one pipe.
+        // Past what one pass buffers: channel blocks, the block being built, the
+        // writer's block, one pipe.
         assert!(cut > (CHANNEL_DEPTH + 2) * BLOCK_BYTES + (64 << 10));
         let path = dir.join("cut.fq.gz");
         std::fs::write(&path, &gz[..cut]).unwrap();

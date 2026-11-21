@@ -140,6 +140,31 @@ esac
     write_exec(&dir.join("bowtie2"), &script);
 }
 
+/// PE: as the SE fake, one unmapped pair per read pair; the GA-index instance opens
+/// neither of its inputs.
+fn make_fake_bowtie2_pe_never_opens(dir: &Path, n: usize) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; m2=""; prev=""; idx=""
+for a in "$@"; do
+  [ "$prev" = "-1" ] && m1="$a"
+  [ "$prev" = "-2" ] && m2="$a"
+  [ "$prev" = "-x" ] && idx="$a"
+  prev="$a"
+done
+printf '@HD\tVN:1.0\n'
+case "$idx" in
+  *BS_CT*) cat "$m2" > /dev/null &
+           awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+             print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$m1"; wait ;;
+  *)       awk 'BEGIN {{ for (i = 0; i < {n}; i++) {{ print "r" i "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI"; print "r" i "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }} }}' ;;
+esac
+"#
+    );
+    write_exec(&dir.join("bowtie2"), &script);
+}
+
 /// Run `bismark` with the converted reads streamed, assert it finishes and
 /// streamed, and return its stderr.
 ///
@@ -314,5 +339,22 @@ fn an_instance_that_writes_without_opening_its_input_does_not_stall_start_up() {
     fs::write(&read, fastq(N)).unwrap();
     let bins_dir = bins.path().to_str().unwrap();
     let stderr = assert_streamed_run(genome.path(), &["--path_to_bowtie2", bins_dir], &[&read]);
+    assert_all_reads(&stderr, N);
+}
+
+#[test]
+fn a_pe_instance_that_writes_without_opening_its_inputs_does_not_stall_start_up() {
+    const N: usize = 3_000;
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2_pe_never_opens(bins.path(), N);
+    let fq = fastq(N);
+    let r1 = genome.path().join("reads_1.fq");
+    let r2 = genome.path().join("reads_2.fq");
+    fs::write(&r1, &fq).unwrap();
+    fs::write(&r2, &fq).unwrap();
+    let bins_dir = bins.path().to_str().unwrap();
+    let stderr = assert_streamed_run(genome.path(), &["--path_to_bowtie2", bins_dir], &[&r1, &r2]);
     assert_all_reads(&stderr, N);
 }
