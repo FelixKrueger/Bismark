@@ -37,6 +37,8 @@ pub struct ConvertOptions {
     pub icpc: bool,
     /// minimap2-only max read length; inert for Bowtie 2.
     pub maximum_length_cutoff: Option<u32>,
+    /// Paired-end temp-file names carry the mate number (the pair's file names are equal).
+    pub mate_in_name: bool,
 }
 
 impl ConvertOptions {
@@ -50,6 +52,20 @@ impl ConvertOptions {
             upto: cfg.read_processing.upto,
             icpc: cfg.read_processing.icpc,
             maximum_length_cutoff: cfg.read_processing.maximum_length_cutoff,
+            mate_in_name: false,
+        }
+    }
+
+    /// These options for one pair: `mate_in_name` is set when the mates' file names are
+    /// equal, ignoring ASCII case.
+    pub(crate) fn for_pair(&self, read_1: &Path, read_2: &Path) -> ConvertOptions {
+        let mate_in_name = match (read_1.file_name(), read_2.file_name()) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        };
+        ConvertOptions {
+            mate_in_name,
+            ..self.clone()
         }
     }
 }
@@ -57,7 +73,8 @@ impl ConvertOptions {
 /// The created C→T temp file.
 #[derive(Debug, Clone)]
 pub struct ConvertedReads {
-    /// Relative file name (`<prefix.>?<basename>_C_to_T.fastq[.gz]`).
+    /// Relative file name (`<prefix.>?<basename>(_<mate>)?_C_to_T.fastq[.gz]`; the mate only
+    /// for a paired-end pair with equal file names).
     pub name: String,
     /// Full path the file was written to (temp_dir + name).
     pub path: PathBuf,
@@ -191,6 +208,16 @@ pub(crate) fn file_base_for(kind: ConvKind) -> &'static str {
     }
 }
 
+/// A paired-end temp-file stem: `file_base`, after `_<read_number>` when
+/// `opts.mate_in_name` is set.
+fn pe_file_base(opts: &ConvertOptions, read_number: u8, file_base: &str) -> String {
+    if opts.mate_in_name {
+        format!("_{read_number}{file_base}")
+    } else {
+        file_base.to_string()
+    }
+}
+
 /// The `/1/1` (R1) or `/2/2` (R2) read-number ID tag inserted before the ID's
 /// trailing `\n` (Perl 5945–5960) — Bowtie 2 strips the outer `/1`,`/2`, leaving
 /// `/1`,`/2`. Mode-independent: only the `tr` direction (`kind`) flips per library.
@@ -233,7 +260,8 @@ pub fn bisulfite_convert_fastq_pe(
 /// non-directional = BOTH per mate. The caller passes the explicit `kind` so the
 /// pbat inversion / non-dir doubling is never a silent reuse of the directional
 /// read#→kind hardcoding (rev1 plan-review B I-1). The filename stem follows the
-/// kind (`_C_to_T` / `_G_to_A`). `read_number` ∈ {1, 2}.
+/// kind (`_C_to_T` / `_G_to_A`), after `_<read_number>` when `opts.mate_in_name` is set.
+/// `read_number` ∈ {1, 2}.
 pub(crate) fn bisulfite_convert_fastq_pe_kind(
     input: &Path,
     temp_dir: &Path,
@@ -242,7 +270,8 @@ pub(crate) fn bisulfite_convert_fastq_pe_kind(
     kind: ConvKind,
 ) -> Result<ConvertedReads> {
     let suffix = pe_id_suffix(read_number)?;
-    convert_fastq_impl(input, temp_dir, opts, kind, suffix, file_base_for(kind))
+    let file_base = pe_file_base(opts, read_number, file_base_for(kind));
+    convert_fastq_impl(input, temp_dir, opts, kind, suffix, &file_base)
 }
 
 /// The converted temp file's name, `<prefix.>?<basename><file_base>.<ext>` (Perl
@@ -444,7 +473,7 @@ pub fn bisulfite_convert_fasta_se_ga(
 /// Library-aware paired-end per-mate **FastA** conversion (Perl 5308+). Same
 /// `(library, read_number) → kind` contract as the FastQ PE converter (caller
 /// passes the explicit `kind`), `/1/1`,`/2/2` tag per mate, `_C_to_T`/`_G_to_A`
-/// stem. 🔴 **PE FastA does NOT honor `--gzip`** — Perl warns and writes
+/// stem (mate number as in [`bisulfite_convert_fastq_pe_kind`]). 🔴 **PE FastA does NOT honor `--gzip`** — Perl warns and writes
 /// uncompressed `.fa` (5311–5314); SE FastA gzips. gzip is forced off here
 /// (byte-invisible: the converted temp is intermediate, fed straight to Bowtie 2).
 pub(crate) fn bisulfite_convert_fasta_pe_kind(
@@ -459,14 +488,8 @@ pub(crate) fn bisulfite_convert_fasta_pe_kind(
         gzip: false,
         ..opts.clone()
     };
-    convert_fasta_impl(
-        input,
-        temp_dir,
-        &opts_no_gzip,
-        kind,
-        suffix,
-        file_base_for(kind),
-    )
+    let file_base = pe_file_base(opts, read_number, file_base_for(kind));
+    convert_fasta_impl(input, temp_dir, &opts_no_gzip, kind, suffix, &file_base)
 }
 
 /// 2-line FastA conversion core (Perl 5169–5306). Per record: read `header` +
@@ -759,7 +782,9 @@ pub fn convert_se_tagged_interleaved(
 /// truncation). A post-`fix_id` id (either mate) already ending `__CT`/`__GA` is a fatal
 /// error (un-splittable — never-silent). The returned `count` is `N` on both files.
 /// **PE FastA never gzips** (Perl 5311-5314; cf. [`bisulfite_convert_fasta_pe_kind`]);
-/// FastQ honors `--gzip`. Both temps are intermediate, fed straight to Bowtie 2.
+/// FastQ honors `--gzip`. Both temps are intermediate, fed straight to Bowtie 2. They are
+/// named `<prefix.>?<basename>(_<mate>)?_CT_GA_tagged.<ext>`, with the mate when
+/// `opts.mate_in_name` is set.
 pub fn convert_pe_tagged_interleaved(
     input1: &Path,
     input2: &Path,
@@ -775,7 +800,7 @@ pub fn convert_pe_tagged_interleaved(
         (true, _) => ".fa",
     };
     let td_prefix = temp_dir_prefix(temp_dir)?;
-    let build_name = |input: &Path| -> Result<(String, PathBuf)> {
+    let build_name = |input: &Path, read_number: u8| -> Result<(String, PathBuf)> {
         let basename = input.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
             AlignerError::Validation(format!("could not derive a file name from input {input:?}"))
         })?;
@@ -783,12 +808,12 @@ pub fn convert_pe_tagged_interleaved(
             Some(p) => format!("{p}.{basename}"),
             None => basename.to_string(),
         };
-        name.push_str("_CT_GA_tagged");
+        name.push_str(&pe_file_base(opts, read_number, "_CT_GA_tagged"));
         name.push_str(ext);
         Ok((name.clone(), PathBuf::from(format!("{td_prefix}{name}"))))
     };
-    let (name1, path1) = build_name(input1)?;
-    let (name2, path2) = build_name(input2)?;
+    let (name1, path1) = build_name(input1, 1)?;
+    let (name2, path2) = build_name(input2, 2)?;
 
     let mut r1 = open_reader(input1)?;
     let mut r2 = open_reader(input2)?;
@@ -1018,6 +1043,7 @@ mod tests {
             upto,
             icpc,
             maximum_length_cutoff: None,
+            mate_in_name: false,
         }
     }
 
@@ -1699,6 +1725,118 @@ mod tests {
         // never the broken tag-after-suffix shape.
         assert!(!s1.contains("/1/1__CT"), "tag must precede the mate suffix");
         assert!(!s2.contains("/2/2__GA"), "tag must precede the mate suffix");
+    }
+
+    // ---- #1265: mates that share a file name --------------------------------
+
+    #[test]
+    fn for_pair_sets_mate_in_name_for_equal_file_names() {
+        let o = opts(false, None, None, false);
+        let flag = |a: &str, b: &str| o.for_pair(Path::new(a), Path::new(b)).mate_in_name;
+        assert!(flag("a/r.fq", "b/r.fq"));
+        assert!(flag("r.fq", "r.fq"));
+        assert!(flag("a/R.fq", "b/r.fq"));
+        assert!(!flag("r_1.fq", "r_2.fq"));
+        assert!(!flag("a/r.fq", "a/r.fq.gz"));
+        assert!(!flag("/", "b/r.fq"));
+        let prefixed = ConvertOptions {
+            prefix: Some("p".into()),
+            ..o.clone()
+        };
+        assert!(
+            prefixed
+                .for_pair(Path::new("a/r.fq"), Path::new("b/r.fq"))
+                .mate_in_name
+        );
+    }
+
+    /// Convert `input` named `name` as mate `read_number` with `mate_in_name` set.
+    fn run_pe_kind_mate_in_name(
+        input: &[u8],
+        name: &str,
+        o: &ConvertOptions,
+        read_number: u8,
+        kind: ConvKind,
+        fasta: bool,
+    ) -> (ConvertedReads, Vec<u8>) {
+        let tmp = TempDir::new().unwrap();
+        let inp = tmp.path().join(name);
+        std::fs::write(&inp, input).unwrap();
+        let td = tmp.path().join("t");
+        let o = ConvertOptions {
+            mate_in_name: true,
+            ..o.clone()
+        };
+        let cr = if fasta {
+            bisulfite_convert_fasta_pe_kind(&inp, &td, &o, read_number, kind).unwrap()
+        } else {
+            bisulfite_convert_fastq_pe_kind(&inp, &td, &o, read_number, kind).unwrap()
+        };
+        let out = std::fs::read(&cr.path).unwrap();
+        (cr, out)
+    }
+
+    #[test]
+    fn pe_temp_names_carry_the_mate_when_mate_in_name() {
+        let o = opts(false, None, None, false);
+        let (cr1, out1) = run_pe_kind_mate_in_name(GOLDEN_IN, "r.fq", &o, 1, ConvKind::Ct, false);
+        let (cr2, _) = run_pe_kind_mate_in_name(GOLDEN_IN, "r.fq", &o, 2, ConvKind::Ct, false);
+        assert_eq!(cr1.name, "r.fq_1_C_to_T.fastq");
+        assert_eq!(cr2.name, "r.fq_2_C_to_T.fastq");
+        let (plain, plain_out) = run_pe_kind(GOLDEN_IN, "r.fq", &o, 1, ConvKind::Ct);
+        assert_eq!(plain.name, "r.fq_C_to_T.fastq");
+        assert_eq!(out1, plain_out, "the name changes, the content does not");
+
+        let gz = opts(true, None, None, false);
+        let (cr, _) = run_pe_kind_mate_in_name(GOLDEN_IN, "r.fq", &gz, 2, ConvKind::Ga, false);
+        assert_eq!(cr.name, "r.fq_2_G_to_A.fastq.gz");
+        let pre = ConvertOptions {
+            prefix: Some("p".into()),
+            ..o.clone()
+        };
+        let (cr, _) = run_pe_kind_mate_in_name(GOLDEN_IN, "r.fq", &pre, 1, ConvKind::Ga, false);
+        assert_eq!(cr.name, "p.r.fq_1_G_to_A.fastq");
+        let (cr, _) = run_pe_kind_mate_in_name(GOLDEN_FA_IN, "r.fa", &gz, 2, ConvKind::Ga, true);
+        assert_eq!(cr.name, "r.fa_2_G_to_A.fa");
+    }
+
+    #[test]
+    fn converted_name_ignores_mate_in_name() {
+        let o = ConvertOptions {
+            mate_in_name: true,
+            ..opts(false, None, None, false)
+        };
+        assert_eq!(
+            converted_name(Path::new("a/r.fq"), &o, "_C_to_T", false).unwrap(),
+            "r.fq_C_to_T.fastq"
+        );
+    }
+
+    #[test]
+    fn pe_tagged_names_carry_the_mate_when_mate_in_name() {
+        let tmp = TempDir::new().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("r.fq"), b"@x\nACGT\n+\nIIII\n").unwrap();
+        std::fs::write(b.join("r.fq"), b"@x\nTTGG\n+\nIIII\n").unwrap();
+        let o = opts(false, None, None, false);
+        let (r1, r2) = (a.join("r.fq"), b.join("r.fq"));
+        let (cr1, cr2) = convert_pe_tagged_interleaved(
+            &r1,
+            &r2,
+            &tmp.path().join("t"),
+            &o.for_pair(&r1, &r2),
+            false,
+        )
+        .unwrap();
+        assert_eq!(cr1.name, "r.fq_1_CT_GA_tagged.fastq");
+        assert_eq!(cr2.name, "r.fq_2_CT_GA_tagged.fastq");
+        assert!(
+            String::from_utf8(std::fs::read(&cr2.path).unwrap())
+                .unwrap()
+                .contains("@x__CT/2/2\n")
+        );
     }
 
     #[test]

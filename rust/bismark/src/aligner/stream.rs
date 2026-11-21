@@ -1083,6 +1083,7 @@ mod tests {
             upto: None,
             icpc: false,
             maximum_length_cutoff: None,
+            mate_in_name: false,
         }
     }
 
