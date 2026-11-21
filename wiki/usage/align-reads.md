@@ -9,34 +9,34 @@ updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/staging.rs
-    commit: 08f57e9
+    commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/ubam.rs
-    commit: 08f57e9
+    commit: a199ad4
 ---
 
 # Align reads
@@ -74,7 +74,7 @@ sources:
 | Non-directional | `--non_directional` | OT, OB, CTOT, CTOB |
 | PBAT | `--pbat` | CTOT, CTOB |
 
-`--non_directional` and `--pbat` together are rejected. `--pbat` needs FastQ input and no `--gzip` (`resolve_library` in `aligner/config.rs`). Users often ask which library type to pick: see [troubleshooting.md](../troubleshooting.md).
+`--non_directional` and `--pbat` together are rejected. `--pbat` needs FastQ input and no `--gzip` (`resolve_library` in `aligner/config.rs`). Users often ask which library type to pick: see [troubleshooting/data-quality.md](../troubleshooting/data-quality.md).
 
 ## Choose the aligner
 
@@ -132,7 +132,8 @@ Each input (read 1 for paired-end) names its own outputs: the file name with `.f
 - [reference/aligner-cli.md](../reference/aligner-cli.md): every option, its default and the combinations that stop the run.
 - [reference/bam-output.md](../reference/bam-output.md): the records in the BAM.
 - [usage/align-5-base-reads.md](align-5-base-reads.md): Illumina 5-Base data.
-- [troubleshooting.md](../troubleshooting.md): low mapping efficiency.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): low mapping efficiency.
+- [troubleshooting/errors.md](../troubleshooting/errors.md): streamed-run errors, and streamed runs that stop on 3.2.0 and 3.3.0.
 
 ## Open questions
 

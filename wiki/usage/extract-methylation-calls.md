@@ -119,7 +119,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 
 - [reference/methylation-call-files.md](../reference/methylation-call-files.md): call file, M-bias and splitting-report columns.
 - [reference/bam-output.md](../reference/bam-output.md): the `XM` string the calls come from.
-- [troubleshooting.md](../troubleshooting.md): reading an M-bias plot.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): reading an M-bias plot.
 
 ## Open questions
 

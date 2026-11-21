@@ -44,7 +44,7 @@ Bismark is one binary, `bismark`, that holds all 12 tools. The developer says pe
 
 1. Install the binary with one of the channels above.
 2. Check it runs: `bismark --version`. `bismark --help` lists the subcommands.
-3. Put an aligner on `PATH`, or pass its folder with `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2` or `--path_to_bwamem3`. The aligner step checks that the aligner runs before it starts (`detect_aligner` in `aligner/aligner.rs`). If it does not, see [troubleshooting.md](../troubleshooting.md).
+3. Put an aligner on `PATH`, or pass its folder with `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2` or `--path_to_bwamem3`. The aligner step checks that the aligner runs before it starts (`detect_aligner` in `aligner/aligner.rs`). If it does not, see [troubleshooting/errors.md](../troubleshooting/errors.md).
 4. Prepare the genome once: [usage/prepare-a-genome.md](prepare-a-genome.md).
 
 ## Classic tool names

@@ -98,7 +98,7 @@ bismark cov2cyt --genome_folder /data/genomes/GRCh38/ -o sample sample.bismark.c
 
 - [usage/extract-methylation-calls.md](extract-methylation-calls.md): the step before.
 - [reference/methylation-call-files.md](../reference/methylation-call-files.md): file columns.
-- [troubleshooting.md](../troubleshooting.md): low coverage.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): low coverage.
 
 ## Open questions
 

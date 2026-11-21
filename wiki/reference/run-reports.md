@@ -102,7 +102,7 @@ With `--allow_discordant`, the report ends with a `Discordant read handling (--a
 
 ## Links
 
-- [troubleshooting.md](../troubleshooting.md): what a low mapping efficiency or odd strand counts point to.
+- [troubleshooting/data-quality.md](../troubleshooting/data-quality.md): what a low mapping efficiency or odd strand counts point to.
 - [reference/bam-output.md](bam-output.md): the strand names.
 - [usage/align-reads.md](../usage/align-reads.md): where the report is written.
 

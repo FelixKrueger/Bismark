@@ -24,4 +24,5 @@
 
 ## Troubleshooting
 
-- `troubleshooting.md`: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, M-bias, the errors that stop a run (including bwa-mem3 errors), and the warnings that do not.
+- `troubleshooting/data-quality.md`: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, and M-bias trimming.
+- `troubleshooting/errors.md`: The messages that stop a run (including bwa-mem3 and streamed-run errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.
