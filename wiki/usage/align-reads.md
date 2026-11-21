@@ -5,38 +5,38 @@ description: Run the aligner on single-end or paired-end reads, choose the libra
 tags: [alignment, bowtie2, hisat2, minimap2, library-type, 5-base]
 page_id: align-reads
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/staging.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/ubam.rs
-    commit: 855b812
+    commit: 667e20b
 ---
 
 # Align reads
@@ -114,7 +114,7 @@ If something reads the converted input before the aligner does (for example an a
 
 ## Output files
 
-Each input (read 1 for paired-end) names its own outputs: the file name with `.fastq.gz`, `.fq.gz`, `.fastq` or `.fq` removed, or for a uBAM, unaligned CRAM or BINSEQ input the file name without its last extension, plus `_1` for a paired file (`derive_output_path` in `aligner/mod.rs`, `file_stem` in `aligner/ubam.rs`). Two inputs whose outputs would get the same name, or `--basename` with more than one input, stop the run before anything is written (`reject_output_name_collision` in `aligner/config.rs`). The check compares the names the outputs get (`output_stem` in `aligner/mod.rs`), so a single-end uBAM `s.bam` collides with `s.fq.gz` or with a single-end unaligned `s.cram`, and a paired binary file is compared as `s_1`. A uBAM, unaligned CRAM or BINSEQ file given with `-1`/`-2` is rejected; pass it as one positional file, and a paired file is split into mates (`resolve_alt_inputs` in `aligner/mod.rs`). While an input is aligned its outputs are named `<name>.<pid>.partial`; they get their final names once that input has finished, and a failed run deletes them (`scope` in `aligner/staging.rs`). Aligner token: `bt2`, `hisat2`, `mm2` or `rammap`.
+Each input (read 1 for paired-end) names its own outputs: the file name with `.fastq.gz`, `.fq.gz`, `.fastq` or `.fq` removed, or for a uBAM, unaligned CRAM or BINSEQ input the file name without its last extension, plus `_1` for a paired file (`derive_output_path` in `aligner/mod.rs`, `file_stem` in `aligner/ubam.rs`). Two inputs whose outputs would get the same name, or `--basename` with more than one input, stop the run before anything is written (`reject_output_name_collision` in `aligner/config.rs`). With `--unmapped` or `--ambiguous`, two `-1`/`-2` pairs whose read-2 files have the same file name stop it too, because both would write the same `<read-2 file>_unmapped_reads_2.fq.gz` or `_ambiguous_reads_2.fq.gz`; read-2 names that differ only in their ending, such as `r_2.fq` and `r_2.fastq`, write separate files and run. The error names the shared output; rename one input, or run each with its own `-o` folder. The check compares the names the outputs get (`output_stem` in `aligner/mod.rs`), so a single-end uBAM `s.bam` collides with `s.fq.gz` or with a single-end unaligned `s.cram`, and a paired binary file is compared as `s_1`. A uBAM, unaligned CRAM or BINSEQ file given with `-1`/`-2` is rejected; pass it as one positional file, and a paired file is split into mates (`resolve_alt_inputs` in `aligner/mod.rs`). While an input is aligned its outputs are named `<name>.<pid>.partial`; they get their final names once that input has finished, and a failed run deletes them (`scope` in `aligner/staging.rs`). Aligner token: `bt2`, `hisat2`, `mm2` or `rammap`.
 
 | Layout | BAM | Report |
 |---|---|---|

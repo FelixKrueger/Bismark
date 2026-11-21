@@ -5,44 +5,44 @@ description: Turn a Bismark BAM into per-cytosine call files and an M-bias table
 tags: [methylation-extraction, m-bias, cpg, chg, chh]
 page_id: extract-methylation-calls
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-21
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/call.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output_mode.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/parallel.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/output.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/overlap.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pipeline.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 855b812
+    commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/downstream_filenames.rs
-    commit: 855b812
+    commit: 667e20b
 ---
 
 # Extract methylation calls
@@ -101,7 +101,7 @@ The counts go into the splitting report: [reference/run-reports.md](../reference
 | both | 2: `{CpG,Non_CpG}_context_<name>.txt` |
 | `--mbias_only` | none, only M-bias and the splitting report |
 
-`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Nothing checks whether two inputs get the same `<name>` (`run` in `extractor/mod.rs`). With `sample.bam` and `sample.cram` in one run, the second input writes to the same paths: each call file is created on its first call (`open_split_writer`), the end-of-input sweep deletes the call files the second input did not write, and if the second input fails, its cleanup deletes the first input's call files too (`OutputFileMap` in `extractor/output.rs`). If the second input has no CpG calls (without `--CX`), its bedGraph step is skipped, so the first input's bedGraph, coverage file and cytosine report stay (`run_downstream_chain` in `extractor/downstream_filenames.rs`). Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
+`<name>` is the input file name without `.bam`, `.sam` or `.cram` (`derive_basename` in `extractor/pipeline.rs`). `--gzip` adds `.gz`. Two inputs that would write a file of the same name stop the run before anything is written (`reject_output_name_collision` in `extractor/cli.rs`). The check compares 3 names, each only when the run writes that file: `<name>_splitting_report.txt`, which shares `<name>` with the call files (also with `--mbias_only`), the M-bias file (unless `--mbias_off`), and the bedGraph file (with `--bedGraph` or `--cytosine_report`), from which the coverage and cytosine-report names follow. So `a/s.bam` with `b/s.cram`, or one file given twice, stops the run on `s_splitting_report.txt`; `s.bam` with `s.txt` stops it on `s.M-bias.txt`, and with `--mbias_off --bedGraph` on `s.bedGraph.gz`. The error names both inputs and the shared file; rename one input, or run each with its own `-o` folder. Files with no calls are deleted at the end, except when a run produces no calls at all and downstream outputs are expected; then empty files are kept (`OutputFileMap` sweep in `extractor/output.rs`). Column details: [reference/methylation-call-files.md](../reference/methylation-call-files.md).
 
 ## Other options
 
