@@ -1330,6 +1330,27 @@ fn convert_pe_kind(
     }
 }
 
+/// Convert one pair's `(mate, kind)` list to temp files, in order. Mates with equal file
+/// names get the mate number in their temp names ([`convert::ConvertOptions::for_pair`]).
+fn convert_pe_pair(
+    fasta: bool,
+    read_1: &Path,
+    read_2: &Path,
+    td: &Path,
+    opts: &convert::ConvertOptions,
+    needed: &[(u8, convert::ConvKind)],
+) -> Result<Vec<convert::ConvertedReads>> {
+    let opts = opts.for_pair(read_1, read_2);
+    let mut converted = Vec::with_capacity(needed.len());
+    for &(mate, kind) in needed {
+        let input = if mate == 1 { read_1 } else { read_2 };
+        converted.push(convert_pe_kind(fasta, input, td, &opts, mate, kind)?);
+    }
+    let paths: Vec<&Path> = converted.iter().map(|cr| cr.path.as_path()).collect();
+    convert::reject_shared_temp_path(read_1, read_2, &paths)?;
+    Ok(converted)
+}
+
 /// Convert the per-mode SE temp file(s) (Perl `biTransformFastQFiles` 5489–5651 /
 /// `biTransformFastAFiles` 5169–5306): directional = `[C→T]`, pbat = `[G→A]`,
 /// non-directional = `[C→T, G→A]` (in that order — the [`se_instance_plan`] file
@@ -5983,10 +6004,17 @@ fn process_pe_chunk(
     // files for directional/pbat (shared by both instances) and 4 for non-dir (each
     // pair shared by two slots). Preserve first-seen order.
     let needed = pe_conv_sources(&plan);
+    let files = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        &config.output.temp_dir,
+        opts,
+        &needed,
+    )?;
     let mut converted: Vec<((u8, convert::ConvKind), convert::ConvertedReads)> = Vec::new();
-    for &(mate, kind) in &needed {
+    for (&(mate, kind), cr) in needed.iter().zip(files) {
         let input = if mate == 1 { read_1 } else { read_2 };
-        let cr = convert_pe_kind(fasta, input, &config.output.temp_dir, opts, mate, kind)?;
         eprintln!(
             "Created {} converted version of {} -> {} ({} sequences)",
             conv_label(&cr.name),
@@ -6969,7 +6997,10 @@ fn process_pe_chunk_combined(
     let fasta = matches!(config.format, ReadFormat::FastA);
     let td = &config.output.temp_dir;
 
-    let cr1 = convert_pe_kind(fasta, read_1, td, opts, 1, k1)?;
+    let [cr1, cr2]: [convert::ConvertedReads; 2] =
+        convert_pe_pair(fasta, read_1, read_2, td, opts, &[(1, k1), (2, k2)])?
+            .try_into()
+            .map_err(|_| AlignerError::Validation("internal: expected 2 converted files".into()))?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr1.name),
@@ -6977,7 +7008,6 @@ fn process_pe_chunk_combined(
         cr1.path.display(),
         cr1.count
     );
-    let cr2 = convert_pe_kind(fasta, read_2, td, opts, 2, k2)?;
     eprintln!(
         "Created {} converted version of {} -> {} ({} sequences)",
         conv_label(&cr2.name),
@@ -7316,10 +7346,21 @@ fn process_pe_chunk_combined_nondir(
     let td = &config.output.temp_dir;
 
     // 4 converted files: pass 1 = (R1 C→T, R2 G→A); pass 2 = (R1 G→A, R2 C→T).
-    let r1_ct = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
-    let r2_ga = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
-    let r1_ga = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ga)?;
-    let r2_ct = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ct)?;
+    let [r1_ct, r2_ga, r1_ga, r2_ct]: [convert::ConvertedReads; 4] = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        td,
+        opts,
+        &[
+            (1, convert::ConvKind::Ct),
+            (2, convert::ConvKind::Ga),
+            (1, convert::ConvKind::Ga),
+            (2, convert::ConvKind::Ct),
+        ],
+    )?
+    .try_into()
+    .map_err(|_| AlignerError::Validation("internal: expected 4 converted files".into()))?;
     for (cr, src) in [
         (&r1_ct, read_1),
         (&r2_ga, read_2),
@@ -7884,10 +7925,21 @@ fn process_pe_chunk_combined_nondir_sequential(
     // 4 converted files: pass 1 = (R1 C→T, R2 G→A); pass 2 = (R1 G→A, R2 C→T) — IDENTICAL
     // to parallel model (a) (`process_pe_chunk_combined_nondir`), so the alignments — and
     // thus the BAM — are byte-identical regardless of the exec model.
-    let r1_ct = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ct)?;
-    let r2_ga = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ga)?;
-    let r1_ga = convert_pe_kind(fasta, read_1, td, opts, 1, convert::ConvKind::Ga)?;
-    let r2_ct = convert_pe_kind(fasta, read_2, td, opts, 2, convert::ConvKind::Ct)?;
+    let [r1_ct, r2_ga, r1_ga, r2_ct]: [convert::ConvertedReads; 4] = convert_pe_pair(
+        fasta,
+        read_1,
+        read_2,
+        td,
+        opts,
+        &[
+            (1, convert::ConvKind::Ct),
+            (2, convert::ConvKind::Ga),
+            (1, convert::ConvKind::Ga),
+            (2, convert::ConvKind::Ct),
+        ],
+    )?
+    .try_into()
+    .map_err(|_| AlignerError::Validation("internal: expected 4 converted files".into()))?;
     for (cr, src) in [
         (&r1_ct, read_1),
         (&r2_ga, read_2),
@@ -8120,7 +8172,7 @@ fn process_pe_chunk_combined_nondir_tagged(
         read_1,
         read_2,
         &config.output.temp_dir,
-        opts,
+        &opts.for_pair(read_1, read_2),
         fasta,
     )?;
     eprintln!(

@@ -6,6 +6,7 @@
 ### bismark (aligner)
 
 - **`-1/-2` runs with `--unmapped` or `--ambiguous` stop before writing anything when two pairs' R2 files share a name ([#1266](https://github.com/FelixKrueger/Bismark/pull/1266)).**
+- **Non-directional paired-end runs whose R1 and R2 files share a file name no longer give each mate the other's converted reads when those are written to `--temp_dir` (HISAT2, `--combined_index`, `--no_stream_converted`, or no named pipes in `--temp_dir`) ([#1270](https://github.com/FelixKrueger/Bismark/pull/1270)).**
 
 ### deduplicate_bismark
 

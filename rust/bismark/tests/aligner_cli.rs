@@ -2200,6 +2200,104 @@ fn paired_inputs_with_distinct_r2_names_write_their_own_aux_files() {
     }
 }
 
+/// A PE fake `bowtie2` that logs the first record's header and sequence of its `-1` and `-2`
+/// files (one line per call) to `log`, then reports every pair unmapped.
+#[cfg(unix)]
+fn make_fake_bowtie2_pe_header_log(dir: &Path, log: &Path) {
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
+m1=""; m2=""; prev=""
+for a in "$@"; do [ "$prev" = "-1" ] && m1="$a"; [ "$prev" = "-2" ] && m2="$a"; prev="$a"; done
+printf '%s %s\n' "$(head -n 2 "$m1" | tr '\n' ' ')" "$(head -n 2 "$m2" | tr '\n' ' ')" >> '{log}'
+printf '@HD\tVN:1.0\n'
+awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); sub(/\/1\/1$/,"",id);
+    print id "/1\t77\t*\t0\t0\t*\t*\t0\t0\t*\tI";
+    print id "/2\t141\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$m1"
+"#,
+        log = log.display()
+    );
+    write_exec(&dir.join("bowtie2"), &script);
+}
+
+/// Run a non-directional PE alignment from converted-read files and return the sorted
+/// `-1`/`-2` header and sequence lines the aligner calls saw.
+#[cfg(unix)]
+fn nondir_pe_headers_seen(r1: &Path, r2: &Path) -> Vec<String> {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let (bins, temp, outdir) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let log = bins.path().join("calls.log");
+    make_fake_bowtie2_pe_header_log(bins.path(), &log);
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(outdir.path())
+        .arg("--non_directional")
+        .arg("--no_stream_converted")
+        .arg("-1")
+        .arg(r1)
+        .arg("-2")
+        .arg(r2)
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "temp dir not empty"
+    );
+    let mut lines: Vec<String> = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
+    lines.sort();
+    lines
+}
+
+/// Mates that share a file name each keep their own converted temp files (#1265).
+#[cfg(unix)]
+#[test]
+fn nondir_pe_mates_sharing_a_file_name_keep_their_own_temp_files() {
+    let dir = TempDir::new().unwrap();
+    let (a, b, sep) = (
+        dir.path().join("a"),
+        dir.path().join("b"),
+        dir.path().join("sep"),
+    );
+    for d in [&a, &b, &sep] {
+        fs::create_dir_all(d).unwrap();
+    }
+    let (m1, m2) = (b"@p1\nACGTAC\n+\nFFFFFF\n", b"@p1\nTTGGCA\n+\nFFFFFF\n");
+    fs::write(a.join("r.fq"), m1).unwrap();
+    fs::write(b.join("r.fq"), m2).unwrap();
+    fs::write(sep.join("r_1.fq"), m1).unwrap();
+    fs::write(sep.join("r_2.fq"), m2).unwrap();
+
+    let same = nondir_pe_headers_seen(&a.join("r.fq"), &b.join("r.fq"));
+    assert_eq!(same.len(), 4);
+    for line in &same {
+        // Mate 1 is ACGTAC converted C->T or G->A; mate 2 is TTGGCA.
+        let f: Vec<&str> = line.split_whitespace().collect();
+        assert_eq!((f[0], f[2]), ("@p1/1/1", "@p1/2/2"), "{line}");
+        assert!(["ATGTAT", "ACATAC"].contains(&f[1]), "{line}");
+        assert!(["TTGGTA", "TTAACA"].contains(&f[3]), "{line}");
+    }
+    assert_eq!(
+        same,
+        nondir_pe_headers_seen(&sep.join("r_1.fq"), &sep.join("r_2.fq"))
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn pbat_genome_as_positional_resolves() {
@@ -5257,6 +5355,70 @@ fn combined_index_pe_nondir_strands_end_to_end() {
     assert_eq!(u16::from(recs[0].inner().flags()), 99); // r_ot   → OT   (index 0)
     assert_eq!(u16::from(recs[2].inner().flags()), 147); // r_ctot → CTOT (index 2)
     assert_eq!(u16::from(recs[4].inner().flags()), 163); // r_ctob → CTOB (index 1)
+}
+
+/// Same-named mates in every combined-index non-directional PE model align like
+/// distinct names (#1265).
+#[cfg(unix)]
+#[test]
+fn combined_index_pe_nondir_mates_sharing_a_file_name() {
+    let reads =
+        b"@r_ot\nACGTAC\n+\nFFFFFF\n@r_ctot\nACGTAC\n+\nFFFFFF\n@r_ctob\nACGTAC\n+\nFFFFFF\n";
+    let models: [&[&str]; 3] = [
+        &[],
+        &["--combined_index_parallel"],
+        &["--combined_index_single_pass"],
+    ];
+    for flags in models {
+        let genome = TempDir::new().unwrap();
+        make_genome_combined(genome.path());
+        let bins = TempDir::new().unwrap();
+        if flags.contains(&"--combined_index_single_pass") {
+            make_fake_bowtie2_pe_combined_nondir_tagged(bins.path());
+        } else {
+            make_fake_bowtie2_pe_combined_nondir(bins.path());
+        }
+        let (a, b) = (genome.path().join("a"), genome.path().join("b"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("r.fq"), reads).unwrap();
+        fs::write(b.join("r.fq"), reads).unwrap();
+        let (temp, outdir) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+
+        bin()
+            .arg("--combined_index")
+            .arg("--non_directional")
+            .args(flags)
+            .arg("--genome")
+            .arg(genome.path())
+            .arg("--path_to_bowtie2")
+            .arg(bins.path())
+            .arg("--temp_dir")
+            .arg(temp.path())
+            .arg("--output_dir")
+            .arg(outdir.path())
+            .arg("-1")
+            .arg(a.join("r.fq"))
+            .arg("-2")
+            .arg(b.join("r.fq"))
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("unique best alignments:   3"));
+        assert_eq!(
+            fs::read_dir(temp.path()).unwrap().count(),
+            0,
+            "temp dir not empty for {flags:?}"
+        );
+
+        let bam = outdir.path().join("r_bismark_bt2_pe.bam");
+        let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+        let flags_r1: Vec<u16> = reader
+            .records()
+            .map(|r| u16::from(r.unwrap().inner().flags()))
+            .step_by(2)
+            .collect();
+        assert_eq!(flags_r1, [99, 147, 163], "R1 FLAGs for {flags:?}");
+    }
 }
 
 // ===========================================================================
