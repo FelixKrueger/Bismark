@@ -107,7 +107,8 @@ pub struct Cli {
 
     /// Treat UMIs up to N bases apart at the same position as one molecule
     /// (UMI-tools directional rule; needs --barcode/--umi or --bclconvert).
-    /// 0 (default) matches UMIs exactly. Above 0 the input is read twice.
+    /// 0 (default) matches UMIs exactly. Above 0 each input is read twice,
+    /// so it must be a regular file, not a pipe or stream.
     #[arg(long = "umi_mismatches", default_value_t = 0u8, value_name = "N")]
     pub umi_mismatches: u8,
 
