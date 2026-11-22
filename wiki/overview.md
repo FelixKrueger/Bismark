@@ -5,41 +5,41 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-22
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
-    commit: 855b812
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: 855b812
+    commit: aaea96c
 ---
 
 # Bismark overview
