@@ -5,35 +5,35 @@ description: Remove PCR duplicates from a Bismark BAM, when to skip this step, t
 tags: [deduplication, pcr-duplicates, umi, umi-mismatches, rrbs]
 page_id: deduplicate-alignments
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-22
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/cli.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/dedup.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/filename.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/read.rs
-    commit: a0059f4
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/mod.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/umi_group.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/error.rs
-    commit: c25f0a6
+    commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/umi.rs
-    commit: c25f0a6
+    commit: aaea96c
 ---
 
 # Deduplicate alignments
@@ -91,13 +91,15 @@ bismark dedup --barcode --umi_mismatches 1 sample_R1_bismark_bt2_pe.bam
 
 Each group keeps the first record or pair in the input, as without grouping (`UmiGroupCollector::resolve`). With `--multiple`, grouping spans all the input files.
 
-Above 0, every input must be a regular file, not a pipe, stream or directory, checked before any input is opened (`run` in `dedup/mod.rs`). Without `--multiple` the inputs run one after another, so the outputs of earlier inputs are already written when a later input stops the run.
+Above 0, every input must be a regular file, not a pipe, stream or directory. All inputs are checked before any is opened, so such an input stops the run before any output is written (`run` in `dedup/mod.rs`).
 
 Each input is then read twice (`grouped_umi` in `dedup/pipeline.rs`):
 
 1. Pass 1 counts each position+UMI key and notes its first record or pair. Memory grows with the number of distinct keys (`UmiGroupCollector`).
 2. If an input's size or modification time changed between the start of pass 1 and the start of pass 2, the run stops before any output or report is written (`input_snapshot`).
 3. Pass 2 writes the kept records, using 1 bit per record or pair (`KeepSet`). If it reads a different number of records or pairs than pass 1, or hits a read error, the output is removed and the run stops without a report. A change during pass 2 that keeps the file readable and the count the same is not detected.
+
+Without `--multiple` the inputs run one after another, so when one of these checks stops the run on a later input, the outputs of earlier inputs are already written.
 
 All modes work with grouping: `-s`/`-p`, `--multiple`, `--parallel` (also with `--multiple`), CRAM and `--sam`. CRAM or SAM input and `--sam` output run single-threaded, as without grouping (`process_one` and `process_multiple` in `dedup/mod.rs`).
 
