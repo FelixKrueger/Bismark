@@ -1,45 +1,51 @@
 ---
 type: troubleshooting
 title: Errors that stop a run
-description: The messages that stop a run (including bwa-mem3 and streamed-run errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.
-tags: [troubleshooting, errors, bwa-mem3, streaming]
+description: The messages that stop a run (including bwa-mem3, streamed-run and output-name collision errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.
+tags: [troubleshooting, errors, bwa-mem3, streaming, output-names]
 page_id: errors
 subject_status: current
-updated: 2026-11-21
+updated: 2026-11-22
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: a199ad4
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/cli.rs
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/error.rs
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/bwamem3.rs
-    commit: a199ad4
+    commit: 3225cc7
 ---
 
 # Errors that stop a run
@@ -58,7 +64,10 @@ Each row gives the start of a message that stops a run, its cause in the code, a
 | `--umi_mismatches needs …`, `--umi_mismatches reads each input twice …`, `input changed while it was being deduplicated`, `the second pass read …` | `bismark dedup --umi_mismatches` errors | See [usage/deduplicate-alignments.md](../usage/deduplicate-alignments.md#errors) |
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
 | `--include_overlap requires --paired-end` | `--include_overlap` with `-s`, or on a file auto-detected as single-end (`process_one_file` in `extractor/mod.rs`) | Drop `--include_overlap`: single-end reads have no read 2 |
+| `<a> and <b> would both write <file>, so the second would overwrite the first` | Two `bismark extract` inputs would write the same splitting report, M-bias or bedGraph file, for example `a/s.bam` with `b/s.cram`, or one file given twice (`reject_output_name_collision` in `extractor/cli.rs`, `OutputNameCollision` in `extractor/error.rs`) | Rename one input, or run each with its own `--output_dir`: [usage/extract-methylation-calls.md](../usage/extract-methylation-calls.md) |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
+| `<a> and <b> would both write their output to the name '<name>'` | Two aligner inputs (read 1 for paired-end) get the same output name, or `--basename` was given with more than one input (`reject_output_name_collision` in `aligner/config.rs`) | Rename one input, or run each with its own `--output_dir`; how outputs are named: [usage/align-reads.md](../usage/align-reads.md) |
+| `<a> and <b> would both write their mate-2 reads to '<file>'` | `--unmapped` or `--ambiguous` with two `-1`/`-2` pairs whose read-2 files have the same file name (`reject_output_name_collision` in `aligner/config.rs`) | Rename one read-2 file, or run each pair with its own `--output_dir` |
 | `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
 | `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
 | `--illumina_5base --bwamem3 requires --five_base_index <prefix>` (or `--taps requires …`), or `--five_base_index <dir> is a folder; did you mean <dir>/Bwamem3_Index?` | No `--five_base_index` and no `Bwamem3_Index/` in the genome folder, or a genome folder given as the index (`resolve_five_base_index` in `aligner/config.rs`) | Build the index with `bismark prepare --bwamem3 <genome>` ([usage/prepare-a-genome.md](../usage/prepare-a-genome.md)), then leave out `--five_base_index`; or pass the index prefix or its `Bwamem3_Index` folder |
