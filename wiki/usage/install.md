@@ -5,23 +5,23 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-22
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
-    commit: 855b812
+    commit: 3225cc7
 ---
 
 # Install Bismark

@@ -15,6 +15,7 @@ Bismark aligns bisulfite, EM-seq, Illumina 5-Base and TAPS sequencing reads to a
 | TAPS, `--taps`, TET-assisted pyridine borane | `usage/align-taps-reads.md`, `usage/align-5-base-reads.md` |
 | temp disk space, `--temp_dir`, named pipes, FIFO, `--no_stream_converted`, a streamed run that hangs | `usage/align-reads.md`, `troubleshooting/errors.md` |
 | CRLF, Windows line endings, read names stop matching | `troubleshooting/errors.md` |
+| two inputs with the same name, "would both write", output overwritten, `--basename` with several inputs | `troubleshooting/errors.md`, `usage/align-reads.md`, `usage/extract-methylation-calls.md` |
 | an aligner option, a rejected flag | `reference/aligner-cli.md` |
 | XM, XR, XG, FLAG, BAM tags, methylation call string | `reference/bam-output.md` |
 | mapping efficiency, alignment report, deduplication report | `reference/run-reports.md`, `troubleshooting/data-quality.md` |
