@@ -10,7 +10,9 @@ genome with a standard aligner. Bismark then calls methylation at **inverted pol
 read `T` at a genomic `C` is methylated (`Z`), a read `C` is unmethylated (`z`).
 
 The mode is opt-in behind `--illumina_5base` and is **paired-end only** (the 5-Base
-library is paired-end and directional; single-end input is rejected at startup).
+library is paired-end and directional; single-end input is rejected at startup). Since 3.5.0
+it aligns with [bwa-mem3](#bwa-mem3---bwamem3) by default; `--minimap2` selects the previous
+default engine.
 
 For TAPS libraries, which also convert methylated C to T, use [`--taps`](/Bismark/rust/taps/):
 the same calling path with bwa-mem3 in its TAPS mode.
@@ -23,7 +25,7 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
 
 - **Supported in GA (3.0.0):** `--illumina_5base` (core), `--five_base_duplex`,
   `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`. Each is validated against Illumina
-  DRAGEN on the real NA12878 demo at full depth, with the default minimap2 engine, by the metric appropriate to what it
+  DRAGEN on the real NA12878 demo at full depth, with the minimap2 engine (the default before 3.5.0), by the metric appropriate to what it
   produces: **core** by per-CpG concordance with DRAGEN's (deduplicated, full-depth) CX
   report (deduplicated, iso-DRAGEN) — **r approximately 0.99 over 55M CpGs (0.998 at
   cov>=10), 99.3% call-agreement at cov>=10 (98.8% at cov>=1)**; **deconvolution**
@@ -52,7 +54,7 @@ alignments stay in the BAM, and pairs at a chromosome end go to neither.
 5-Base reads align to the unconverted genome, so each methylated CpG (read `T`, genome `C`) is a
 mismatch to the aligner. A read from a CpG-dense, heavily methylated region can carry enough of
 them that it no longer aligns, while the same fragment unmethylated aligns normally, so methylated
-reads are lost there selectively. This applies to both engines, minimap2 (the default) and Bowtie 2.
+reads are lost there selectively. This applies to the `--minimap2`, `--bowtie2` and `--hisat2` engines.
 
 On the NA12878 and HG002 demo data, compared with a methylation-invariant alignment of the same
 reads and with DRAGEN:
@@ -72,41 +74,48 @@ worse, because methylated reads receive lower MAPQ.
 The genome-wide concordance with DRAGEN under [Validation](#validation) still holds: these regions
 are too small a share of all CpGs to show up in it.
 
-**If those regions matter, use [`--bwamem3`](#bwa-mem3---bwamem3).** bwa-mem3's methylation-aware
+**This is why [bwa-mem3](#bwa-mem3---bwamem3) is the default engine.** bwa-mem3's methylation-aware
 mode does not count a read `T` at a genomic `C` as a mismatch. On the same two samples it keeps
 1.01–1.02× DRAGEN's depth in the densest, most methylated CpGs (minimap2: 0.48–0.50×), and only
 0.5–1.1% of them get no coverage (minimap2: 20–23%).
 
 ## Running it
 
-Directional, paired-end, against the unconverted genome. minimap2 (`-x sr`) against the
-genome FASTA is the default engine; bowtie2 or hisat2 work against a NORMAL (unconverted)
-index supplied with `--five_base_index`. minimap2 is the default: it needs no prebuilt
-index, and in a head-to-head comparison against DRAGEN no alternative was clearly
-better (see [Choosing an engine](#choosing-an-engine)). Choose `--bowtie2` or
-`--hisat2` when you need their tuning options or want to match the aligner of your
-bisulfite runs. Choose [`--bwamem3`](#bwa-mem3---bwamem3) for methylated CpG islands, if you
-can afford its index and memory.
+Directional, paired-end, against the unconverted genome. [bwa-mem3](#bwa-mem3---bwamem3)
+(methylation-aware) is the default engine; it needs its index, built once with
+`bismark prepare --bwamem3 <genome>`, and stops before aligning if the index or the
+`bwa-mem3` binary is missing. `--minimap2` (`-x sr`) aligns against the genome FASTA with no
+index and less memory, but under-covers methylated CpG islands (see the
+[known limitation](#known-limitation-cpg-dense-methylated-regions)); it was the default before
+3.5.0. bowtie2 or hisat2 work against a NORMAL (unconverted) index supplied with
+`--five_base_index`; choose them when you need their tuning options or want to match the
+aligner of your bisulfite runs. The Bowtie 2 and minimap2 tuning options are rejected with
+bwa-mem3, so a command line that used them under the old default needs `--minimap2` or
+`--bowtie2`. Outputs are named after the engine: `<sample>_bismark_bwamem3_pe.bam` by default,
+`_bismark_mm2_` with `--minimap2`.
 
-`--genome` needs only to contain the genome FASTA — the reference the methylation calls are
-made against. There is no `bismark_genome_preparation` step for 5-Base, because no path here
-reads the bisulfite-converted indexes.
+`--genome` needs the genome FASTA, the reference the methylation calls are made against, and
+for bwa-mem3 the `Bwamem3_Index/` folder `bismark prepare --bwamem3` writes into it. No path
+here reads the bisulfite-converted indexes, so the bisulfite genome preparation is not needed.
 
 `--five_base_index` is checked before the run starts, so a missing or incomplete index fails
 immediately rather than part-way through alignment. As with bowtie2 and hisat2 themselves, a
 basename that is not found is also looked up under `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`.
 
 ```sh
-# core: align + inverted-polarity methylation calls
+# once per genome: the bwa-mem3 methylation index (writes /path/to/GRCh38/Bwamem3_Index/)
+bismark prepare --bwamem3 /path/to/GRCh38
+
+# core: align with bwa-mem3 + inverted-polarity methylation calls
 bismark --illumina_5base --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 
-# bowtie2/hisat2 instead of minimap2 (build a plain index once with bowtie2-build)
+# minimap2 against the genome FASTA (no index; the default before 3.5.0)
+bismark --illumina_5base --minimap2 --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
+
+# bowtie2/hisat2 (build a plain index once with bowtie2-build)
 bismark --illumina_5base --bowtie2 --five_base_index /path/to/normal_idx \
         --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 
-# bwa-mem3 (methylation-aware; build its index once with `bismark prepare --bwamem3 /path/to/GRCh38`)
-bismark --illumina_5base --bwamem3 \
-        --genome /path/to/GRCh38 -1 R1.fastq.gz -2 R2.fastq.gz
 ```
 
 ### Bowtie 2 and HISAT2 tuning
@@ -148,7 +157,7 @@ column counts each engine's own CpGs at cov ≥ 10 in both it and DRAGEN.
 
 | Engine | Mapping efficiency | Pearson r vs DRAGEN | CpGs at cov ≥ 10 | Peak memory |
 |---|---|---|---|---|
-| minimap2 (default) | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
+| minimap2 (`--minimap2`) | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
 | Bowtie 2 (default, 800 bp) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
 | Bowtie 2 `-X 500` | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
 | Bowtie 2 `--local -X 500` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
@@ -174,13 +183,13 @@ from CpG-dense regions align as well as unmethylated ones (see the
 [known limitation](#known-limitation-cpg-dense-methylated-regions)). bwa-mem3 only places the
 reads; Bismark makes the methylation calls, exactly as for the other engines.
 
-It is opt-in because it is expensive:
+It is the default engine since 3.5.0. It costs more than minimap2:
 
 | | bwa-mem3 |
 |---|---|
 | Index | `bismark prepare --bwamem3 <genome>` (or `bwa-mem3 index --meth --meth-only genome.fa` with bwa-mem3 0.18.0+, `--meth` alone before): about 1 h and about 104 GB RAM for GRCh38 |
 | Index on disk | about 23 GB for GRCh38: the 7 files `bismark prepare --bwamem3` keeps, and all that bwa-mem3 0.18.0's `--meth-only` writes. A plain `bwa-mem3 index --meth` also writes `genome.fa.bwt.2bit.64` (10.4 GB), and 0.16.0/0.17.0 also `genome.fa.meth.fa` (6.3 GB); both can be deleted. Rebuilding into an existing prefix with 0.18.0 needs `--force` |
-| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads) plus about 3.2 GB for Bismark's copy of the genome |
+| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads, and without `-p` all CPUs are used) plus about 3.2 GB for Bismark's copy of the genome |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
 `bismark prepare --bwamem3 <genome>` writes the index to `<genome>/Bwamem3_Index/`, keeping
@@ -198,13 +207,14 @@ An index built by nf-core's `bwamem3/index` module or given to nf-core/methylseq
 Bismark fixes every bwa-mem3 option that affects placement (`--meth-scoring neutral
 --meth-context all --meth-seed-prune=spec30`), because bwa-mem3's defaults have changed
 between releases, and it ignores `$BWAMEM3_METH_SEED_PRUNE`. The Bowtie 2 and minimap2
-tuning options and `--local` are rejected with `--bwamem3`; `-p`/`--multicore` set its
+tuning options and `--local` are rejected with bwa-mem3; `-p`/`--multicore` set its
 threads. Versions before 0.16.0 are rejected; 0.16.0, 0.17.0 and 0.18.0 are validated, and other
 versions run with a warning. The BAM records the bwa-mem3 version and command line in a
 `@PG ID:bwa-mem3` line, and the report states the version.
 
 As with the other engines, Bismark keeps proper pairs at any MAPQ; about 5% of bwa-mem3's
-records have MAPQ 0. Dovetailed pairs are kept too, but bases that run past the mate's 5' end
+records have MAPQ 0. MAPQ is each engine's own score, so a MAPQ filter (including
+`--five_base_min_mapq`) does not keep the same reads under bwa-mem3 and minimap2. Dovetailed pairs are kept too, but bases that run past the mate's 5' end
 are adapter read-through rather than genome, so they are not called; the report counts them as
 "Dovetail overhang bases not called". This applies to minimap2 as well. Pairs whose mates point
 apart are rejected, and the report counts them under "Proper pairs rejected" and as pairs with

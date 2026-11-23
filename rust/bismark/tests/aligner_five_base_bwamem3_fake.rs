@@ -1284,3 +1284,299 @@ fn five_base_standalone_modes_reject_aux_outputs() {
         }
     }
 }
+
+// ---- bwa-mem3 as the default `--illumina_5base` engine -----------------------------------
+
+/// `bismark --illumina_5base` with no engine flag, writing to `out`.
+#[cfg(unix)]
+fn default_cmd(run: &FakeRun, out: &Path) -> Command {
+    let mut c = bin();
+    c.arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(out)
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2);
+    c
+}
+
+/// A fake run whose genome folder holds `Bwamem3_Index/`, as `bismark_genome_preparation --bwamem3` writes it.
+#[cfg(unix)]
+fn fake_run_with_genome_index() -> FakeRun {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let dir = run.genome.path().join("Bwamem3_Index");
+    fs::create_dir(&dir).unwrap();
+    make_stub_bwamem3_index(&dir.join("genome.fa"), &[("chr1", 8)]);
+    run
+}
+
+fn records_at(path: &Path) -> Vec<String> {
+    let mut reader = bismark::io::BamReader::from_path(path).unwrap();
+    reader
+        .records()
+        .map(|r| format!("{:?}", r.unwrap().inner()))
+        .collect()
+}
+
+/// The header without the `@PG ID:Bismark` line, whose `CL` holds the command line.
+fn header_without_bismark_pg(path: &Path) -> String {
+    header_text(&read_bam_header(path))
+        .lines()
+        .filter(|l| !l.starts_with("@PG\tID:Bismark\t"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The report's count and methylation lines.
+fn report_counts(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains(":\t"))
+        .filter(|l| !l.starts_with("Bismark report for") && !l.contains("Option"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_is_bwamem3_and_matches_an_explicit_run() {
+    let run = fake_run_with_genome_index();
+    let (def, exp, dumps) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let argv = dumps.path().join("argv.txt");
+    default_cmd(&run, def.path())
+        .env("FAKE_ARGV_DUMP", &argv)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "aligned with bwa-mem3 to the UNCONVERTED",
+        ))
+        .stderr(predicate::str::contains(
+            "bwa-mem3 is the default engine since 3.5.0",
+        ));
+    assert!(
+        fs::read_to_string(&argv)
+            .unwrap()
+            .contains("mem --meth=5base"),
+        "the default engine is bwa-mem3 --meth=5base"
+    );
+    bin()
+        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(exp.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("default engine since").not());
+    let bam = "r_1_bismark_bwamem3_pe.bam";
+    let rep = "r_1_bismark_bwamem3_PE_report.txt";
+    assert_eq!(
+        records_at(&def.path().join(bam)),
+        records_at(&exp.path().join(bam))
+    );
+    assert!(!records_at(&def.path().join(bam)).is_empty());
+    assert_eq!(
+        header_without_bismark_pg(&def.path().join(bam)),
+        header_without_bismark_pg(&exp.path().join(bam))
+    );
+    let counts = report_counts(&def.path().join(rep));
+    assert!(
+        counts.iter().any(|l| l.starts_with("Mapping efficiency")),
+        "{counts:?}"
+    );
+    assert_eq!(counts, report_counts(&exp.path().join(rep)));
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_without_an_index_stops_before_writing() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let temp = TempDir::new().unwrap();
+    default_cmd(&run, run.out.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base aligns with bwa-mem3 by default, which needs its methylation index",
+        ))
+        .stderr(predicate::str::contains(
+            "bismark_genome_preparation --bwamem3",
+        ))
+        .stderr(predicate::str::contains("Add --minimap2"))
+        .stderr(predicate::str::contains("not on PATH either").not());
+    assert_eq!(
+        fs::read_dir(run.out.path()).unwrap().count(),
+        0,
+        "output written"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "temp written"
+    );
+
+    // No index and no binary: one message names both.
+    let empty = TempDir::new().unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(empty.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("needs its methylation index"))
+        .stderr(predicate::str::contains("not on PATH either"));
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_bwamem3_without_an_index_keeps_its_message() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bin()
+        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base --bwamem3 requires --five_base_index",
+        ))
+        .stderr(predicate::str::contains("Add --minimap2").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn minimap2_opt_out_never_calls_bwamem3() {
+    let run = fake_run_with_genome_index();
+    let (no_mm2, dumps) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let argv = dumps.path().join("argv.txt");
+    let path = format!(
+        "{}:{}",
+        run.bins.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    bin()
+        .env("PATH", path)
+        .env("FAKE_ARGV_DUMP", &argv)
+        .args(["--illumina_5base", "--minimap2", "--path_to_minimap2"])
+        .arg(no_mm2.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(run.out.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("minimap2"));
+    assert!(!argv.exists(), "bwa-mem3 was called");
+}
+
+/// Options the old minimap2 default accepted fail with the default engine named, not `--bwamem3`.
+#[cfg(unix)]
+#[test]
+fn default_engine_names_itself_in_option_errors() {
+    let run = fake_run_with_genome_index();
+    let fails = |extra: &[&str], wants: &[&str]| {
+        let mut a = default_cmd(&run, run.out.path());
+        a.args(extra);
+        let mut assert = a.assert().failure();
+        for w in wants {
+            assert = assert.stderr(predicate::str::contains(*w));
+        }
+        assert.stderr(predicate::str::contains("with --bwamem3").not());
+    };
+    let tuning = [
+        "--illumina_5base (bwa-mem3 is its default engine)",
+        "add --bowtie2",
+        "Add --minimap2",
+    ];
+    fails(
+        &["-X", "800"],
+        &[&["--maxins is not supported"][..], &tuning].concat(),
+    );
+    fails(
+        &["--no_dovetail"],
+        &[&["--no_dovetail is not supported"][..], &tuning].concat(),
+    );
+    fails(
+        &["--local"],
+        &[&["--local is not supported"][..], &tuning].concat(),
+    );
+    fails(
+        &["--mm2_short_reads"],
+        &["unless you also use --minimap2", "Add --minimap2"],
+    );
+    let mm2 = TempDir::new().unwrap();
+    fails(
+        &["--path_to_minimap2", mm2.path().to_str().unwrap()],
+        &["--path_to_minimap2 applies to --minimap2", "Add --minimap2"],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_names_itself_in_binary_errors() {
+    let run = fake_run_with_genome_index();
+    write_exec(
+        &run.bins.path().join("bwa-mem3"),
+        "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.15.0; exit 0; }\nexit 1\n",
+    );
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base (bwa-mem3 is its default engine) needs bwa-mem3 >= 0.16.0",
+        ))
+        .stderr(predicate::str::contains("Add --minimap2"));
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Add --minimap2"));
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_points_a_bowtie2_index_at_bowtie2() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let idx = run.genome.path().join("plain");
+    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
+        fs::write(format!("{}.{s}.bt2", idx.display()), b"").unwrap();
+    }
+    default_cmd(&run, run.out.path())
+        .arg("--five_base_index")
+        .arg(&idx)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is a Bowtie 2 index"))
+        .stderr(predicate::str::contains("add --bowtie2"));
+}

@@ -69,6 +69,70 @@ fn have_minimap2() -> bool {
     present
 }
 
+/// Runs only with `BISMARK_TEST_BWAMEM3=1`; then a missing `bwa-mem3` fails the test.
+fn have_bwamem3() -> bool {
+    if std::env::var_os("BISMARK_TEST_BWAMEM3").is_none() {
+        return false;
+    }
+    let ok = StdCommand::new("bwa-mem3")
+        .arg("version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    assert!(
+        ok,
+        "BISMARK_TEST_BWAMEM3 is set but `bwa-mem3 version` does not run"
+    );
+    true
+}
+
+/// The 5-Base engine a control gate runs on.
+#[derive(Clone, Copy, Debug)]
+enum Engine {
+    Minimap2,
+    BwaMem3,
+}
+
+impl Engine {
+    fn available(self) -> bool {
+        match self {
+            Engine::Minimap2 => have_minimap2(),
+            Engine::BwaMem3 => have_bwamem3(),
+        }
+    }
+
+    /// The engine's output-name token (`<stem>_bismark_<token>_pe.bam`).
+    fn token(self) -> &'static str {
+        match self {
+            Engine::Minimap2 => "mm2",
+            Engine::BwaMem3 => "bwamem3",
+        }
+    }
+
+    /// The engine flag; for bwa-mem3 also builds `<genome>/Bwamem3_Index/` from `genome.fa`.
+    fn prepare(self, genome: &Path) -> &'static str {
+        match self {
+            Engine::Minimap2 => "--minimap2",
+            Engine::BwaMem3 => {
+                let dir = genome.join("Bwamem3_Index");
+                fs::create_dir_all(&dir).unwrap();
+                fs::copy(genome.join("genome.fa"), dir.join("genome.fa")).unwrap();
+                let st = StdCommand::new("bwa-mem3")
+                    .args(["index", "--meth"])
+                    .arg(dir.join("genome.fa"))
+                    .output()
+                    .unwrap();
+                assert!(
+                    st.status.success(),
+                    "bwa-mem3 index --meth failed: {}",
+                    String::from_utf8_lossy(&st.stderr)
+                );
+                "--bwamem3"
+            }
+        }
+    }
+}
+
 /// Deterministic pseudo-random ACGT reference (fixed LCG → stable CpG layout).
 fn gen_reference(n: usize) -> Vec<u8> {
     let bases = [b'A', b'C', b'G', b'T'];
@@ -233,6 +297,7 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--minimap2")
         .arg("--five_base_umi_qname")
         .arg("--five_base_duplex")
         .arg("-1")
@@ -366,6 +431,7 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--minimap2")
         .arg("--five_base_umi_qname")
         .arg("--five_base_consensus")
         .arg("-1")
@@ -509,6 +575,7 @@ fn five_base_groundtruth_illumina_spaced_header_no_desync() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--minimap2")
         .arg("-1")
         .arg(&read1)
         .arg("-2")
@@ -653,6 +720,7 @@ fn five_base_pe_groundtruth_real_minimap2() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--minimap2")
         .arg("-1")
         .arg(&read1)
         .arg("-2")
@@ -823,8 +891,17 @@ fn pct_meth(counts: Option<&(u64, u64)>) -> (f64, u64) {
 /// Uses PE duplex emission (same as the consensus gate) to exercise the PE path.
 #[test]
 fn five_base_controls_core_recovers_lambda_and_puc19() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (control gate)");
+    controls_core(Engine::Minimap2);
+}
+
+#[test]
+fn five_base_controls_core_recovers_lambda_and_puc19_bwamem3() {
+    controls_core(Engine::BwaMem3);
+}
+
+fn controls_core(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -845,12 +922,14 @@ fn five_base_controls_core_recovers_lambda_and_puc19() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     // Core path: no --five_base_consensus / --five_base_duplex.
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg(engine_flag)
         .arg("-1")
         .arg(&r1)
         .arg("-2")
@@ -863,9 +942,10 @@ fn five_base_controls_core_recovers_lambda_and_puc19() {
         .success();
 
     // Bucket by qname prefix (`lam`/`puc`) = the control of origin.
-    let counts = count_cpg_keyed(&outdir.path().join("r1_bismark_mm2_pe.bam"), |q| {
-        q.split('_').next().unwrap_or("").to_string()
-    });
+    let bam = outdir
+        .path()
+        .join(format!("r1_bismark_{}_pe.bam", engine.token()));
+    let counts = count_cpg_keyed(&bam, |q| q.split('_').next().unwrap_or("").to_string());
     let (lam_pct, lam_n) = pct_meth(counts.get("lam"));
     let (puc_pct, puc_n) = pct_meth(counts.get("puc"));
     assert!(
@@ -937,8 +1017,17 @@ fn emit_pe_control_duplex(
 /// This is the exact property validated against DRAGEN, but here against KNOWN truth.
 #[test]
 fn five_base_controls_consensus_preserves_methylation_state() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (consensus control gate)");
+    controls_consensus(Engine::Minimap2);
+}
+
+#[test]
+fn five_base_controls_consensus_preserves_methylation_state_bwamem3() {
+    controls_consensus(Engine::BwaMem3);
+}
+
+fn controls_consensus(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (consensus control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -957,11 +1046,13 @@ fn five_base_controls_consensus_preserves_methylation_state() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_consensus")
         .arg("-1")
@@ -977,7 +1068,10 @@ fn five_base_controls_consensus_preserves_methylation_state() {
 
     // Consensus qname = `dpx:{chrom}:{start}-{end}:{umi}` → bucket by chrom.
     let counts = count_cpg_keyed(
-        &outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam"),
+        &outdir.path().join(format!(
+            "r1_bismark_{}_pe.5base_consensus.bam",
+            engine.token()
+        )),
         |q| q.split(':').nth(1).unwrap_or("").to_string(),
     );
     let (lam_pct, lam_n) = pct_meth(counts.get("lambda"));
@@ -1001,8 +1095,17 @@ fn five_base_controls_consensus_preserves_methylation_state() {
 /// lambda as ~0%. Proves the deconvolution's specificity (no false variants) on known truth.
 #[test]
 fn five_base_controls_deconvolution_no_false_variants() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (deconvolution control gate)");
+    controls_deconvolution(Engine::Minimap2);
+}
+
+#[test]
+fn five_base_controls_deconvolution_no_false_variants_bwamem3() {
+    controls_deconvolution(Engine::BwaMem3);
+}
+
+fn controls_deconvolution(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (deconvolution control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -1021,11 +1124,13 @@ fn five_base_controls_deconvolution_no_false_variants() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_deconvolution")
         .arg("-1")
@@ -1158,6 +1263,7 @@ fn five_base_in_run_both_mode_splits_duplex_and_simplex() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .arg("--minimap2")
         .arg("--five_base_umi_qname")
         .arg("--five_base_consensus")
         .arg("--five_base_emit_multiplicity")

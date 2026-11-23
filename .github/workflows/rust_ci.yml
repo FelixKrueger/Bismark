@@ -176,6 +176,11 @@ jobs:
         env:
           BISMARK_TEST_BWAMEM3: "1"
         run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake --test aligner_taps_bwamem3 --test genome_prep_bwamem3 --test genome_prep_bwamem3_fake
+      - name: cargo test (lambda/pUC19 control gates on bwa-mem3)
+        env:
+          BISMARK_TEST_BWAMEM3: "1"
+        # The name filter keeps out the minimap2 gates in this file, which need minimap2 in CI.
+        run: cargo test -p bismark --test aligner_five_base_groundtruth _bwamem3
 
   fmt:
     name: cargo fmt --check

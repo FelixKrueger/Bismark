@@ -27,9 +27,9 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 )]
 pub struct Cli {
     // ---- genome + reads ----------------------------------------------------
-    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base`
-    /// needs only the FASTA). May also be
-    /// given as the first positional argument.
+    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base` needs the
+    /// FASTA plus, for its default bwa-mem3 engine, `Bwamem3_Index/` from
+    /// `bismark_genome_preparation --bwamem3`). May also be given as the first positional argument.
     #[arg(long = "genome", visible_alias = "genome_folder", value_name = "PATH")]
     pub genome: Option<PathBuf>,
 
@@ -58,7 +58,8 @@ pub struct Cli {
     /// threading (Approach B-faithful — HISAT2 splice discovery is not chunk-invariant).
     #[arg(long)]
     pub hisat2: bool,
-    /// Align with minimap2 (single-end only; paired-end is rejected).
+    /// Align with minimap2 (single-end only; paired-end is rejected). With `--illumina_5base`,
+    /// the paired-end 5-Base engine that reads the genome FASTA directly (no index).
     #[arg(long = "minimap2", visible_alias = "mm2")]
     pub minimap2: bool,
     /// Align with rammap, the pure-Rust minimap2 reimplementation (single-end
@@ -66,9 +67,9 @@ pub struct Cli {
     /// concordance-validated — NOT byte-identical to minimap2.
     #[arg(long = "rammap", visible_alias = "ram")]
     pub rammap: bool,
-    /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware). Needs
-    /// --illumina_5base and a `bwa-mem3 index --meth` index: `<genome>/Bwamem3_Index/` from
-    /// `bismark_genome_preparation --bwamem3`, or one given as --five_base_index.
+    /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware), the default
+    /// `--illumina_5base` engine. Needs a `bwa-mem3 index --meth` index: `<genome>/Bwamem3_Index/`
+    /// from `bismark_genome_preparation --bwamem3`, or one given as --five_base_index.
     /// Implied by `--taps`.
     #[arg(long = "bwamem3")]
     pub bwamem3: bool,
@@ -78,7 +79,7 @@ pub struct Cli {
     /// Folder containing `hisat2`.
     #[arg(long = "path_to_hisat2", value_name = "PATH")]
     pub path_to_hisat2: Option<PathBuf>,
-    /// Folder containing `minimap2`.
+    /// Folder containing `minimap2` (with `--illumina_5base`, only together with `--minimap2`).
     #[arg(long = "path_to_minimap2", value_name = "PATH")]
     pub path_to_minimap2: Option<PathBuf>,
     /// Folder containing `rammap`.
@@ -108,9 +109,9 @@ pub struct Cli {
     /// UNCONVERTED genome with a standard aligner; methylation is then called with
     /// inverted polarity (a read T at a genomic C = methylated). Paired-end only
     /// (the 5-Base library is paired-end); single-end input is rejected. Aligns with
-    /// minimap2 (`-x sr`) against the raw genome FASTA by default; bowtie2/hisat2 via
-    /// `--five_base_index`; `--bwamem3` (methylation-aware) via a bwa-mem3 meth index
-    /// (`<genome>/Bwamem3_Index/` or `--five_base_index`). NOT byte-identical (Perl Bismark has no 5-Base oracle);
+    /// bwa-mem3 (methylation-aware) by default, via a bwa-mem3 meth index
+    /// (`<genome>/Bwamem3_Index/` or `--five_base_index`); `--minimap2` (`-x sr`) against the
+    /// raw genome FASTA; bowtie2/hisat2 via `--five_base_index`. NOT byte-identical (Perl Bismark has no 5-Base oracle);
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
@@ -135,11 +136,11 @@ pub struct Cli {
     /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
     /// used by `--illumina_5base --bowtie2`/`--hisat2`. 5-Base reads keep full
     /// complexity, so they align to the plain genome index (build it once with
-    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
-    /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
+    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Not used with `--minimap2`, which
+    /// reads the genome FASTA directly.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
-    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` or `--taps` it is instead
-    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder
+    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With bwa-mem3 (the default) or `--taps` it is
+    /// instead the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder
     /// written by `bismark_genome_preparation --bwamem3`; optional when `<genome>/Bwamem3_Index/`
     /// exists.
     #[arg(long = "five_base_index", value_name = "BASENAME")]

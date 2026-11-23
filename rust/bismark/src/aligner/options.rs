@@ -304,11 +304,16 @@ fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
             "--most_valid_alignments",
         ),
     ];
-    let mode = if cli.taps { "--taps" } else { "--bwamem3" };
+    let mode = crate::aligner::config::bwamem3_mode_label(cli);
     match set.iter().find(|(on, _)| *on) {
         Some((_, flag)) => Err(AlignerError::Validation(format!(
             "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
-             insert sizes itself."
+             insert sizes itself.{}",
+            if cli.taps || cli.bwamem3 {
+                ""
+            } else {
+                " For Bowtie 2 tuning add --bowtie2 (with --five_base_index)."
+            }
         ))),
         None => Ok(()),
     }

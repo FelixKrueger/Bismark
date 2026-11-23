@@ -21,7 +21,7 @@ mamba install -c bioconda -c conda-forge bismark
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need bwa-mem3, which the bioconda package (from 3.3.0) and the container include; with Homebrew or `cargo`, install it separately (see [Dependencies](#dependencies)).
+`--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` also need bwa-mem3, which the bioconda package (from 3.3.0) and the container include; with Homebrew or `cargo`, install it separately (see [Dependencies](#dependencies)) or run 5-Base with `--minimap2`.
 
 ### Install with Homebrew (macOS / Linux)
 
@@ -77,7 +77,7 @@ Bismark requires [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISA
 --path_to_hisat2 </../../hisat2>
 ```
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The bioconda package (from 3.3.0) and the container image include it; with Homebrew or a `cargo` install, add it from bioconda:
+`--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The bioconda package (from 3.3.0) and the container image include it; with Homebrew or a `cargo` install, add it from bioconda:
 
 ```bash
 mamba install -c bioconda -c conda-forge bwa-mem3
