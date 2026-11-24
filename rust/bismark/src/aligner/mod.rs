@@ -221,6 +221,18 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
                     .into(),
             ));
         }
+        for (set, flag) in [
+            (cli.unmapped, "--unmapped"),
+            (cli.ambiguous, "--ambiguous"),
+            (cli.ambig_bam, "--ambig_bam"),
+        ] {
+            if set {
+                return Err(AlignerError::Validation(format!(
+                    "{flag} applies to an alignment run; --five_base_consensus_from_bam and \
+                     --five_base_bisulfite_bam align no reads."
+                )));
+            }
+        }
     }
     // #787 standalone duplex-consensus over EXISTING BAM(s) — skips the align pipeline
     // entirely (resolve() requires reads; this path takes BAMs instead).
@@ -2736,8 +2748,8 @@ fn five_base_align_and_call_pe(
         std::collections::HashSet::new();
     let mut dups: u64 = 0;
     let mut stopped_early = false;
-    while let Some((id1, seq1, _p1, qual1)) = read_fastq_record(&mut r1)? {
-        let Some((id2, seq2, _p2, qual2)) = read_fastq_record(&mut r2)? else {
+    while let Some((id1, seq1, plus1, qual1)) = read_fastq_record(&mut r1)? {
+        let Some((id2, seq2, plus2, qual2)) = read_fastq_record(&mut r2)? else {
             return Err(AlignerError::Validation(format!(
                 "{} has fewer reads than {}",
                 read_2.display(),
@@ -2802,7 +2814,7 @@ fn five_base_align_and_call_pe(
             }
         }
         counters.sequences_count += 1;
-        if let Some((mut out1, mut out2)) = five_base_emit_pe_record(
+        let (mut out1, mut out2) = match five_base_emit_pe_record(
             rec1,
             rec2,
             &identifier,
@@ -2819,19 +2831,29 @@ fn five_base_align_and_call_pe(
             umi_len,
             counters,
         )? {
-            // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
-            if config.five_base_umi_qname {
-                if let Some(rx) = crate::io::umi::extract_barcode(identifier.as_bytes()) {
-                    out1.set_rx(rx);
-                    out2.set_rx(rx);
+            FiveBasePair::Emit(pair) => *pair,
+            FiveBasePair::NoAlignment => {
+                if let (Some(w1), Some(w2)) = (sinks.unmapped_1.as_mut(), sinks.unmapped_2.as_mut())
+                {
+                    write_raw_fastq_record(w1, &[&id1, &seq1, &plus1, &qual1])?;
+                    write_raw_fastq_record(w2, &[&id2, &seq2, &plus2, &qual2])?;
                 }
-            } else if umi_len > 0 {
-                out1.set_rx(&seq1_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
-                out2.set_rx(&seq2_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+                continue;
             }
-            write_record(&mut sinks.bam, &out1)?;
-            write_record(&mut sinks.bam, &out2)?;
+            FiveBasePair::Rejected => continue,
+        };
+        // #787 carry each mate's raw UMI (RX:Z:) for inspectability / future PE duplex.
+        if config.five_base_umi_qname {
+            if let Some(rx) = crate::io::umi::extract_barcode(identifier.as_bytes()) {
+                out1.set_rx(rx);
+                out2.set_rx(rx);
+            }
+        } else if umi_len > 0 {
+            out1.set_rx(&seq1_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
+            out2.set_rx(&seq2_uc.iter().take(umi_len).copied().collect::<Vec<u8>>());
         }
+        write_record(&mut sinks.bam, &out1)?;
+        write_record(&mut sinks.bam, &out2)?;
     }
 
     if stopped_early {
@@ -3021,7 +3043,28 @@ fn five_base_pair_geometry(rec1: &SamRecord, rec2: &SamRecord) -> Option<(usize,
     }
 }
 
-/// Build the two Bismark records for one 5-Base read pair, or `None` (not a proper
+/// What one 5-Base read pair becomes.
+#[derive(Debug)]
+enum FiveBasePair {
+    /// A proper pair: its two Bismark records.
+    Emit(Box<(crate::io::BismarkRecord, crate::io::BismarkRecord)>),
+    /// Not a proper pair, a mate unmapped, or a rejected orientation: `--unmapped` gets it.
+    NoAlignment,
+    /// The genomic window could not be extracted (chromosome edge): written nowhere.
+    Rejected,
+}
+
+#[cfg(test)]
+impl FiveBasePair {
+    fn emitted(self) -> Option<(crate::io::BismarkRecord, crate::io::BismarkRecord)> {
+        match self {
+            FiveBasePair::Emit(pair) => Some(*pair),
+            FiveBasePair::NoAlignment | FiveBasePair::Rejected => None,
+        }
+    }
+}
+
+/// Build the two Bismark records for one 5-Base read pair, or why it has none (not a proper
 /// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
 /// a directional library produces. Pure (unit-testable), inverted polarity.
@@ -3042,18 +3085,18 @@ fn five_base_emit_pe_record(
     baseq: u8,
     umi_len: usize,
     counters: &mut Counters,
-) -> Result<Option<(crate::io::BismarkRecord, crate::io::BismarkRecord)>> {
+) -> Result<FiveBasePair> {
     // Require a proper pair with both mates mapped (5-Base v1: concordant pairs only).
     let proper = rec1.flag & 0x2 != 0 && rec1.flag & 0x4 == 0 && rec2.flag & 0x4 == 0;
     if !proper {
         counters.no_single_alignment_found += 1;
-        return Ok(None);
+        return Ok(FiveBasePair::NoAlignment);
     }
     // R2's strand is derived from R1's below, so the pair must be FR/RF on one contig.
     let Some((k1, k2, overhang)) = five_base_pair_geometry(rec1, rec2) else {
         counters.five_base_pair_orientation_rejected += 1;
         counters.no_single_alignment_found += 1;
-        return Ok(None);
+        return Ok(FiveBasePair::NoAlignment);
     };
     five_base_check_cigar_covers_read(identifier, "R1", &rec1.cigar, seq1_uc.len())?;
     five_base_check_cigar_covers_read(identifier, "R2", &rec2.cigar, seq2_uc.len())?;
@@ -3082,7 +3125,7 @@ fn five_base_emit_pe_record(
         || ext.unmodified_genomic_sequence_2.len() != seq2_uc.len() + 2
     {
         counters.genomic_sequence_could_not_be_extracted_count += 1;
-        return Ok(None);
+        return Ok(FiveBasePair::Rejected);
     }
     let off = if phred64 { 64 } else { 33 };
     let mut call1 = mask_low_quality(seq1_uc, qual1, baseq, off);
@@ -3139,7 +3182,7 @@ fn five_base_emit_pe_record(
     if umi_len > 0 || k2 > 0 {
         out2.set_mk(umi_len, k2);
     }
-    Ok(Some((out1, out2)))
+    Ok(FiveBasePair::Emit(Box::new((out1, out2))))
 }
 
 /// #1211: the SEQ indices (BAM orientation) a pass that re-reads SEQ may use — the `mk`
@@ -4026,6 +4069,17 @@ fn read_fastq_record<R: BufRead>(
         return Ok(None);
     }
     Ok(Some((id, seq, plus, qual)))
+}
+
+/// Write one FASTQ record's four lines as read; a last line without a newline gets one.
+fn write_raw_fastq_record<W: Write>(w: &mut W, lines: &[&[u8]; 4]) -> Result<()> {
+    for line in lines {
+        w.write_all(line)?;
+        if !line.ends_with(b"\n") {
+            w.write_all(b"\n")?;
+        }
+    }
+    Ok(())
 }
 
 /// Strip a trailing `/1` or `/2` mate suffix from a read id (minimap2 reports the
@@ -8793,6 +8847,7 @@ mod tests {
             0, 0, &mut c,
         )
         .unwrap()
+        .emitted()
         .expect("proper pair emits two records");
         assert_eq!(u16::from(o1.inner().flags()), 99); // R1 OT output FLAG
         assert_eq!(u16::from(o2.inner().flags()), 147); // R2 OT output FLAG
@@ -8803,6 +8858,45 @@ mod tests {
         );
         assert_eq!(c.unique_best_alignment_count, 1);
         assert_eq!(c.total_me_cpg, 1);
+    }
+
+    /// #1282: unmapped mate and same-strand pairs go to `--unmapped`; a contig-edge pair nowhere.
+    #[test]
+    fn five_base_emit_pe_classifies_each_outcome() {
+        let genome = five_base_genome("chr1", b"AACGAATTTTAACGAA"); // 16 bp
+        let refid = build_refid(&genome);
+        let run = |a: &str, b: &str, s2: &[u8]| {
+            let (r1, r2) = (SamRecord::parse(a).unwrap(), SamRecord::parse(b).unwrap());
+            let mut c = Counters::default();
+            let out = five_base_emit_pe_record(
+                &r1, &r2, "p", b"TGAA", b"IIII", s2, b"IIII", &genome, &refid, false, true, false,
+                0, 0, &mut c,
+            )
+            .unwrap();
+            (out, c)
+        };
+        let (out, c) = run(
+            "p\t73\tchr1\t3\t60\t4M\t*\t0\t0\tTGAA\tIIII\tAS:i:0",
+            "p\t133\t*\t0\t0\t*\t*\t0\t0\tGAAT\tIIII",
+            b"GAAT",
+        );
+        assert!(matches!(out, FiveBasePair::NoAlignment), "{out:?}");
+        assert_eq!(c.no_single_alignment_found, 1);
+        let (out, c) = run(
+            "p\t67\tchr1\t3\t60\t4M\t=\t5\t6\tTGAA\tIIII\tAS:i:0",
+            "p\t131\tchr1\t5\t60\t4M\t=\t3\t-6\tGAAT\tIIII\tAS:i:0",
+            b"GAAT",
+        );
+        assert!(matches!(out, FiveBasePair::NoAlignment), "{out:?}");
+        assert_eq!(c.five_base_pair_orientation_rejected, 1);
+        let (out, c) = run(
+            "p\t99\tchr1\t3\t60\t4M\t=\t13\t14\tTGAA\tIIII\tAS:i:0",
+            "p\t147\tchr1\t13\t60\t4M\t=\t3\t-14\tCGAA\tIIII\tAS:i:0",
+            b"CGAA",
+        );
+        assert!(matches!(out, FiveBasePair::Rejected), "{out:?}");
+        assert_eq!(c.genomic_sequence_could_not_be_extracted_count, 1);
+        assert_eq!(c.no_single_alignment_found, 0);
     }
 
     /// A non-proper pair (R1 not flagged 0x2, e.g. one mate unmapped) emits nothing and
@@ -8819,7 +8913,8 @@ mod tests {
             &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true, false,
             0, 0, &mut c,
         )
-        .unwrap();
+        .unwrap()
+        .emitted();
         assert!(out.is_none());
         assert_eq!(c.no_single_alignment_found, 1);
         assert_eq!(c.unique_best_alignment_count, 0);
@@ -8860,7 +8955,8 @@ mod tests {
                 &r1, &r2, "p", b"TGAA", b"IIII", b"GAAT", b"IIII", &genome, &refid, false, true,
                 false, 0, 0, &mut c,
             )
-            .unwrap();
+            .unwrap()
+            .emitted();
             assert!(out.is_none(), "{a} / {b}");
             assert_eq!(c.five_base_pair_orientation_rejected, 1, "{a} / {b}");
             assert_eq!(c.unique_best_alignment_count, 0, "{a} / {b}");
@@ -8883,6 +8979,7 @@ mod tests {
                 false, 0, umi_len, &mut c,
             )
             .unwrap()
+            .emitted()
             .expect("proper pair");
             crate::io::tags::xm(o1.inner().data()).unwrap().to_vec()
         };
@@ -8947,6 +9044,7 @@ mod tests {
                 true, false, 0, 0, &mut c,
             )
             .unwrap()
+            .emitted()
             .expect("proper pair");
             let x1 = crate::io::tags::xm(o1.inner().data()).unwrap().to_vec();
             let x2 = crate::io::tags::xm(o2.inner().data()).unwrap().to_vec();
@@ -8976,6 +9074,7 @@ mod tests {
                 true, false, 0, umi_len, &mut c,
             )
             .unwrap()
+            .emitted()
             .expect("proper pair");
             crate::io::tags::xm(o2.inner().data()).unwrap().to_vec()
         };
@@ -9034,6 +9133,7 @@ mod tests {
                 &mut c,
             )
             .unwrap()
+            .emitted()
             .expect("proper pair");
             write_record(&mut w, &o1).unwrap();
             write_record(&mut w, &o2).unwrap();
@@ -9073,6 +9173,7 @@ mod tests {
             &mut c,
         )
         .unwrap()
+        .emitted()
         .expect("proper pair");
         write_record(&mut w, &o1).unwrap();
         write_record(&mut w, &o2).unwrap();
@@ -9174,6 +9275,7 @@ mod tests {
             &mut Counters::default(),
         )
         .unwrap()
+        .emitted()
         .expect("proper pair");
         write_record(&mut w, &o1).unwrap();
         write_record(&mut w, &o2).unwrap();
@@ -9243,6 +9345,7 @@ mod tests {
             &mut Counters::default(),
         )
         .unwrap()
+        .emitted()
         .expect("proper pair")
     }
 
@@ -9793,6 +9896,7 @@ mod tests {
                 &mut Counters::default(),
             )
             .unwrap()
+            .emitted()
             .expect("proper pair");
             write_record(&mut w, &o1).unwrap();
             write_record(&mut w, &o2).unwrap();
@@ -9951,7 +10055,8 @@ mod tests {
             &r1, &r2, "p", b"AACG", b"IIII", b"CGTT", b"IIII", &genome, &refid, false, true, false,
             0, 0, &mut c,
         )
-        .unwrap();
+        .unwrap()
+        .emitted();
         assert!(out.is_none());
         assert_eq!(c.five_base_pair_orientation_rejected, 1);
         assert_eq!(c.no_single_alignment_found, 1);

@@ -42,7 +42,9 @@ no byte-for-byte oracle. It is instead **concordance-gated**, the same contract 
 
 Because it is concordance-gated rather than byte-identical, every 5-Base path is opt-in and
 **never silent**: an unsupported combination (single-end, `--non_directional`, `--pbat`,
-`--combined_index`) is rejected loudly rather than silently degraded.
+`--combined_index`, `--ambiguous`, `--ambig_bam`) is rejected loudly rather than silently degraded.
+`--unmapped` writes the pairs the engine did not align as a proper pair, exactly as they appear in
+the input; pairs with several alignments stay in the BAM.
 
 ## Known limitation: CpG-dense methylated regions
 

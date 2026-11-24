@@ -165,9 +165,11 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
   Write all reads that could not be aligned to the file `_unmapped_reads.fq.gz` in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `unmapped_reads_1.fq.gz` and `unmapped_reads_2.fq.gz`. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to `unmapped_reads.fq.gz` unless `--ambiguous` is also specified. With several `-1`/`-2` pairs, two pairs whose read-2 files share a file name stop the run before anything is written, since both would write the same `_2` file.
 
+  With `--illumina_5base` or `--taps`, the files hold the pairs the engine did not align as a proper pair, exactly as they appear in the input (header included), while pairs with several alignments stay in the BAM, since that mode keeps every proper pair at any MAPQ.
+
 - `--ambiguous`
 
-  Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to `_ambiguous_reads.fq`. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `_ambiguous_reads_1.fq` and `_ambiguous_reads_2.fq`. These reads are not written to the file specified with `--un`.
+  Write all reads which produce more than one valid alignment with the same number of lowest mismatches or other reads that fail to align uniquely to `_ambiguous_reads.fq`. Written reads will appear as they did in the input, without any of the translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `_ambiguous_reads_1.fq` and `_ambiguous_reads_2.fq`. These reads are not written to the file specified with `--un`. Rejected with `--illumina_5base` and `--taps`, which keep every proper pair at any MAPQ.
 
 - `-o/--output_dir <dir>`
 
@@ -233,7 +235,7 @@ Once CRAM output is supported, it requires you to specify a reference genome as 
 
 - `--ambig_bam`
 
-For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambig.bam` (`_pe.ambig.bam` for paired-end). The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers.
+For reads that have multiple alignments a random alignment is written out to a special file ending in `.ambig.bam` (`_pe.ambig.bam` for paired-end). The alignments are in Bowtie2 format and do not any contain Bismark specific entries such as the methylation call etc. These ambiguous BAM files are intended to be used as coverage estimators for variant callers. Rejected with `--illumina_5base` and `--taps`, which keep every proper pair at any MAPQ.
 
 - `--nucleotide_coverage`
 
