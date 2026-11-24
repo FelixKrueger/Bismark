@@ -1415,10 +1415,10 @@ fn default_engine_without_an_index_stops_before_writing() {
         .stderr(predicate::str::contains(
             "--illumina_5base aligns with bwa-mem3 by default, which needs its methylation index",
         ))
+        .stderr(predicate::str::contains("bismark prepare --bwamem3"))
         .stderr(predicate::str::contains(
-            "bismark_genome_preparation --bwamem3",
+            "--five_base_index. Add --minimap2",
         ))
-        .stderr(predicate::str::contains("Add --minimap2"))
         .stderr(predicate::str::contains("not on PATH either").not());
     assert_eq!(
         fs::read_dir(run.out.path()).unwrap().count(),
@@ -1431,7 +1431,7 @@ fn default_engine_without_an_index_stops_before_writing() {
         "temp written"
     );
 
-    // No index and no binary: one message names both.
+    // No index and no binary: one message names both, and where bwa-mem3 was looked for.
     let empty = TempDir::new().unwrap();
     bin()
         .arg("--illumina_5base")
@@ -1446,7 +1446,57 @@ fn default_engine_without_an_index_stops_before_writing() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("needs its methylation index"))
+        .stderr(predicate::str::contains(format!(
+            "bwa-mem3 (0.16.0 or later) is not in {} either.",
+            empty.path().display()
+        )))
+        .stderr(predicate::str::contains("not on PATH").not());
+    let file = empty.path().join("bwa-mem3");
+    fs::write(&file, b"").unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(&file)
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "--path_to_bwamem3 {} is not a folder",
+            file.display()
+        )));
+    bin()
+        .env("PATH", empty.path())
+        .arg("--illumina_5base")
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("needs its methylation index"))
         .stderr(predicate::str::contains("not on PATH either"));
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_with_a_partial_genome_index_names_the_opt_out() {
+    let run = fake_run_with_genome_index();
+    fs::remove_file(run.genome.path().join("Bwamem3_Index/genome.fa.meth.pac")).unwrap();
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "genome.fa.meth.pac is missing from",
+        ))
+        .stderr(predicate::str::contains("Add --minimap2"));
+    assert_eq!(fs::read_dir(run.out.path()).unwrap().count(), 0);
 }
 
 #[cfg(unix)]
@@ -1474,8 +1524,12 @@ fn explicit_bwamem3_without_an_index_keeps_its_message() {
 #[test]
 fn minimap2_opt_out_never_calls_bwamem3() {
     let run = fake_run_with_genome_index();
-    let (no_mm2, dumps) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let (mm2_dir, dumps) = (TempDir::new().unwrap(), TempDir::new().unwrap());
     let argv = dumps.path().join("argv.txt");
+    write_exec(
+        &mm2_dir.path().join("minimap2"),
+        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 2.31-r1302; exit 0; }\nexit 1\n",
+    );
     let path = format!(
         "{}:{}",
         run.bins.path().display(),
@@ -1485,7 +1539,7 @@ fn minimap2_opt_out_never_calls_bwamem3() {
         .env("PATH", path)
         .env("FAKE_ARGV_DUMP", &argv)
         .args(["--illumina_5base", "--minimap2", "--path_to_minimap2"])
-        .arg(no_mm2.path())
+        .arg(mm2_dir.path())
         .arg("--genome")
         .arg(run.genome.path())
         .arg("--output_dir")
@@ -1495,12 +1549,14 @@ fn minimap2_opt_out_never_calls_bwamem3() {
         .arg("-2")
         .arg(&run.r2)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("minimap2"));
+        .stderr(predicate::str::contains(
+            "minimap2 seems to be working fine",
+        ))
+        .stderr(predicate::str::contains("bwa-mem3").not());
     assert!(!argv.exists(), "bwa-mem3 was called");
 }
 
-/// Options the old minimap2 default accepted fail with the default engine named, not `--bwamem3`.
+/// Bowtie 2, HISAT2 and minimap2 options on a defaulted run name the default engine and the engine that takes them.
 #[cfg(unix)]
 #[test]
 fn default_engine_names_itself_in_option_errors() {
@@ -1517,23 +1573,52 @@ fn default_engine_names_itself_in_option_errors() {
     let tuning = [
         "--illumina_5base (bwa-mem3 is its default engine)",
         "add --bowtie2",
-        "Add --minimap2",
     ];
+    let no_opt_out = |extra: &[&str]| {
+        let mut a = default_cmd(&run, run.out.path());
+        a.args(extra);
+        a.assert()
+            .failure()
+            .stderr(predicate::str::contains("Add --minimap2").not());
+    };
+    for (extra, head) in [
+        (&["-X", "800"][..], "--maxins is not supported"),
+        (&["--local"][..], "--local is not supported"),
+        (&["-D", "5"][..], "-D is not supported"),
+    ] {
+        fails(extra, &[&[head][..], &tuning].concat());
+        no_opt_out(extra);
+    }
+    // Dovetail handling is engine-independent, so minimap2 takes both flags.
+    for flag in ["--no_dovetail", "--dovetail"] {
+        let head = format!("{flag} is not supported");
+        fails(
+            &[flag],
+            &[&[head.as_str()][..], &tuning, &["Add --minimap2"]].concat(),
+        );
+    }
+    let splices = run.genome.path().join("splices.txt");
+    fs::write(&splices, b"").unwrap();
+    let splices = ["--known-splicesite-infile", splices.to_str().unwrap()];
     fails(
-        &["-X", "800"],
-        &[&["--maxins is not supported"][..], &tuning].concat(),
+        &splices,
+        &[
+            "(bwa-mem3 is its default engine)",
+            "5-Base alignment is unspliced",
+        ],
     );
+    no_opt_out(&splices);
     fails(
-        &["--no_dovetail"],
-        &[&["--no_dovetail is not supported"][..], &tuning].concat(),
+        &["--no-spliced-alignment"],
+        &["(bwa-mem3 is its default engine)", "add --hisat2"],
     );
-    fails(
-        &["--local"],
-        &[&["--local is not supported"][..], &tuning].concat(),
-    );
+    no_opt_out(&["--no-spliced-alignment"]);
     fails(
         &["--mm2_short_reads"],
-        &["unless you also use --minimap2", "Add --minimap2"],
+        &[
+            "unless you also use --minimap2",
+            "--illumina_5base aligns with bwa-mem3 by default. Add --minimap2",
+        ],
     );
     let mm2 = TempDir::new().unwrap();
     fails(
@@ -1557,26 +1642,65 @@ fn default_engine_names_itself_in_binary_errors() {
             "--illumina_5base (bwa-mem3 is its default engine) needs bwa-mem3 >= 0.16.0",
         ))
         .stderr(predicate::str::contains("Add --minimap2"));
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 0\n");
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("printed no version"))
+        .stderr(predicate::str::contains(
+            "--illumina_5base (bwa-mem3 is its default engine) needs bwa-mem3 >= 0.16.0",
+        ))
+        .stderr(predicate::str::contains("Add --minimap2"));
     write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
     default_cmd(&run, run.out.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Add --minimap2"));
+        .stderr(predicate::str::contains("bwa-mem3"))
+        .stderr(predicate::str::is_match(r"[.!?] Add --minimap2").unwrap());
 }
 
 #[cfg(unix)]
 #[test]
-fn default_engine_points_a_bowtie2_index_at_bowtie2() {
+fn default_engine_points_an_unconverted_index_at_its_engine() {
+    for (ext, name, flag) in [
+        ("bt2", "Bowtie 2", "--bowtie2"),
+        ("bt2l", "Bowtie 2", "--bowtie2"),
+        ("ht2", "HISAT2", "--hisat2"),
+        ("ht2l", "HISAT2", "--hisat2"),
+    ] {
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let idx = run.genome.path().join("plain");
+        fs::write(format!("{}.1.{ext}", idx.display()), b"").unwrap();
+        default_cmd(&run, run.out.path())
+            .arg("--five_base_index")
+            .arg(&idx)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!("is a {name} index")))
+            .stderr(predicate::str::contains(format!("add {flag} to align")));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_bwamem3_with_a_bowtie2_index_keeps_the_bwamem3_message() {
     let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
     let idx = run.genome.path().join("plain");
-    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
-        fs::write(format!("{}.{s}.bt2", idx.display()), b"").unwrap();
-    }
-    default_cmd(&run, run.out.path())
+    fs::write(format!("{}.1.bt2", idx.display()), b"").unwrap();
+    bin()
+        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
         .arg("--five_base_index")
         .arg(&idx)
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("is a Bowtie 2 index"))
-        .stderr(predicate::str::contains("add --bowtie2"));
+        .stderr(predicate::str::contains("bwa-mem3 index file"))
+        .stderr(predicate::str::contains("is a Bowtie 2 index").not())
+        .stderr(predicate::str::contains("Add --minimap2").not());
 }

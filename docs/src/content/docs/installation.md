@@ -51,7 +51,7 @@ The release binaries and the container image also include the in-process rammap 
 
 **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; re-running `cargo install bismark` is a no-op unless a newer version is published — add `--force` to reinstall in place.
 
-**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` (see [Dependencies](#dependencies)). No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` (see [Dependencies](#dependencies)). No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Prebuilt binaries (no toolchain)
 

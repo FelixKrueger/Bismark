@@ -305,18 +305,23 @@ fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
         ),
     ];
     let mode = crate::aligner::config::bwamem3_mode_label(cli);
-    match set.iter().find(|(on, _)| *on) {
-        Some((_, flag)) => Err(AlignerError::Validation(format!(
-            "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
-             insert sizes itself.{}",
-            if cli.taps || cli.bwamem3 {
-                ""
-            } else {
-                " For Bowtie 2 tuning add --bowtie2 (with --five_base_index)."
-            }
-        ))),
-        None => Ok(()),
-    }
+    let Some(&(_, flag)) = set.iter().find(|(on, _)| *on) else {
+        return Ok(());
+    };
+    let hint = match flag {
+        _ if cli.taps || cli.bwamem3 => String::new(),
+        "--known-splicesite-infile" => " 5-Base alignment is unspliced.".into(),
+        "--no-spliced-alignment" => " For HISAT2 add --hisat2 (with --five_base_index).".into(),
+        "--no_dovetail" | "--dovetail" => format!(
+            " For Bowtie 2 tuning add --bowtie2 (with --five_base_index). {}",
+            crate::aligner::config::MINIMAP2_OPT_OUT
+        ),
+        _ => " For Bowtie 2 tuning add --bowtie2 (with --five_base_index).".into(),
+    };
+    Err(AlignerError::Validation(format!(
+        "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
+         insert sizes itself.{hint}"
+    )))
 }
 
 /// Resolve tuning options for paired-end alignment to the unconverted genome.

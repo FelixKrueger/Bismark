@@ -96,14 +96,6 @@ impl FiveBaseChemistry {
         }
     }
 
-    /// The flags that select the bwa-mem3 engine for this chemistry.
-    pub fn engine_flags(self) -> &'static str {
-        match self {
-            Self::Illumina5Base => "--illumina_5base --bwamem3",
-            Self::Taps => "--taps",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Self::Illumina5Base => "5-Base",
@@ -139,10 +131,23 @@ pub(crate) fn bwamem3_mode_label(cli: &Cli) -> &'static str {
 pub(crate) const MINIMAP2_OPT_OUT: &str = "Add --minimap2 to align with minimap2 against the \
      genome FASTA instead (no index needed, but it under-covers methylated CpG islands).";
 
+/// `msg` followed by `tail` as its own sentence.
+fn then_sentence(msg: &str, tail: &str) -> String {
+    let sep = if msg.ends_with(['.', '!', '?']) {
+        " "
+    } else {
+        ". "
+    };
+    format!("{msg}{sep}{tail}")
+}
+
 /// Adds the `--minimap2` opt-out to an error of a run whose engine was defaulted to bwa-mem3.
 fn with_minimap2_opt_out<T>(defaulted: bool, r: Result<T>) -> Result<T> {
     match r {
-        Err(e) if defaulted => Err(AlignerError::Validation(format!("{e} {MINIMAP2_OPT_OUT}"))),
+        Err(e) if defaulted => Err(AlignerError::Validation(then_sentence(
+            &e.to_string(),
+            MINIMAP2_OPT_OUT,
+        ))),
         r => r,
     }
 }
@@ -590,8 +595,8 @@ pub struct RunConfig {
     /// #787: run the post-alignment variant/methylation deconvolution pass + report.
     /// Requires `five_base` (guarded at resolve()).
     pub five_base_deconvolution: bool,
-    /// #787: basename of the NORMAL (unconverted) bowtie2/hisat2 index for a 5-Base
-    /// `--bowtie2`/`--hisat2` run (`None` ⇒ minimap2-on-FASTA default).
+    /// #787: the 5-Base index: an unconverted bowtie2/hisat2 basename or a bwa-mem3 prefix
+    /// (`None` with `--minimap2` and outside 5-Base).
     pub five_base_index: Option<PathBuf>,
     /// #787: inline UMI length for 5-Base UMI dedup (0 = off). Requires `five_base`.
     pub five_base_umi_len: usize,
@@ -908,16 +913,26 @@ fn resolve_five_base_index(
     }
     let dir = genome_dir.join(crate::genome_prep::bwamem3::INDEX_DIR);
     if !dir.is_dir() && five_base_engine_defaulted(cli, aligner) {
-        let binary = if aligner::aligner_found(Aligner::BwaMem3, cli.path_to_bwamem3.as_deref()) {
-            ""
-        } else {
-            " bwa-mem3 (0.16.0 or later) is not on PATH either: install it, or give its folder \
-             with --path_to_bwamem3."
+        let binary = match &cli.path_to_bwamem3 {
+            _ if aligner::aligner_found(Aligner::BwaMem3, cli.path_to_bwamem3.as_deref()) => {
+                String::new()
+            }
+            Some(p) if !p.is_dir() => format!(
+                " --path_to_bwamem3 {} is not a folder: give the folder that holds bwa-mem3.",
+                p.display()
+            ),
+            Some(p) => format!(
+                " bwa-mem3 (0.16.0 or later) is not in {} either.",
+                p.display()
+            ),
+            None => " bwa-mem3 (0.16.0 or later) is not on PATH either: install it, or give its \
+                     folder with --path_to_bwamem3."
+                .into(),
         };
         return Err(AlignerError::Validation(format!(
             "--illumina_5base aligns with bwa-mem3 by default, which needs its methylation index: \
-             build it once with `bismark_genome_preparation --bwamem3 {}` (about 1 h and 104 GB of \
-             RAM for GRCh38), or pass one as --five_base_index.{binary}",
+             build it once with `bismark prepare --bwamem3 {}` (about 1 h and 104 GB of RAM for \
+             GRCh38), or pass one as --five_base_index.{binary}",
             genome_dir.display()
         )));
     }
@@ -1166,8 +1181,16 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     // mode every `--mm2_*` flag dies (the `unless($mm2)` block); in minimap2 mode
     // `--mm2_maximum_length` is range-checked + defaults to 10000. Returns the
     // resolved cutoff to thread into `read_processing` (None for non-minimap2).
-    let maximum_length_cutoff =
-        with_minimap2_opt_out(defaulted, resolve_mm2_max_length(cli, aligner))?;
+    let maximum_length_cutoff = resolve_mm2_max_length(cli, aligner).map_err(|e| {
+        if defaulted {
+            AlignerError::Validation(then_sentence(
+                &e.to_string(),
+                &format!("--illumina_5base aligns with bwa-mem3 by default. {MINIMAP2_OPT_OUT}"),
+            ))
+        } else {
+            e
+        }
+    })?;
     let library = resolve_library(cli)?;
     let format = resolve_format(cli)?;
     validate_multicore(cli)?;
@@ -1357,10 +1380,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             aligner,
             Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3
         ) {
-        with_minimap2_opt_out(
-            defaulted,
-            options::build_five_base_aligner_options(cli, aligner, format),
-        )?
+        options::build_five_base_aligner_options(cli, aligner, format)?
     } else {
         options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
     };
@@ -2360,8 +2380,6 @@ mod tests {
         use FiveBaseChemistry::*;
         assert_eq!(Illumina5Base.flag(), "--illumina_5base");
         assert_eq!(Taps.flag(), "--taps");
-        assert_eq!(Illumina5Base.engine_flags(), "--illumina_5base --bwamem3");
-        assert_eq!(Taps.engine_flags(), "--taps");
         assert_eq!(Illumina5Base.label(), "5-Base");
         assert_eq!(Taps.label(), "TAPS");
         assert_eq!(Illumina5Base.bwamem3_meth(), "5base");
@@ -2864,10 +2882,9 @@ mod tests {
         assert_eq!(config.aligner, Aligner::Minimap2);
         assert!(config.five_base);
         assert_eq!(config.five_base_index, None);
-        assert!(
-            config.aligner_options.contains("-x sr"),
-            "{}",
-            config.aligner_options
+        assert_eq!(
+            config.aligner_options,
+            "-a --MD --secondary=no -t 2 -x sr -K 250K"
         );
     }
 
@@ -3445,15 +3462,19 @@ mod tests {
 
     /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/
     /// `--hisat2` need `--five_base_index` (a normal unconverted index) and then resolve
-    /// to that engine; no engine flag → minimap2 (genome FASTA).
+    /// to that engine; no engine flag → bwa-mem3.
     #[test]
     fn illumina_5base_engine_selection() {
         // rammap: rejected outright.
         let err = resolve_aligner(&cli_from(&["--illumina_5base", "--rammap"])).unwrap_err();
-        assert!(
-            err.to_string().contains("not supported with --rammap"),
-            "{err}"
-        );
+        for want in [
+            "not supported with --rammap",
+            "the default bwa-mem3",
+            "--minimap2 (genome FASTA)",
+            "--bowtie2/--hisat2 (with --five_base_index)",
+        ] {
+            assert!(err.to_string().contains(want), "{want}: {err}");
+        }
         // bowtie2/hisat2 without an index: fail loud.
         for flag in ["--bowtie2", "--hisat2"] {
             let err = resolve_aligner(&cli_from(&["--illumina_5base", flag])).unwrap_err();
