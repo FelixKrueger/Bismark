@@ -998,3 +998,289 @@ fn taps_five_base_baseq_masks_low_quality_calls() {
         .success();
     assert_eq!(r1(&bam_records(&masked)), b".....z");
 }
+
+// ---- #1282: --unmapped in 5-Base/TAPS mode -------------------------------------------------
+
+/// --unmapped fixture: distinct mates with Illumina comments; `bothun` has both mates unmapped,
+/// `edge` is a proper pair past the 8-bp contig.
+const UNMAPPED_R1: &str = "@good 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n\
+                           @unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n\
+                           @samestrand 1:N:0:ACGT\nATGTAA\n+\nIIIIIF\n\
+                           @outward 1:N:0:ACGT\nATGTAG\n+\nIIIIII\n\
+                           @edge 1:N:0:ACGT\nGTACGT\n+\nIIIIII\n\
+                           @bothun 1:N:0:ACGT\nTTTTTT\n+\nIIIIII\n";
+const UNMAPPED_R2: &str = "@good 2:N:0:ACGT\nGTACAT\n+\nHHHHHH\n\
+                           @unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n\
+                           @samestrand 2:N:0:ACGT\nTTACAT\n+\nHHHHHG\n\
+                           @outward 2:N:0:ACGT\nTTACAA\n+\nHHHHHH\n\
+                           @edge 2:N:0:ACGT\nACGTAC\n+\nHHHHHH\n\
+                           @bothun 2:N:0:ACGT\nGGGGGG\n+\nHHHHHH\n";
+
+/// The records `--unmapped` must write: every pair but `good` and `edge`, verbatim.
+fn expected_unmapped(fastq: &str) -> String {
+    fastq
+        .split_inclusive('\n')
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .filter(|rec| !rec[0].starts_with("@good") && !rec[0].starts_with("@edge"))
+        .map(|rec| rec.concat())
+        .collect()
+}
+
+#[cfg(unix)]
+fn unmapped_run() -> FakeRun {
+    let run = fake_run("", &[("chr1", 8)], SQ_OK);
+    fs::write(&run.r1, UNMAPPED_R1).unwrap();
+    fs::write(&run.r2, UNMAPPED_R2).unwrap();
+    custom_fake(
+        &run,
+        "printf 'good\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         good\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tGTACAT\\tHHHHHH\\tAS:i:6\\n\
+         unmapped\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tACGTAC\\tFFFFFF\\n\
+         unmapped\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tTACGTA\\tEEEEEE\\n\
+         samestrand\\t67\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAA\\tIIIIIF\\tAS:i:6\\n\
+         samestrand\\t131\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tTTACAT\\tHHHHHG\\tAS:i:6\\n\
+         outward\\t99\\tchr1\\t5\\t60\\t4M2S\\t=\\t1\\t0\\tATGTAG\\tIIIIII\\tAS:i:4\\n\
+         outward\\t147\\tchr1\\t1\\t60\\t4S2M\\t=\\t5\\t0\\tTTACAA\\tHHHHHH\\tAS:i:2\\n\
+         edge\\t99\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t6\\tGTACGT\\tIIIIII\\tAS:i:6\\n\
+         edge\\t147\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t-6\\tACGTAC\\tHHHHHH\\tAS:i:6\\n\
+         bothun\\t77\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tTTTTTT\\tIIIIII\\n\
+         bothun\\t141\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tGGGGGG\\tHHHHHH\\n'",
+    );
+    run
+}
+
+/// The two unmapped files of a run, decompressed.
+fn unmapped_files(out: &Path) -> (String, String) {
+    let read = |suffix: &str| -> String {
+        let path = fs::read_dir(out)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().ends_with(suffix))
+            .unwrap_or_else(|| panic!("no *{suffix} in {}", out.display()));
+        let mut s = String::new();
+        std::io::Read::read_to_string(
+            &mut flate2::read::MultiGzDecoder::new(fs::File::open(path).unwrap()),
+            &mut s,
+        )
+        .unwrap();
+        s
+    };
+    (
+        read("_unmapped_reads_1.fq.gz"),
+        read("_unmapped_reads_2.fq.gz"),
+    )
+}
+
+fn report_value(out: &Path, label: &str) -> u64 {
+    let path = fs::read_dir(out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().ends_with("_PE_report.txt"))
+        .expect("PE report");
+    let rep = fs::read_to_string(path).unwrap();
+    rep.lines()
+        .find(|l| l.starts_with(label))
+        .and_then(|l| l.rsplit('\t').next())
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no '{label}' line:\n{rep}"))
+}
+
+fn qnames(out: &Path) -> Vec<String> {
+    let path = fs::read_dir(out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().ends_with("_pe.bam"))
+        .expect("BAM");
+    let mut reader = bismark::io::BamReader::from_path(&path).unwrap();
+    reader
+        .records()
+        .map(|r| {
+            let r = r.unwrap();
+            String::from_utf8_lossy(r.inner().name().unwrap().as_ref()).into_owned()
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_writes_the_unaligned_pairs_verbatim() {
+    for mode in [&["--illumina_5base", "--bwamem3"][..], &["--taps"][..]] {
+        for extra in [&[][..], &["--icpc"][..], &["--five_base_umi_len", "1"][..]] {
+            if mode[0] == "--taps" && extra.first() == Some(&"--five_base_umi_len") {
+                continue; // TAPS rejects --five_base_umi_len.
+            }
+            let run = unmapped_run();
+            bin()
+                .args(mode)
+                .args(extra)
+                .arg("--unmapped")
+                .arg("--five_base_index")
+                .arg(&run.index)
+                .arg("--path_to_bwamem3")
+                .arg(run.bins.path())
+                .arg("--genome")
+                .arg(run.genome.path())
+                .arg("--output_dir")
+                .arg(run.out.path())
+                .arg("-1")
+                .arg(&run.r1)
+                .arg("-2")
+                .arg(&run.r2)
+                .assert()
+                .success();
+            let (u1, u2) = unmapped_files(run.out.path());
+            assert_eq!(u1, expected_unmapped(UNMAPPED_R1), "{mode:?} {extra:?}");
+            assert_eq!(u2, expected_unmapped(UNMAPPED_R2), "{mode:?} {extra:?}");
+            let none = report_value(
+                run.out.path(),
+                "Sequence pairs with no alignments under any condition:",
+            );
+            assert_eq!(none, 4, "{mode:?} {extra:?}");
+            assert_eq!(u1.lines().count() as u64, 4 * none);
+            assert_eq!(
+                report_value(
+                    run.out.path(),
+                    "Sequence pairs which were discarded because genomic sequence could not be extracted:"
+                ),
+                1
+            );
+            assert_eq!(
+                qnames(run.out.path()),
+                ["good", "good"],
+                "{mode:?} {extra:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_honours_upto() {
+    let run = unmapped_run();
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--upto", "2"])
+        .assert()
+        .success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    assert_eq!(u1, "@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n");
+    assert_eq!(u2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_honours_skip() {
+    let run = unmapped_run();
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--skip", "2"])
+        .assert()
+        .success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    let drop_unmapped = |s: String| {
+        s.replacen("@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n", "", 1)
+            .replacen("@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n", "", 1)
+    };
+    assert_eq!(u1, drop_unmapped(expected_unmapped(UNMAPPED_R1)));
+    assert_eq!(u2, drop_unmapped(expected_unmapped(UNMAPPED_R2)));
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_leaves_the_bam_unchanged() {
+    let (with, without) = (unmapped_run(), unmapped_run());
+    bwamem3_cmd(&with).arg("--unmapped").assert().success();
+    bwamem3_cmd(&without).assert().success();
+    let recs = |run: &FakeRun| -> Vec<String> {
+        bam_records(run)
+            .iter()
+            .map(|r| format!("{:?}", r.inner()))
+            .collect()
+    };
+    assert_eq!(recs(&with), recs(&without));
+    assert_eq!(recs(&with).len(), 2);
+}
+
+/// A proper pair dropped as a UMI duplicate is not an unaligned pair.
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_skips_umi_duplicates() {
+    let reads = "@a 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n@b 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n";
+    let run = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--five_base_umi_len", "1"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("removed 1 duplicate pair(s)"));
+    assert_eq!(
+        unmapped_files(run.out.path()),
+        (String::new(), String::new())
+    );
+    assert_eq!(qnames(run.out.path()), ["a", "a"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_adds_a_missing_final_newline() {
+    let run = unmapped_run();
+    let r1 = "@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n";
+    fs::write(&run.r1, r1.trim_end()).unwrap();
+    fs::write(&run.r2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE").unwrap();
+    custom_fake(
+        &run,
+        "printf 'unmapped\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tACGTAC\\tFFFFFF\\n\
+         unmapped\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tTACGTA\\tEEEEEE\\n'",
+    );
+    bwamem3_cmd(&run).arg("--unmapped").assert().success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    assert_eq!(u1, r1);
+    assert_eq!(u2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_rejects_ambiguous_outputs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for flag in ["--ambiguous", "--ambig_bam"] {
+        bwamem3_cmd(&run)
+            .arg(flag)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "--illumina_5base keeps every proper pair at any MAPQ, so no pair is ambiguous: {flag} does not apply"
+            )));
+        taps_cmd(&run)
+            .arg(flag)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "--taps keeps every proper pair at any MAPQ, so no pair is ambiguous: {flag} does not apply"
+            )));
+    }
+    assert_eq!(
+        fs::read_dir(run.out.path()).unwrap().count(),
+        0,
+        "output written"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_standalone_modes_reject_aux_outputs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for flag in ["--unmapped", "--ambiguous", "--ambig_bam"] {
+        for mode in [
+            "--five_base_consensus_from_bam",
+            "--five_base_bisulfite_bam",
+        ] {
+            bin()
+                .args(["--illumina_5base", flag, mode, "x.bam", "--genome"])
+                .arg(run.genome.path())
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains(format!(
+                    "{flag} applies to an alignment run"
+                )));
+        }
+    }
+}

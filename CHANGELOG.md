@@ -1,6 +1,12 @@
 # Bismark Changelog
 
 
+## Bismark 3.5.0 (unreleased)
+
+### bismark (aligner)
+
+- **`--unmapped` now writes the unaligned pairs of `--illumina_5base` and `--taps` runs (they were empty files), and `--ambiguous`/`--ambig_bam`, which only ever made empty files there, stop the run instead, as do all three with `--five_base_consensus_from_bam` or `--five_base_bisulfite_bam` ([#1283](https://github.com/FelixKrueger/Bismark/pull/1283)).**
+
 ## Bismark 3.4.0 (released 2026-11-21)
 
 ### bismark (aligner)

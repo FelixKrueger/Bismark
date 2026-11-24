@@ -1195,6 +1195,17 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 "{flag} is not supported with --slam."
             )));
         }
+        for (set, opt) in [
+            (cli.ambiguous, "--ambiguous"),
+            (cli.ambig_bam, "--ambig_bam"),
+        ] {
+            if set {
+                return Err(AlignerError::Unsupported(format!(
+                    "{flag} keeps every proper pair at any MAPQ, so no pair is ambiguous: {opt} \
+                     does not apply. Filter on MAPQ downstream if needed."
+                )));
+            }
+        }
         if cli.fasta {
             return Err(AlignerError::Unsupported(format!(
                 "{flag} requires FASTQ input in v1 (drop --fasta)."
@@ -2392,13 +2403,15 @@ mod tests {
         );
         let base = ["--five_base_index", "/x/i.fa", "--genome", g];
         let pe = ["-1", r1, "-2", r2];
-        let cases: [(&[&str], &str); 6] = [
+        let cases: [(&[&str], &str); 8] = [
             (&[], "paired-end only"),
             (&["--non_directional"], "directional only"),
             (&["--pbat"], "directional only"),
             (&["--slam"], "--slam"),
             (&["--fasta"], "FASTQ input"),
             (&["--combined_index"], "--combined_index"),
+            (&["--ambiguous"], "--ambiguous does not apply"),
+            (&["--ambig_bam"], "--ambig_bam does not apply"),
         ];
         for (i, (extra, want)) in cases.into_iter().enumerate() {
             for (mode, name) in [
@@ -2423,6 +2436,36 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// `--unmapped` is accepted in 5-Base/TAPS mode (#1282): the run fails later, at the index.
+    #[test]
+    fn five_base_accepts_unmapped() {
+        let (_t, g, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            g.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+        for mode in [&["--taps"][..], &["--illumina_5base", "--bwamem3"][..]] {
+            let mut v: Vec<&str> = mode.to_vec();
+            v.extend_from_slice(&[
+                "--five_base_index",
+                "/x/i.fa",
+                "--genome",
+                g,
+                "-1",
+                r1,
+                "-2",
+                r2,
+            ]);
+            v.push("--unmapped");
+            let e = resolve(&cli_from(&v), "c".into()).unwrap_err().to_string();
+            assert!(
+                e.contains("bwa-mem3 index file") && !e.contains("--unmapped"),
+                "{mode:?}: {e}"
+            );
         }
     }
 
