@@ -5,7 +5,7 @@ description: The messages that stop a run (including bwa-mem3, streamed-run and 
 tags: [troubleshooting, errors, bwa-mem3, streaming, output-names]
 page_id: errors
 subject_status: current
-updated: 2026-11-22
+updated: 2026-11-24
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
@@ -15,13 +15,13 @@ sources:
     commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 3225cc7
+    commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 3225cc7
+    commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
     commit: 3225cc7
@@ -79,6 +79,8 @@ Each row gives the start of a message that stops a run, its cause in the code, a
 | `--taps aligns with bwa-mem3 only` | `--taps` was given another aligner flag (`expand_taps` in `aligner/config.rs`) | Drop the aligner flag |
 | `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution, `--five_base_umi_qname` or `--five_base_emit_multiplicity` (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](../usage/align-taps-reads.md) |
 | `--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure …` or `--five_base_min_mapq only filters the duplex/consensus pass …` | `--taps` with a non-zero `--five_base_umi_len` or `--five_base_min_mapq` (`expand_taps`) | Drop the option |
+| `--illumina_5base keeps every proper pair at any MAPQ, so no pair is ambiguous: --ambiguous does not apply` (or `--taps`, `--ambig_bam`) | `--ambiguous` or `--ambig_bam` in a 5-Base or TAPS run (`resolve` in `aligner/config.rs`) | Drop the option; filter on MAPQ downstream if needed. `--unmapped` works |
+| `--unmapped applies to an alignment run; --five_base_consensus_from_bam and --five_base_bisulfite_bam align no reads` (or `--ambiguous`, `--ambig_bam`) | The option with a standalone 5-Base BAM mode (`run` in `aligner/mod.rs`) | Drop the option |
 | `<R2> has fewer reads than <R1>` (or `more`), `<engine> produced more records than read pairs` | In a 5-Base run, R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`) | Check that the two files are mates from one run, and read the engine's own errors |
 | `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
 | `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |

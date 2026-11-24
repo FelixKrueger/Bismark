@@ -5,14 +5,14 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-21
+updated: 2026-11-24
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
     commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 667e20b
+    commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: 667e20b
@@ -21,7 +21,7 @@ sources:
     commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: 667e20b
+    commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
     commit: 667e20b
@@ -94,7 +94,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
 | `--bam` | on | Accepted; BAM is the only output |
 | `--gzip` | off | Gzip the converted reads when they are written as files (`convert.rs`); no effect when they are streamed; not with `--pbat` |
-| `--unmapped` (`--un`), `--ambiguous`, `--ambig_bam` | off | Extra outputs for unmapped and ambiguous reads |
+| `--unmapped` (`--un`), `--ambiguous`, `--ambig_bam` | off | Extra outputs for unmapped and ambiguous reads; with `--illumina_5base` or `--taps`, only `--unmapped` (the unaligned pairs as read) |
 | `--add_barcode`, `--add_umi` | off | `CB:Z:` / `UR:Z:` tags from the read name |
 | `--strandID` | off | `YS:Z:` strand tag; paired-end only, a note is printed for single-end |
 
@@ -113,7 +113,8 @@ With `--bwamem3`, `--five_base_index` is the FASTA path a `bwa-mem3 index --meth
 | `--sam`, `--cram` | `resolve_output` |
 | `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
 | `--old_flag` | `reject_old_flag` |
-| `--nucleotide_coverage` or `--old_flag` with `--five_base_consensus_from_bam` / `--five_base_bisulfite_bam` | `run` in `aligner/mod.rs` |
+| `--nucleotide_coverage`, `--old_flag`, `--unmapped`, `--ambiguous` or `--ambig_bam` with `--five_base_consensus_from_bam` / `--five_base_bisulfite_bam` | `run` in `aligner/mod.rs` |
+| `--ambiguous` or `--ambig_bam` with `--illumina_5base` or `--taps` | `resolve` |
 | minimap2 or rammap with paired-end reads, or a positional paired uBAM, unaligned CRAM or BINSEQ (outside 5-Base) | `reject_unsupported_paired_aligner` |
 | `-D` or `-R` with minimap2 or rammap | `build_aligner_options` in `aligner/options.rs` |
 | Read files with Windows (CRLF) line endings | `reject_crlf_inputs` in `aligner/mod.rs`, before any aligner starts |
