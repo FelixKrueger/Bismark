@@ -3065,7 +3065,7 @@ impl FiveBasePair {
 }
 
 /// Build the two Bismark records for one 5-Base read pair, or why it has none (not a proper
-/// pair / a mate unmapped / chromosome-edge guard). Directional: the PE index is OT
+/// pair / a mate unmapped / a rejected orientation / chromosome-edge guard). Directional: the PE index is OT
 /// (0) when R1 maps forward, OB (3) when R1 maps reverse — the only two orientations
 /// a directional library produces. Pure (unit-testable), inverted polarity.
 #[allow(clippy::too_many_arguments)]

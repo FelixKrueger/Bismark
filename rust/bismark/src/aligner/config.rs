@@ -2468,6 +2468,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn bwamem3_missing_index_names_the_mode() {
         let (_t, g, r1, r2) = fasta_only_genome_and_reads();

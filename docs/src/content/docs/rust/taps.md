@@ -56,7 +56,7 @@ ignores it.
 | `--five_base_bisulfite_bam` | accepted: re-encodes a TAPS BAM to bisulfite convention, as for 5-Base |
 | `-p` / `--multicore`, `--path_to_bwamem3`, `--upto`, output options | as for `--illumina_5base --bwamem3` |
 | `--nucleotide_coverage` | accepted: runs bam2nuc on the BAM, which counts the genomic sequence under each alignment, so the chemistry does not matter |
-| `--unmapped` | accepted: writes the pairs bwa-mem3 did not align as a proper pair, exactly as they appear in the input |
+| `--unmapped` | accepted: writes the pairs that gave no usable proper pair (a mate unmapped, or the mates on one strand, on two contigs or pointing apart), exactly as they appear in the input |
 | `--ambiguous`, `--ambig_bam` | rejected: every proper pair is kept at any MAPQ, so no pair is ambiguous |
 | `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap` | rejected: TAPS aligns with bwa-mem3 only |
 | `--illumina_5base` | rejected: a different chemistry label for the same path |

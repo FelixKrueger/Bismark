@@ -165,7 +165,7 @@ For non-directional paired-end libraries, the strands identity is encoded by the
 
   Write all reads that could not be aligned to the file `_unmapped_reads.fq.gz` in the output directory. Written reads will appear as they did in the input, without any translation of quality values that may have taken place within `Bowtie` or `Bismark`. Paired-end reads will be written to two parallel files with `_1` and `_2` inserted in their filenames, i.e. `unmapped_reads_1.fq.gz` and `unmapped_reads_2.fq.gz`. Reads with more than one valid alignment with the same number of lowest mismatches (ambiguous mapping) are also written to `unmapped_reads.fq.gz` unless `--ambiguous` is also specified. With several `-1`/`-2` pairs, two pairs whose read-2 files share a file name stop the run before anything is written, since both would write the same `_2` file.
 
-  With `--illumina_5base` or `--taps`, the files hold the pairs the engine did not align as a proper pair, exactly as they appear in the input (header included), while pairs with several alignments stay in the BAM, since that mode keeps every proper pair at any MAPQ.
+  With `--illumina_5base` or `--taps`, the files hold the pairs that are not in the BAM because they gave no usable proper pair (a mate unmapped, or the mates on one strand, on two contigs or pointing apart), exactly as they appear in the input (header included). Pairs with several alignments stay in the BAM, since that mode keeps every proper pair at any MAPQ, and pairs at a chromosome end, whose genomic sequence cannot be extracted, go to neither.
 
 - `--ambiguous`
 

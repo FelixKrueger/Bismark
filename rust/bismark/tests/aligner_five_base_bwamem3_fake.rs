@@ -1001,21 +1001,22 @@ fn taps_five_base_baseq_masks_low_quality_calls() {
 
 // ---- #1282: --unmapped in 5-Base/TAPS mode -------------------------------------------------
 
-/// R1 and R2 FASTQ for the --unmapped tests: distinct mates, Illumina comments, one `/1` `/2`
-/// pair with `+id` lines. Pairs: good (proper), unmapped (a mate unmapped), samestrand (FF),
-/// outward (rejected geometry), edge (proper but past the 8-bp contig).
+/// --unmapped fixture: distinct mates with Illumina comments; `bothun` has both mates unmapped,
+/// `edge` is a proper pair past the 8-bp contig.
 const UNMAPPED_R1: &str = "@good 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n\
                            @unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n\
                            @samestrand 1:N:0:ACGT\nATGTAA\n+\nIIIIIF\n\
                            @outward 1:N:0:ACGT\nATGTAG\n+\nIIIIII\n\
-                           @edge 1:N:0:ACGT\nGTACGT\n+\nIIIIII\n";
+                           @edge 1:N:0:ACGT\nGTACGT\n+\nIIIIII\n\
+                           @bothun 1:N:0:ACGT\nTTTTTT\n+\nIIIIII\n";
 const UNMAPPED_R2: &str = "@good 2:N:0:ACGT\nGTACAT\n+\nHHHHHH\n\
                            @unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n\
                            @samestrand 2:N:0:ACGT\nTTACAT\n+\nHHHHHG\n\
                            @outward 2:N:0:ACGT\nTTACAA\n+\nHHHHHH\n\
-                           @edge 2:N:0:ACGT\nACGTAC\n+\nHHHHHH\n";
+                           @edge 2:N:0:ACGT\nACGTAC\n+\nHHHHHH\n\
+                           @bothun 2:N:0:ACGT\nGGGGGG\n+\nHHHHHH\n";
 
-/// The records `--unmapped` must write: the unmapped, samestrand and outward pairs, verbatim.
+/// The records `--unmapped` must write: every pair but `good` and `edge`, verbatim.
 fn expected_unmapped(fastq: &str) -> String {
     fastq
         .split_inclusive('\n')
@@ -1042,7 +1043,9 @@ fn unmapped_run() -> FakeRun {
          outward\\t99\\tchr1\\t5\\t60\\t4M2S\\t=\\t1\\t0\\tATGTAG\\tIIIIII\\tAS:i:4\\n\
          outward\\t147\\tchr1\\t1\\t60\\t4S2M\\t=\\t5\\t0\\tTTACAA\\tHHHHHH\\tAS:i:2\\n\
          edge\\t99\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t6\\tGTACGT\\tIIIIII\\tAS:i:6\\n\
-         edge\\t147\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t-6\\tACGTAC\\tHHHHHH\\tAS:i:6\\n'",
+         edge\\t147\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t-6\\tACGTAC\\tHHHHHH\\tAS:i:6\\n\
+         bothun\\t77\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tTTTTTT\\tIIIIII\\n\
+         bothun\\t141\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tGGGGGG\\tHHHHHH\\n'",
     );
     run
 }
@@ -1133,7 +1136,7 @@ fn five_base_unmapped_writes_the_unaligned_pairs_verbatim() {
                 run.out.path(),
                 "Sequence pairs with no alignments under any condition:",
             );
-            assert_eq!(none, 3, "{mode:?} {extra:?}");
+            assert_eq!(none, 4, "{mode:?} {extra:?}");
             assert_eq!(u1.lines().count() as u64, 4 * none);
             assert_eq!(
                 report_value(
@@ -1162,6 +1165,58 @@ fn five_base_unmapped_honours_upto() {
     let (u1, u2) = unmapped_files(run.out.path());
     assert_eq!(u1, "@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n");
     assert_eq!(u2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_honours_skip() {
+    let run = unmapped_run();
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--skip", "2"])
+        .assert()
+        .success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    let drop_unmapped = |s: String| {
+        s.replacen("@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n", "", 1)
+            .replacen("@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n", "", 1)
+    };
+    assert_eq!(u1, drop_unmapped(expected_unmapped(UNMAPPED_R1)));
+    assert_eq!(u2, drop_unmapped(expected_unmapped(UNMAPPED_R2)));
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_leaves_the_bam_unchanged() {
+    let (with, without) = (unmapped_run(), unmapped_run());
+    bwamem3_cmd(&with).arg("--unmapped").assert().success();
+    bwamem3_cmd(&without).assert().success();
+    let recs = |run: &FakeRun| -> Vec<String> {
+        bam_records(run)
+            .iter()
+            .map(|r| format!("{:?}", r.inner()))
+            .collect()
+    };
+    assert_eq!(recs(&with), recs(&without));
+    assert_eq!(recs(&with).len(), 2);
+}
+
+/// A proper pair dropped as a UMI duplicate is not an unaligned pair.
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_skips_umi_duplicates() {
+    let reads = "@a 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n@b 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n";
+    let run = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--five_base_umi_len", "1"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("removed 1 duplicate pair(s)"));
+    assert_eq!(
+        unmapped_files(run.out.path()),
+        (String::new(), String::new())
+    );
+    assert_eq!(qnames(run.out.path()), ["a", "a"]);
 }
 
 #[cfg(unix)]
