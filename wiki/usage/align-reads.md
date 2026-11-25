@@ -9,19 +9,19 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: a199ad4
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
     commit: a199ad4
@@ -33,7 +33,7 @@ sources:
     commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/staging.rs
-    commit: a199ad4
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/ubam.rs
     commit: a199ad4
@@ -92,7 +92,7 @@ Only one aligner can be selected (`resolve_aligner` in `aligner/config.rs`). The
 | Option | Effect |
 |---|---|
 | `-p <n>` / `--threads <n>` | Threads per aligner instance, 2 or more. For Bowtie 2 and HISAT2 it also adds `--reorder` (`build_aligner_options` in `aligner/options.rs`). For minimap2 and rammap it sets `-t`. |
-| `--multicore <n>` / `--parallel <n>` | Splits the input into `n` chunks that run in parallel. For HISAT2 it means one instance with `-p n` instead, and a run that gives both `--multicore` and `-p` is rejected; in 5-Base runs `-p` wins instead. |
+| `--multicore <n>` / `--parallel <n>` | Splits the input into `n` chunks that run in parallel. For HISAT2 it means one instance with `-p n` instead, and a run that gives both `--multicore` and `-p` is rejected; in 5-Base runs it sets bwa-mem3's threads, and `-p` wins. |
 
 A single-end directional run starts 2 aligner instances and a non-directional run starts 4 (`se_instance_plan` in `aligner/mod.rs`); each instance gets the `-p` threads.
 
@@ -125,7 +125,7 @@ Each input (read 1 for paired-end) names its own outputs: the file name with `.f
 
 ## 5-Base data
 
-`--illumina_5base` aligns Illumina 5-Base reads (methylated C read as T) with bwa-mem3 (the default), minimap2, Bowtie 2 or HISAT2 against the unconverted genome: see [usage/align-5-base-reads.md](align-5-base-reads.md).
+`--illumina_5base` aligns Illumina 5-Base reads (methylated C read as T) with bwa-mem3 against the unconverted genome: see [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## Links
 

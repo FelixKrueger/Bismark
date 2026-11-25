@@ -15,10 +15,10 @@ sources:
     commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: 855b812
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: 855b812
@@ -27,7 +27,7 @@ sources:
     commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: d48c830
 ---
 
 # Bismark BAM records
@@ -48,7 +48,7 @@ From `generate_sam_header` in `aligner/output.rs`:
 
 `bismark dedup`, `extract`, `bam2nuc`, `filter` and `consistency` read the `@PG ID:Bismark` line to tell single-end from paired-end. If that line has no `-1`/`-2` but the first record has FLAG `0x1`, the file is paired-end, as for a run on a positional paired uBAM, BINSEQ or unaligned CRAM file (`detect_paired` in `io/read.rs`). Each takes `-s`/`-p` to override it.
 
-A bwa-mem3 5-Base BAM (`--illumina_5base` with no engine flag, or `--bwamem3`) or a `--taps` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>`, with the literal text `<R1> <R2>` rather than the file names (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection ignores it.
+A 5-Base (`--illumina_5base`) or `--taps` BAM has a second line, `@PG ID:bwa-mem3 PN:bwa-mem3 PP:Bismark VN:<version> CL:bwa-mem3 <options> <index> <R1> <R2>`, with the literal text `<R1> <R2>` rather than the file names (`add_bwamem3_pg` in `aligner/mod.rs`). Its ID does not contain `Bismark`, so the single-end / paired-end detection ignores it.
 
 ## Strand tags
 

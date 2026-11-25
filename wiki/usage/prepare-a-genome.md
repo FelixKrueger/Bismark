@@ -9,7 +9,7 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/cli.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/discovery.rs
     commit: dbd7c27
@@ -33,7 +33,7 @@ sources:
     commit: dbd7c27
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: d48c830
 ---
 
 # Prepare a genome
@@ -84,7 +84,7 @@ If `Bisulfite_Genome/` already exists, the tool prints a warning and overwrites 
 | `--large-index` | Forces a large Bowtie 2 / HISAT2 index. Not with `--minimap2`. |
 | `--combined_genome` | Also builds the combined index. |
 
-5-Base runs with `--minimap2`, `--bowtie2` or `--hisat2` do not need this step: they read the genome FASTA directly, or a normal (unconverted) Bowtie 2 or HISAT2 index. The default 5-Base engine, bwa-mem3, needs the index below. See [usage/align-5-base-reads.md](align-5-base-reads.md).
+5-Base and TAPS runs do not need this step. They align with bwa-mem3, which needs the index below. See [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## bwa-mem3 index (`--bwamem3`)
 
@@ -103,7 +103,7 @@ bismark prepare --bwamem3 --parallel 16 /data/genomes/GRCh38/
 | Check | `prune_and_check` requires exactly the 7 files, fails on any other file (for example an `.alt` or `.hdr` sidecar), and compares the contig names and lengths in the `.ann` file with the genome. |
 | Publish | `publish` renames the staging folder to `Bwamem3_Index/`. An existing index is moved to `Bwamem3_Index.old.<random>/` first, and deleted after the swap. |
 
-The index is `<genome>/Bwamem3_Index/genome.fa.{amb,ann,pac,meth.amb,meth.ann,meth.pac,meth.bwt.2bit.64}`. The FASTA itself is not kept. `--taps` and `--illumina_5base` (with no engine flag, or `--bwamem3`) find this folder when `--genome` points at the genome folder and `--five_base_index` is not given.
+The index is `<genome>/Bwamem3_Index/genome.fa.{amb,ann,pac,meth.amb,meth.ann,meth.pac,meth.bwt.2bit.64}`. The FASTA itself is not kept. `--taps` and `--illumina_5base` find this folder when `--genome` points at the genome folder and `--five_base_index` is not given.
 
 | Option | Effect |
 |---|---|

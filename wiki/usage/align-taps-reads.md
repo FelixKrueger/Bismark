@@ -5,20 +5,20 @@ description: Run TAPS data with --taps, what it turns on, the options it accepts
 tags: [alignment, taps, bwa-mem3, 5-base]
 page_id: align-taps-reads
 subject_status: current
-updated: 2026-11-24
+updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: db29eb9
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 855b812
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 855b812
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: db29eb9
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 855b812
@@ -66,7 +66,7 @@ After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply,
 | `--five_base_index <genome.fa or folder>` | Optional when `<genome folder>/Bwamem3_Index/` exists. Otherwise the FASTA that the `bwa-mem3 index --meth` index was built from, or a folder written by `bismark prepare --bwamem3` (`resolve_five_base_index` in `aligner/config.rs`) |
 | `--five_base_baseq <n>` | Bases below Phred n are not called (`mask_low_quality` in `aligner/mod.rs`); 0 is off |
 | `--five_base_bisulfite_bam <bam>` | Re-encodes a TAPS BAM to bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone` in `aligner/mod.rs`) |
-| `-p`, `--multicore`, `--path_to_bwamem3`, output options | As for `--illumina_5base --bwamem3`: [usage/align-5-base-reads.md](align-5-base-reads.md) |
+| `-p`, `--multicore`, `--path_to_bwamem3`, output options | As for `--illumina_5base`: [usage/align-5-base-reads.md](align-5-base-reads.md) |
 | `--nucleotide_coverage` | Runs bam2nuc on the final BAM (`run_nucleotide_coverage` in `aligner/mod.rs`); bam2nuc counts the genomic sequence under each alignment, so the chemistry does not change it |
 
 The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 --meth-tags none -K 100000000 -t <n>` (`bwamem3_options` in `aligner/options.rs`). The index files, the contig check, the version check, which pairs are kept, what `--unmapped` writes, and the overhang bases that are not called are the same as for `--illumina_5base --bwamem3`: see [usage/align-5-base-reads.md](align-5-base-reads.md).
