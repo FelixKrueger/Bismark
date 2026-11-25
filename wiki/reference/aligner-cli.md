@@ -9,13 +9,13 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/convert.rs
     commit: 667e20b
@@ -27,7 +27,7 @@ sources:
     commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 457509a
+    commit: 6b6f0b4
 ---
 
 # Aligner options
@@ -126,7 +126,8 @@ With bwa-mem3 (no engine flag, or `--bwamem3`), `--five_base_index` is the FASTA
 | `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
 | `--bwamem3` without `--illumina_5base`, or with another aligner; `--five_base_index` with `--minimap2`; `--illumina_5base` with `--rammap` | `resolve_aligner` |
 | `--path_to_minimap2` with `--illumina_5base` and no engine flag | `resolve` |
-| A Bowtie 2 or HISAT2 index as `--five_base_index` with `--illumina_5base` and no engine flag | `resolve_five_base_index` |
+| A Bowtie 2 or HISAT2 index as `--five_base_index` (also found under `$BOWTIE2_INDEXES`/`$HISAT2_INDEXES`; a folder is not checked) with `--illumina_5base` and no engine flag | `resolve_five_base_index` |
+| `--illumina_5base --minimap2` with `-N`, `-L`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X` or `--known-splicesite-infile` | `reject_five_base_minimap2_tuning` in `aligner/options.rs` |
 | A bwa-mem3 run (`--illumina_5base` with no engine flag, `--bwamem3` or `--taps`) with no `--five_base_index` and no `<genome>/Bwamem3_Index/`, or a `--five_base_index` folder that holds no index | `resolve_five_base_index` |
 | bwa-mem3 (no engine flag, or `--bwamem3`) with `--local`, `--score_min`, `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `-I`/`--minins`, `-X`/`--maxins`, `--dovetail`, `--no_dovetail`, `--no-spliced-alignment`, `--known-splicesite-infile` or `--most_valid_alignments` | `reject_bwamem3_tuning` |
 | A bwa-mem3 run with a missing index file, or bwa-mem3 older than 0.16.0 | `check_bwamem3_index_files`, `detect_aligner` in `aligner/aligner.rs` |

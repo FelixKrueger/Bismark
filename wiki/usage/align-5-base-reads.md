@@ -9,13 +9,13 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: 457509a
@@ -24,10 +24,13 @@ sources:
     commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 457509a
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/methylation.rs
     commit: 855b812
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/discovery.rs
+    commit: 6b6f0b4
 ---
 
 # Align 5-Base reads
@@ -59,6 +62,8 @@ sources:
 
 With no engine flag, `--illumina_5base` aligns with bwa-mem3 (`resolve_aligner` in `aligner/config.rs`). Only one engine can be selected; `--bwamem3` with another aligner flag is rejected, `--bwamem3` needs `--illumina_5base`, and `--rammap` is rejected. With bwa-mem3, Bowtie 2 or HISAT2, the 5-Base option errors and `-p 1` come before the index and binary checks (`resolve`). `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. A bisulfite `BS_CT`/`BS_GA` index is rejected. Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 
+With `--minimap2`, `-N`, `-L`, `--score_min`, `--rdg`, `--rfg`, `-I` and `-X` are rejected, because they have no effect there, and `--known-splicesite-infile` because 5-Base alignment is unspliced; like the other option errors, this comes before the index and binary checks (`reject_five_base_minimap2_tuning` in `aligner/options.rs`, called from `resolve`).
+
 The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 does not: see [troubleshooting/data-quality.md](../troubleshooting/data-quality.md).
 
 ### Runs with no engine flag
@@ -67,9 +72,9 @@ A run without `--bwamem3`, `--minimap2`, `--bowtie2` or `--hisat2` uses bwa-mem3
 
 - The start-up notice ends with `bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one.` (`five_base_notice` in `aligner/mod.rs`).
 - With no `--five_base_index` and no `<genome folder>/Bwamem3_Index/`, the run stops before it writes anything, and names `bismark prepare --bwamem3`. When bwa-mem3 is also missing, the same message says so (`resolve_five_base_index`).
-- A `--five_base_index` that is a Bowtie 2 or HISAT2 index (`.1.bt2`, `.1.bt2l`, `.1.ht2` or `.1.ht2l`, and no bwa-mem3 index) is rejected with "add `--bowtie2`" or "add `--hisat2`" (`unconverted_index_kind`).
-- The index, version and binary errors, the `--mm2_*` errors and `--path_to_minimap2` (rejected) end with the `--minimap2` opt-out (`with_minimap2_opt_out`, `MINIMAP2_OPT_OUT`).
-- A Bowtie 2 tuning option is rejected with "add `--bowtie2` (with `--five_base_index`)"; `--dovetail` and `--no_dovetail` also name `--minimap2`, `--no-spliced-alignment` names `--hisat2`, and `--known-splicesite-infile` gets no engine hint, because no 5-Base engine takes it (`reject_bwamem3_tuning` in `aligner/options.rs`).
+- A `--five_base_index` that is a Bowtie 2 or HISAT2 index (`.1.bt2`, `.1.bt2l`, `.1.ht2` or `.1.ht2l` at the path or, as the aligners look, under `$BOWTIE2_INDEXES` or `$HISAT2_INDEXES`, and no bwa-mem3 index) is rejected with "add `--bowtie2`" or "add `--hisat2`" (`unconverted_index_kind`, `unconverted_index_found` in `aligner/discovery.rs`). A folder is not checked this way; it is read as a bwa-mem3 index folder.
+- The index, version and binary errors, the `--mm2_*` errors and `--path_to_minimap2` (rejected) end with the `--minimap2` opt-out, which also says to drop `--five_base_index` when one is given, because `--minimap2` rejects it (`with_minimap2_opt_out`, `minimap2_opt_out`).
+- A Bowtie 2 tuning option is rejected with "add `--bowtie2` (with `--five_base_index`), or drop the option"; `--dovetail` and `--no_dovetail` also name `--minimap2`, `--no-spliced-alignment` names `--hisat2`, and `--known-splicesite-infile` gets no engine hint, because no 5-Base engine takes it (`reject_bwamem3_tuning` in `aligner/options.rs`).
 
 ### Bowtie 2 and HISAT2
 
