@@ -724,7 +724,7 @@ fn five_base_pe_groundtruth_real_aligner_bwamem3() {
     let cpgs = cpg_positions(&reference);
     let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
     let mut truth: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
-    // The driver needs 2 genome bases past each mate, so the last fragment stops short of the end.
+    // The driver needs 2 genome bases past each mate, so no fragment ends at the contig end.
     for p in 0..(reference.len() - 2) / frag {
         let start = p * frag;
         let qname = format!("pair{p}");

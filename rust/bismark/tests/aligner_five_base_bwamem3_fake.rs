@@ -1021,6 +1021,19 @@ fn five_base_phred64_quals_decode_the_base_quality_mask() {
         .assert()
         .success();
     assert_eq!(r1(&bam_records(&phred64)), b".....z");
+    let quals: Vec<u8> = bam_records(&phred64)
+        .iter()
+        .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+        .expect("R1")
+        .inner()
+        .quality_scores()
+        .as_ref()
+        .to_vec();
+    assert_eq!(
+        quals,
+        [40, 2, 40, 40, 40, 40],
+        "BAM QUAL is the decoded Phred score"
+    );
     let phred33 = fake_run(reads, &[("chr1", 8)], SQ_OK);
     bwamem3_cmd(&phred33)
         .args(["--five_base_baseq", "30"])

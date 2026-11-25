@@ -640,7 +640,7 @@ pub struct RunConfig {
     pub multicore: u32,
     /// `-p` (threads-to-aligner knob, Perl Bismark `-p`): the per-instance thread count.
     /// Applied as bowtie2/hisat2 `-p` and, since #1074, minimap2/rammap `-t` (subprocess)
-    /// / the rammap in-process pool size — not just the 5-Base path. minimap2 `-t` is
+    /// / the rammap in-process pool size, and bwa-mem3 `-t` on the 5-Base path. minimap2 `-t` is
     /// thread-invariant (spike), so a bare `--minimap2`/`--rammap` keeps the faithful
     /// `-t 2`; `-p N` lifts it. Precedence over `--multicore`, then all logical CPUs.
     /// `None` ⇒ aligner default / all cores.
@@ -2965,6 +2965,7 @@ mod tests {
         // Bowtie 2/HISAT2 + PE → allowed.
         assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, true).is_ok());
         assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, true).is_ok());
+        assert!(reject_unsupported_paired_aligner(Aligner::BwaMem3, true).is_ok());
         // minimap2/rammap + SE → allowed (SE is their supported mode).
         assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, false).is_ok());
         assert!(reject_unsupported_paired_aligner(Aligner::Rammap, false).is_ok());

@@ -89,7 +89,7 @@ accepted, as they were in Perl Bismark.
 
 - `--ignore-quals` (always passed to the aligner)
 
-  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself; it is not a Bismark option and is rejected on the Bismark command line.
 
 - `-I <int>` / `--minins <int>`
 
@@ -290,11 +290,11 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--no-mixed` (always passed to the aligner)
 
-  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs; it is not a Bismark option and is rejected on the Bismark command line.
 
 - `--no-discordant` (always passed to the aligner)
 
-  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs; it is not a Bismark option and is rejected on the Bismark command line.
 
 ##### Bowtie 2 Effort options:
 
