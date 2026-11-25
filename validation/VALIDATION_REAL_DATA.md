@@ -531,4 +531,5 @@ runbook above:
   6.75M CpGs per strand it covers. Per-CpG against the CX report: r 0.77 over 13.5M CpGs
   (cov ≥ 1), 9,894 CpGs at cov ≥ 5.
 - **Resources:** 6 h 34 wall at 24 threads with all three 5-Base passes (the report's
-  alignment time is 3 h 52); peak RSS 118.5 GiB (26.4 GiB on lane 1 with the same flags).
+  alignment time is 3 h 52); peak RSS of the largest single process (GNU time) 118.5 GiB
+  (26.4 GiB on NA12878 lane 1 with the same flags).

@@ -136,7 +136,7 @@ pub struct Cli {
     /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
     /// used by `--illumina_5base --bowtie2`/`--hisat2`. 5-Base reads keep full
     /// complexity, so they align to the plain genome index (build it once with
-    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Not used with `--minimap2`, which
+    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Rejected with `--minimap2`, which
     /// reads the genome FASTA directly.
     /// Checked before the run starts, and — as the aligner itself does — also resolved
     /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With bwa-mem3 (the default) or `--taps` it is
@@ -149,10 +149,8 @@ pub struct Cli {
     /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
     /// zero, reads are deduplicated by (UMI, chromosome, position, strand): PCR/optical
     /// duplicates are dropped (the first survives), removing methylation bias. 0 = off
-    /// (the default). When greater than zero, the UMI prefix is taken from the raw read,
-    /// so the methylation call relies on the aligner soft-clipping that prefix (minimap2
-    /// `-x sr` and bowtie2/hisat2-local do; soft-clipped bases produce no call). A
-    /// non-soft-clipping aligner would mis-frame the call. Requires `--illumina_5base`.
+    /// (the default). The first N bases of each mate are not called, on every engine.
+    /// Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
     pub five_base_umi_len: usize,
     /// `[#787]` Minimum Phred base quality for a 5-Base methylation call. Read bases

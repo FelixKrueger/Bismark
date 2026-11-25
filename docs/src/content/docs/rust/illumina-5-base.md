@@ -78,9 +78,9 @@ The genome-wide concordance with DRAGEN under [Validation](#validation) still ho
 are too small a share of all CpGs to show up in it.
 
 **This is why [bwa-mem3](#bwa-mem3---bwamem3) is the default engine.** bwa-mem3's methylation-aware
-mode does not count a read `T` at a genomic `C` as a mismatch. On the same two samples it keeps
-1.01–1.02× DRAGEN's depth in the densest, most methylated CpGs (minimap2: 0.48–0.50×), and only
-0.5–1.1% of them get no coverage (minimap2: 20–23%).
+mode does not count a read `T` at a genomic `C` as a mismatch. On lane 1 of the same two samples
+it keeps 1.01–1.03× DRAGEN's depth in the densest, most methylated CpGs (minimap2: 0.49–0.50×), and
+2.4–3.0% of them get no coverage (minimap2: 27–29%).
 
 ## Running it
 
@@ -94,11 +94,13 @@ index and less memory, but under-covers methylated CpG islands (see the
 `--five_base_index`; choose them when you need their tuning options or want to match the
 aligner of your bisulfite runs. The Bowtie 2, HISAT2 and minimap2 tuning options are rejected
 with bwa-mem3, so a command line that used them under the old default needs `--minimap2` (for
-`--mm2_*` options, `--dovetail` and `--no_dovetail`), `--bowtie2` (for Bowtie 2 options) or `--hisat2` (for
-`--no-spliced-alignment`). Outputs are named after the engine:
-`<sample>_bismark_bwamem3_pe.bam` by default, `_bismark_mm2_` with `--minimap2`. Pipelines that pass `--illumina_5base` through extra
-arguments, such as the nf-core `bismark/align` module's `ext.args`, need the bwa-mem3 index in
-the genome folder or `--minimap2`.
+`--mm2_*` options, `--dovetail` and `--no_dovetail`), `--bowtie2` (for Bowtie 2 options) or
+`--hisat2` (for `--no-spliced-alignment`). With `--minimap2`, the Bowtie 2 scoring and insert-size
+options (`-N`, `-L`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`) are rejected too, because
+minimap2 uses its own: drop them. Outputs are named after the engine:
+`<sample>_bismark_bwamem3_pe.bam` by default, `_bismark_mm2_` with `--minimap2`. Pipelines that
+pass `--illumina_5base` through extra arguments, such as the nf-core `bismark/align` module's
+`ext.args`, need the bwa-mem3 index in the genome folder, `--five_base_index`, or `--minimap2`.
 
 `--genome` needs the genome FASTA, the reference the methylation calls are made against, and
 for bwa-mem3 the `Bwamem3_Index/` folder `bismark prepare --bwamem3` writes into it. No path
@@ -163,7 +165,7 @@ column counts each engine's own CpGs at cov ≥ 10 in both it and DRAGEN.
 | Engine | Mapping efficiency | Pearson r vs DRAGEN | CpGs at cov ≥ 10 | Peak memory |
 |---|---|---|---|---|
 | minimap2 (`--minimap2`) | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
-| Bowtie 2 (default, 800 bp) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
+| Bowtie 2 (`-X 800`, the 5-Base default) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
 | Bowtie 2 `-X 500` | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
 | Bowtie 2 `--local -X 500` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
 | HISAT2 | 91.3% | 0.9631 | 664,790 | 8.3 GiB |
@@ -181,9 +183,10 @@ bwa-mem3 is not in this table. It was compared with minimap2 on lane 1 of NA1287
 (66M and 82M pairs, the same Bismark binary, scored against DRAGEN the same way): Pearson r
 0.929 vs 0.920 and 0.949 vs 0.944 on the CpGs both engines and DRAGEN cover at cov ≥ 10,
 12–15% more CpGs at cov ≥ 10, mapping efficiency 96.7% vs 93.7% and 93.7% vs 90.9%, and
-mean CpG methylation within 0.2 points of DRAGEN (minimap2: 0.9–1.3 points low). Peak
-memory on one lane was 26.4 GiB at 24 threads (minimap2: 17.5–20.3 GiB). The full comparison is in
-`validation/VALIDATION_REAL_DATA.md`.
+mean CpG methylation within 0.2 points of DRAGEN (minimap2: 0.9–1.3 points low). On one lane
+with the deconvolution, duplex and consensus modes on, the largest process peaked at
+26.4–26.5 GiB at 24 threads (minimap2: 17.5–20.3 GiB). The full
+comparison is in `validation/VALIDATION_REAL_DATA.md`.
 
 The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extractor,
 `bismark2bedGraph`, `coverage2cytosine`, and the reports consume it unchanged.
@@ -202,7 +205,7 @@ It is the default engine since 3.5.0. It costs more than minimap2:
 |---|---|
 | Index | `bismark prepare --bwamem3 <genome>` (or `bwa-mem3 index --meth --meth-only genome.fa` with bwa-mem3 0.18.0+, `--meth` alone before): about 1 h and about 104 GB RAM for GRCh38 |
 | Index on disk | about 23 GB for GRCh38: the 7 files `bismark prepare --bwamem3` keeps, and all that bwa-mem3 0.18.0's `--meth-only` writes. A plain `bwa-mem3 index --meth` also writes `genome.fa.bwt.2bit.64` (10.4 GB), and 0.16.0/0.17.0 also `genome.fa.meth.fa` (6.3 GB); both can be deleted. Rebuilding into an existing prefix with 0.18.0 needs `--force` |
-| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads, and without `-p` all CPUs are used) plus about 3.2 GB for Bismark's copy of the genome; the duplex, consensus and deconvolution modes add memory that grows with read count (see [Advanced modes](#advanced-modes)) |
+| Alignment memory | bwa-mem3 0.16.0's own RSS (about 28 GiB at 32 threads; it grows with threads, and without `-p` all CPUs are used) plus about 3.2 GB for Bismark's copy of the genome; a full-depth run with the duplex, consensus and deconvolution modes needed more (see [Advanced modes](#advanced-modes)) |
 | Runtime | about 38–39 min per 95–98M pairs at 32 threads (bwa-mem3 0.16.0 alone) |
 
 `bismark prepare --bwamem3 <genome>` writes the index to `<genome>/Bwamem3_Index/`, keeping
@@ -264,10 +267,10 @@ strand-partner read pairs. These modes use that structure:
 - **`--five_base_emit_multiplicity {duplex|simplex|both}`** selects which consensus
   families are emitted (see below). `duplex` is the default.
 
-With these modes, memory grows with the number of reads. On NA12878 with bwa-mem3 at 24 threads,
-a full-depth run (524M pairs) with `--five_base_deconvolution --five_base_duplex
---five_base_consensus` peaked at 118.5 GiB. On one lane (66M or 82M pairs) the same run peaked
-at bwa-mem3's own 26.4–26.5 GiB.
+With bwa-mem3 at 24 threads, a run with `--five_base_deconvolution --five_base_duplex
+--five_base_consensus` peaked at 118.5 GiB on NA12878 at full depth (524M pairs), and at
+26.4–26.5 GiB on one lane of NA12878 or HG002 (66M or 82M pairs). These are the largest single
+process as GNU time reports it; which of the three modes needs the extra memory was not measured.
 
 ```sh
 # duplex consensus from the real dual-UMI in the read name

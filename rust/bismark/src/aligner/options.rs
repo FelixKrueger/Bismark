@@ -313,15 +313,44 @@ fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
         "--known-splicesite-infile" => " 5-Base alignment is unspliced.".into(),
         "--no-spliced-alignment" => " For HISAT2 add --hisat2 (with --five_base_index).".into(),
         "--no_dovetail" | "--dovetail" => format!(
-            " For Bowtie 2 tuning add --bowtie2 (with --five_base_index). {}",
-            crate::aligner::config::MINIMAP2_OPT_OUT
+            " For Bowtie 2 tuning add --bowtie2 (with --five_base_index), or drop the option. {}",
+            crate::aligner::config::minimap2_opt_out(cli)
         ),
-        _ => " For Bowtie 2 tuning add --bowtie2 (with --five_base_index).".into(),
+        _ => " For Bowtie 2 tuning add --bowtie2 (with --five_base_index), or drop the option."
+            .into(),
     };
     Err(AlignerError::Validation(format!(
         "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
          insert sizes itself.{hint}"
     )))
+}
+
+/// Bowtie 2 tuning that `--illumina_5base --minimap2` has no use for.
+pub(crate) fn reject_five_base_minimap2_tuning(cli: &Cli) -> Result<()> {
+    if cli.known_splices.is_some() {
+        return Err(AlignerError::Validation(
+            "--known-splicesite-infile is not supported with --illumina_5base: 5-Base alignment \
+             is unspliced."
+                .into(),
+        ));
+    }
+    let set: [(bool, &str); 7] = [
+        (cli.seedmms.is_some(), "-N"),
+        (cli.seedlen.is_some(), "-L"),
+        (cli.score_min.is_some(), "--score_min"),
+        (cli.rdg.is_some(), "--rdg"),
+        (cli.rfg.is_some(), "--rfg"),
+        (cli.minins.is_some(), "--minins"),
+        (cli.maxins.is_some(), "--maxins"),
+    ];
+    match set.iter().find(|(on, _)| *on) {
+        Some((_, flag)) => Err(AlignerError::Validation(format!(
+            "{flag} has no effect with --illumina_5base --minimap2 (minimap2 uses its own scoring \
+             and infers insert sizes): drop it, or add --bowtie2 (with --five_base_index) to tune \
+             Bowtie 2."
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// Resolve tuning options for paired-end alignment to the unconverted genome.

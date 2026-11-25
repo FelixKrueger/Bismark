@@ -1105,7 +1105,11 @@ fn qnames(out: &Path) -> Vec<String> {
 #[cfg(unix)]
 #[test]
 fn five_base_unmapped_writes_the_unaligned_pairs_verbatim() {
-    for mode in [&["--illumina_5base", "--bwamem3"][..], &["--taps"][..]] {
+    for mode in [
+        &["--illumina_5base", "--bwamem3"][..],
+        &["--illumina_5base"][..],
+        &["--taps"][..],
+    ] {
         for extra in [&[][..], &["--icpc"][..], &["--five_base_umi_len", "1"][..]] {
             if mode[0] == "--taps" && extra.first() == Some(&"--five_base_umi_len") {
                 continue; // TAPS rejects --five_base_umi_len.
@@ -1655,7 +1659,8 @@ fn default_engine_names_itself_in_binary_errors() {
     default_cmd(&run, run.out.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("bwa-mem3"))
+        .stderr(predicate::str::contains("bwa-mem3 version')"))
+        .stderr(predicate::str::contains("--version").not())
         .stderr(predicate::str::is_match(r"[.!?] Add --minimap2").unwrap());
 }
 
@@ -1721,4 +1726,205 @@ fn default_engine_rejects_options_before_the_index_check() {
             .stderr(predicate::str::contains(want))
             .stderr(predicate::str::contains("needs its methylation index").not());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_opt_out_says_to_drop_five_base_index() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let missing = run.genome.path().join("nothing_here");
+    let mm2 = TempDir::new().unwrap();
+    for extra in [
+        &[][..],
+        &["--mm2_short_reads"][..],
+        &["--path_to_minimap2", mm2.path().to_str().unwrap()][..],
+    ] {
+        default_cmd(&run, run.out.path())
+            .arg("--five_base_index")
+            .arg(&missing)
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "Add --minimap2 and drop --five_base_index",
+            ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_tuning_hints_offer_dropping_the_option() {
+    let run = fake_run_with_genome_index();
+    default_cmd(&run, run.out.path())
+        .args(["-X", "900"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("or drop the option."))
+        .stderr(predicate::str::contains("Add --minimap2").not());
+    default_cmd(&run, run.out.path())
+        .arg("--dovetail")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "or drop the option. Add --minimap2",
+        ));
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_minimap2_rejects_the_bowtie2_options_it_ignores() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let mm2 = TempDir::new().unwrap();
+    let cmd = |extra: &[&str]| {
+        let mut c = bin();
+        c.args(["--illumina_5base", "--minimap2", "--path_to_minimap2"])
+            .arg(mm2.path())
+            .arg("--genome")
+            .arg(run.genome.path())
+            .arg("--output_dir")
+            .arg(run.out.path())
+            .arg("-1")
+            .arg(&run.r1)
+            .arg("-2")
+            .arg(&run.r2)
+            .args(extra);
+        c
+    };
+    for (extra, flag) in [
+        (&["-N", "1"][..], "-N"),
+        (&["-L", "20"][..], "-L"),
+        (&["--score_min", "L,0,-0.6"][..], "--score_min"),
+        (&["--rdg", "5,3"][..], "--rdg"),
+        (&["--rfg", "5,3"][..], "--rfg"),
+        (&["-I", "10"][..], "--minins"),
+        (&["-X", "900"][..], "--maxins"),
+    ] {
+        cmd(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "{flag} has no effect with --illumina_5base --minimap2"
+            )))
+            .stderr(predicate::str::contains("drop it, or add --bowtie2"))
+            .stderr(predicate::str::contains("failed to execute").not());
+    }
+    let splices = run.genome.path().join("splices.txt");
+    fs::write(&splices, b"").unwrap();
+    cmd(&["--known-splicesite-infile", splices.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("5-Base alignment is unspliced"));
+    // Dovetail handling is engine-independent: the run gets past the option checks.
+    cmd(&["--no_dovetail"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("has no effect").not())
+        .stderr(predicate::str::contains("failed to execute minimap2"));
+}
+
+#[test]
+fn bisulfite_minimap2_options_are_not_checked_as_5base() {
+    let (genome, mm2) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    fs::write(genome.path().join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+    for (dir, mmi) in [
+        ("CT_conversion", "BS_CT.mmi"),
+        ("GA_conversion", "BS_GA.mmi"),
+    ] {
+        let d = genome.path().join("Bisulfite_Genome").join(dir);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join(mmi), b"").unwrap();
+    }
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, b"@r\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    bin()
+        .args(["--minimap2", "-N", "1", "-L", "20", "--path_to_minimap2"])
+        .arg(mm2.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&reads)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to execute minimap2"))
+        .stderr(predicate::str::contains("has no effect").not());
+}
+
+#[test]
+fn help_describes_five_base_index_and_umi_len() {
+    let out = bin().args(["align", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("Rejected with `--minimap2`"), "{help}");
+    assert!(
+        help.contains("The first N bases of each mate are not called, on every engine."),
+        "{help}"
+    );
+    assert!(!help.contains("soft-clipping that prefix"), "{help}");
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_opt_out_drops_five_base_index_on_option_and_binary_errors() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let missing = run.genome.path().join("nothing_here");
+    default_cmd(&run, run.out.path())
+        .arg("--five_base_index")
+        .arg(&missing)
+        .arg("--dovetail")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--dovetail is not supported"))
+        .stderr(predicate::str::contains(
+            "Add --minimap2 and drop --five_base_index",
+        ));
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
+    default_cmd(&run, run.out.path())
+        .arg("--five_base_index")
+        .arg(&run.index)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to execute bwa-mem3"))
+        .stderr(predicate::str::contains(
+            "Add --minimap2 and drop --five_base_index",
+        ));
+}
+
+/// Each engine's index is looked up under its own env folder, as the aligners do.
+#[cfg(unix)]
+#[test]
+fn default_engine_finds_an_unconverted_index_under_its_env_folder() {
+    for (ext, var, other, name) in [
+        ("bt2", "BOWTIE2_INDEXES", "HISAT2_INDEXES", "Bowtie 2"),
+        ("ht2", "HISAT2_INDEXES", "BOWTIE2_INDEXES", "HISAT2"),
+    ] {
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let (env, cwd) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        fs::write(env.path().join(format!("plain.1.{ext}")), b"").unwrap();
+        default_cmd(&run, run.out.path())
+            .current_dir(cwd.path())
+            .env(var, env.path())
+            .env_remove(other)
+            .args(["--five_base_index", "plain"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!("is a {name} index")));
+    }
+}
+
+/// A folder holding a bwa-mem3 index is used even when a Bowtie 2 index of the same name exists.
+#[cfg(unix)]
+#[test]
+fn default_engine_uses_a_bwamem3_index_folder_despite_a_same_named_bowtie2_index() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let (env, cwd) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let folder = cwd.path().join("GRCh38");
+    fs::create_dir(&folder).unwrap();
+    make_stub_bwamem3_index(&folder.join("genome.fa"), &[("chr1", 8)]);
+    fs::write(env.path().join("GRCh38.1.bt2"), b"").unwrap();
+    fs::write(cwd.path().join("GRCh38.1.bt2"), b"").unwrap();
+    default_cmd(&run, run.out.path())
+        .current_dir(cwd.path())
+        .env("BOWTIE2_INDEXES", env.path())
+        .args(["--five_base_index", "GRCh38"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("is a Bowtie 2 index").not());
 }

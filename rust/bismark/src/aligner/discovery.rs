@@ -176,6 +176,28 @@ fn index_env_name(aligner: Aligner) -> Option<&'static str> {
     }
 }
 
+/// `<dir>/<basename>` by concatenation, not `Path::join`: an absolute basename extends the
+/// variable's directory rather than replacing it, which is what the aligners do.
+fn env_joined(dir: &OsStr, basename: &OsStr) -> OsString {
+    let mut joined = dir.to_os_string();
+    joined.push("/");
+    joined.push(basename);
+    joined
+}
+
+/// Whether an `aligner` index's `<basename>.1.<ext>` exists, at `basename` or, when it is not
+/// there, under `index_env`, as the aligner itself looks.
+pub(crate) fn unconverted_index_found(
+    aligner: Aligner,
+    basename: &Path,
+    index_env: Option<&OsStr>,
+) -> bool {
+    let base = basename.as_os_str();
+    first_index_file_at(aligner, base).is_some()
+        || index_env
+            .is_some_and(|dir| first_index_file_at(aligner, &env_joined(dir, base)).is_some())
+}
+
 /// The value of that variable, read once so callers can inject it.
 pub(crate) fn index_env_for(aligner: Aligner) -> Option<OsString> {
     index_env_name(aligner).and_then(std::env::var_os)
@@ -208,11 +230,7 @@ pub(crate) fn validate_unconverted_index(
     if suppressed_by.is_none()
         && let Some(dir) = index_env
     {
-        // Concatenation, not `Path::join`: an absolute basename extends the variable's directory
-        // rather than replacing it, which is what the aligners do.
-        let mut joined = dir.to_os_string();
-        joined.push("/");
-        joined.push(base);
+        let joined = env_joined(dir, base);
         for large in [false, true] {
             match first_missing_at(aligner, &joined, large) {
                 None => return Ok(()),
@@ -598,6 +616,41 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// The index lookup finds a basename at its path or, failing that, under the env folder.
+    #[test]
+    fn unconverted_index_found_follows_the_aligner_lookup() {
+        let (here, env) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        stub_index(&env.path().join("plain"), Aligner::Bowtie2, false);
+        stub_index(&env.path().join("hs"), Aligner::Hisat2, true);
+        let env_dir = Some(env.path().as_os_str());
+        for base in ["plain", "./plain"] {
+            assert!(
+                unconverted_index_found(Aligner::Bowtie2, Path::new(base), env_dir),
+                "{base}"
+            );
+            assert!(
+                !unconverted_index_found(Aligner::Bowtie2, Path::new(base), None),
+                "{base}"
+            );
+        }
+        assert!(unconverted_index_found(
+            Aligner::Hisat2,
+            Path::new("hs"),
+            env_dir
+        ));
+        assert!(!unconverted_index_found(
+            Aligner::Hisat2,
+            Path::new("plain"),
+            env_dir
+        ));
+        stub_index(&here.path().join("local"), Aligner::Bowtie2, false);
+        assert!(unconverted_index_found(
+            Aligner::Bowtie2,
+            &here.path().join("local"),
+            None
+        ));
     }
 
     /// A typo or a swapped arm here would hard-reject a working setup with every other test green.

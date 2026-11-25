@@ -176,6 +176,10 @@ jobs:
         env:
           BISMARK_TEST_BWAMEM3: "1"
         run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake --test aligner_taps_bwamem3 --test genome_prep_bwamem3 --test genome_prep_bwamem3_fake
+      - name: The name filter selects every bwa-mem3 control gate
+        run: |
+          n=$(cargo test -p bismark --test aligner_five_base_groundtruth _bwamem3 -- --list | grep -c ': test$' || true)
+          [ "$n" -ge 4 ] || { echo "expected at least 4 _bwamem3 control gates, found $n"; exit 1; }
       - name: cargo test (lambda/pUC19 control gates on bwa-mem3)
         env:
           BISMARK_TEST_BWAMEM3: "1"
