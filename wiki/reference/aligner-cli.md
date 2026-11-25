@@ -128,7 +128,7 @@ With bwa-mem3 (no engine flag, or `--bwamem3`), `--five_base_index` is the FASTA
 | `--path_to_minimap2` with `--illumina_5base` and no engine flag | `resolve` |
 | A Bowtie 2 or HISAT2 index as `--five_base_index` with `--illumina_5base` and no engine flag | `resolve_five_base_index` |
 | A bwa-mem3 run (`--illumina_5base` with no engine flag, `--bwamem3` or `--taps`) with no `--five_base_index` and no `<genome>/Bwamem3_Index/`, or a `--five_base_index` folder that holds no index | `resolve_five_base_index` |
-| bwa-mem3 (no engine flag, or `--bwamem3`) with `--local`, `--score_min`, `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `-I`, `-X`, `--dovetail`, `--no_dovetail`, `--no-spliced-alignment`, `--known-splicesite-infile` or `--most_valid_alignments` | `reject_bwamem3_tuning` |
+| bwa-mem3 (no engine flag, or `--bwamem3`) with `--local`, `--score_min`, `-N`, `-L`, `-D`, `-R`, `--rdg`, `--rfg`, `-I`/`--minins`, `-X`/`--maxins`, `--dovetail`, `--no_dovetail`, `--no-spliced-alignment`, `--known-splicesite-infile` or `--most_valid_alignments` | `reject_bwamem3_tuning` |
 | A bwa-mem3 run with a missing index file, or bwa-mem3 older than 0.16.0 | `check_bwamem3_index_files`, `detect_aligner` in `aligner/aligner.rs` |
 | `--taps` with `--illumina_5base`, another aligner, a 5-Base-only option (duplex, consensus, deconvolution, UMI, `--five_base_min_mapq`, `--five_base_emit_multiplicity`), or the bwa-mem3 tuning options above | `expand_taps`, `reject_bwamem3_tuning` |
 | A uBAM, unaligned CRAM or BINSEQ file given with `-1`/`-2` | `resolve_alt_inputs` in `aligner/mod.rs` |

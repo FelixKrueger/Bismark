@@ -9,13 +9,13 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: a199ad4
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
     commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a199ad4
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: a199ad4

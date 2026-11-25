@@ -9,7 +9,7 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/cli.rs
-    commit: dbd7c27
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/discovery.rs
     commit: dbd7c27
@@ -40,7 +40,7 @@ sources:
 
 ## Summary
 
-`bismark prepare` converts a genome in silico (C→T and G→A) and builds an aligner index for each converted copy. The developer says this is required, and that it runs only once per genome and aligner. Run it for the same aligner that you will align with. With `--bwamem3` it instead builds one bwa-mem3 methylation index of the unconverted genome, for `--taps` and `--illumina_5base --bwamem3` (see [bwa-mem3 index](#bwa-mem3-index---bwamem3)).
+`bismark prepare` converts a genome in silico (C→T and G→A) and builds an aligner index for each converted copy. The developer says this is required, and that it runs only once per genome and aligner. Run it for the same aligner that you will align with. With `--bwamem3` it instead builds one bwa-mem3 methylation index of the unconverted genome, for `--illumina_5base` (its default engine) and `--taps` (see [bwa-mem3 index](#bwa-mem3-index---bwamem3)).
 
 ## Steps
 

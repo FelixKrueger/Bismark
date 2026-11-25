@@ -57,19 +57,19 @@ sources:
 | Bowtie 2 | `--bowtie2 --five_base_index <basename>` | A normal, unconverted Bowtie 2 index |
 | HISAT2 | `--hisat2 --five_base_index <basename>` | A normal, unconverted HISAT2 index |
 
-With no engine flag, `--illumina_5base` aligns with bwa-mem3 (`resolve_aligner` in `aligner/config.rs`). Only one engine can be selected; `--bwamem3` with another aligner flag is rejected, `--bwamem3` needs `--illumina_5base`, and `--rammap` is rejected. `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. A bisulfite `BS_CT`/`BS_GA` index is rejected. Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
+With no engine flag, `--illumina_5base` aligns with bwa-mem3 (`resolve_aligner` in `aligner/config.rs`). Only one engine can be selected; `--bwamem3` with another aligner flag is rejected, `--bwamem3` needs `--illumina_5base`, and `--rammap` is rejected. With bwa-mem3, Bowtie 2 or HISAT2, the 5-Base option errors and `-p 1` come before the index and binary checks (`resolve`). `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. A bisulfite `BS_CT`/`BS_GA` index is rejected. Threads come from `-p`, else `--multicore`, else all cores (`five_base_aligner_options` in `aligner/mod.rs`).
 
 The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 does not: see [troubleshooting/data-quality.md](../troubleshooting/data-quality.md).
 
 ### Runs with no engine flag
 
-A run without `--bwamem3`, `--minimap2`, `--bowtie2` or `--hisat2` uses bwa-mem3 (`five_base_engine_defaulted` in `aligner/config.rs`). It aligns exactly as `--bwamem3` does; only its messages differ:
+A run without `--bwamem3`, `--minimap2`, `--bowtie2` or `--hisat2` uses bwa-mem3 (`five_base_engine_defaulted` in `aligner/config.rs`). It aligns exactly as `--bwamem3` does; only some checks and messages differ:
 
-- The start-up notice adds that bwa-mem3 is the default engine since 3.5.0 and that `--minimap2` selects the previous one (`five_base_notice` in `aligner/mod.rs`).
+- The start-up notice ends with `bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one.` (`five_base_notice` in `aligner/mod.rs`).
 - With no `--five_base_index` and no `<genome folder>/Bwamem3_Index/`, the run stops before it writes anything, and names `bismark prepare --bwamem3`. When bwa-mem3 is also missing, the same message says so (`resolve_five_base_index`).
 - A `--five_base_index` that is a Bowtie 2 or HISAT2 index (`.1.bt2`, `.1.bt2l`, `.1.ht2` or `.1.ht2l`, and no bwa-mem3 index) is rejected with "add `--bowtie2`" or "add `--hisat2`" (`unconverted_index_kind`).
 - The index, version and binary errors, the `--mm2_*` errors and `--path_to_minimap2` (rejected) end with the `--minimap2` opt-out (`with_minimap2_opt_out`, `MINIMAP2_OPT_OUT`).
-- A Bowtie 2 tuning option is rejected with "add `--bowtie2` (with `--five_base_index`)"; `--dovetail` and `--no_dovetail` also name `--minimap2`, `--no-spliced-alignment` names `--hisat2` (`reject_bwamem3_tuning` in `aligner/options.rs`). These option errors, and `-p 1`, come before the index and binary checks (`resolve`).
+- A Bowtie 2 tuning option is rejected with "add `--bowtie2` (with `--five_base_index`)"; `--dovetail` and `--no_dovetail` also name `--minimap2`, `--no-spliced-alignment` names `--hisat2`, and `--known-splicesite-infile` gets no engine hint, because no 5-Base engine takes it (`reject_bwamem3_tuning` in `aligner/options.rs`).
 
 ### Bowtie 2 and HISAT2
 
@@ -78,7 +78,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 ### bwa-mem3
 
 - **Version.** Read from `bwa-mem3 version`. Below 0.16.0 is rejected; 0.16.0, 0.17.0 and 0.18.0 are validated (`VALIDATED_BWAMEM3_VERSIONS`), and another version runs with a warning that the 5-Base engine is validated against them (`detect_aligner` in `aligner/aligner.rs`). CI and the container use 0.18.0 (`PINNED_BWAMEM3_VERSION`).
-- **Where the index is found** (`resolve_five_base_index` in `aligner/config.rs`). Without `--five_base_index`, the run uses `<genome folder>/Bwamem3_Index/genome.fa`, the index that `bismark prepare --bwamem3` builds, and prints `Using the bwa-mem3 index …`. No such folder → the error names both ways to build an index. `--five_base_index` takes the index prefix (the FASTA path it was built from), or a folder that holds a `prepare --bwamem3` index; a genome folder that only holds one in `Bwamem3_Index/` gets an error that names that subfolder.
+- **Where the index is found** (`resolve_five_base_index` in `aligner/config.rs`). Without `--five_base_index`, the run uses `<genome folder>/Bwamem3_Index/genome.fa`, the index that `bismark prepare --bwamem3` builds, and prints `Using the bwa-mem3 index …`. No such folder → with `--bwamem3` or `--taps` the error names both ways to build an index (`bwa-mem3 index --meth`, or `bismark prepare --bwamem3`); with no engine flag it names `bismark prepare --bwamem3` and `--five_base_index` (see above). `--five_base_index` takes the index prefix (the FASTA path it was built from), or a folder that holds a `prepare --bwamem3` index; a genome folder that only holds one in `Bwamem3_Index/` gets an error that names that subfolder.
 - **Index files.** `<genome.fa>.amb`, `.ann`, `.pac` and `.meth.amb`, `.meth.ann`, `.meth.pac`, `.meth.bwt.2bit.64` must exist before the run starts (`check_bwamem3_index_files` in `aligner/config.rs`). The plain `.bwt.2bit.64` and `.meth.fa` are not needed.
 - **Same assembly.** The contig names and lengths in the `.ann` file must equal the genome folder's before bwa-mem3 starts, and the `@SQ` lines bwa-mem3 writes must equal them again (`read_bwa_ann`, `check_contigs_match` and `five_base_align_and_call_pe` in `aligner/mod.rs`).
 - **Keep a hand-built index out of the top of `--genome`.** A FASTA in the genome folder whose name ends in `.meth.fa` stops the run (`run_pe_five_base`). The `Bwamem3_Index/` subfolder holds no FASTA, so it is not affected.

@@ -18,7 +18,7 @@ sources:
     commit: 855b812
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: 855b812
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: 855b812

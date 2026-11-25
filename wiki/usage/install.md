@@ -9,7 +9,7 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: 3225cc7
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
     commit: 3225cc7
@@ -18,7 +18,7 @@ sources:
     commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 3225cc7
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
     commit: 3225cc7
