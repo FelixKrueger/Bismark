@@ -57,7 +57,7 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--bowtie2` / `--hisat2` / `--minimap2` / `--rammap` | Bowtie 2 | Aligner; pick one; not with `--illumina_5base` or `--taps` (`reject_non_bwamem3_flags`) |
 | `--bwamem3` | off | bwa-mem3, the only 5-Base engine; optional with `--illumina_5base`, which needs an index in `<genome>/Bwamem3_Index/` or `--five_base_index` |
 | `--taps` | off | TAPS mode: `--illumina_5base --bwamem3` with `--meth=taps`; uses the same bwa-mem3 index (`expand_taps`, `resolve_five_base_index`). See [usage/align-taps-reads.md](../usage/align-taps-reads.md) |
-| `--path_to_bowtie2` (and `_hisat2`, `_minimap2`, `_rammap`, `_bwamem3`) `<dir>` | `PATH` | Folder that holds the aligner binary; only `--path_to_bwamem3` with `--illumina_5base` or `--taps` |
+| `--path_to_bowtie2` (and `_hisat2`, `_minimap2`, `_rammap`, `_bwamem3`) `<dir>` | `PATH` | Folder that holds the aligner binary; with `--illumina_5base` or `--taps`, only `--path_to_bwamem3` is accepted (`reject_non_bwamem3_flags`) |
 | `--rammap_subprocess` | in-process | Run the external `rammap` binary; needs `--rammap` |
 | `--combined_index` | off | Align against `Bisulfite_Genome/Combined/BS_combined` |
 | `--combined_index_sequential` / `_parallel` / `_single_pass` | sequential | Execution model for `--combined_index --non_directional` |
@@ -81,7 +81,7 @@ The options of `bismark` / `bismark align`, defined in `aligner/cli.rs` and chec
 | `--mm2_maximum_length <n>` | 10000 | minimap2 / rammap length cutoff, 100 to 100000 |
 | `--quiet` | off | Fewer Bowtie 2 warnings |
 
-Every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end run gets `--no-mixed --no-discordant` (`build_aligner_options`).
+Every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end one gets `--no-mixed --no-discordant` (`build_aligner_options`).
 
 ## Output
 
@@ -102,7 +102,7 @@ Every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every paired-end run gets
 
 All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_base_umi_len`, `--five_base_umi_qname`, `--five_base_baseq`, `--five_base_min_mapq`, `--five_base_deconvolution`, `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_bisulfite_bam`. `--five_base_emit_multiplicity duplex|simplex|both` needs `--five_base_consensus` or `--five_base_consensus_from_bam`. `--five_base_umi_qname` and `--five_base_umi_len` exclude each other. `--taps` sets `--illumina_5base` itself, and accepts only `--five_base_index`, `--five_base_baseq` and `--five_base_bisulfite_bam` of these.
 
-5-Base and TAPS runs align with bwa-mem3 only. `--five_base_index` is the FASTA path a `bwa-mem3 index --meth` index was built from, or a folder written by `bismark prepare --bwamem3`; without it the run uses `<genome>/Bwamem3_Index/` (`resolve_five_base_index` in `aligner/config.rs`). The bwa-mem3 options are fixed (`bwamem3_options`); `-p` or `--multicore` set its `-t`, and the alignment parameters above are rejected (`reject_bwamem3_tuning`). Which pairs are kept and which bases are not called: [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
+5-Base and TAPS runs align with bwa-mem3 only. `--five_base_index` is the FASTA path a `bwa-mem3 index --meth` index was built from, or a folder written by `bismark prepare --bwamem3`; without it the run uses `<genome>/Bwamem3_Index/` (`resolve_five_base_index` in `aligner/config.rs`). The bwa-mem3 options are fixed (`bwamem3_options`); `-p` or `--multicore` set its `-t`, and the Bowtie 2 / HISAT2 parameters above except `--quiet` are rejected (`reject_bwamem3_tuning`), and the `--mm2_*` options by `reject_non_bwamem3_flags`. Which pairs are kept and which bases are not called: [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
 
 ## Rejected options and combinations
 
@@ -119,8 +119,8 @@ All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_
 | `--local` with minimap2, rammap or `--combined_index` | `resolve` |
 | `--combined_index` with `--multicore` > 1, or with minimap2 / rammap | `reject_combined_index_unsupported` |
 | `--hisat2` with both `--multicore` and `-p` | `resolve` |
-| `-p 1` | `build_aligner_options` |
-| `--mm2_*` options without minimap2 or rammap | `resolve_mm2_max_length` |
+| `-p 1` | `build_aligner_options`; `build_five_base_aligner_options` in 5-Base and TAPS runs |
+| `--mm2_*` options without minimap2 or rammap (outside 5-Base and TAPS) | `resolve_mm2_max_length` |
 | `--bwamem3` without `--illumina_5base` or `--taps`, or with another aligner; `--five_base_index` without `--illumina_5base` or `--taps` | `resolve_aligner` |
 | `--bowtie2`, `--hisat2`, `--minimap2` or `--rammap`, `--path_to_bowtie2`/`_hisat2`/`_minimap2`/`_rammap`, or an `--mm2_*` option with `--illumina_5base` or `--taps`, also with `--five_base_consensus_from_bam` or `--five_base_bisulfite_bam` | `reject_non_bwamem3_flags` (from `expand_taps`) |
 | A Bowtie 2 or HISAT2 index as `--five_base_index` (also found under `$BOWTIE2_INDEXES`/`$HISAT2_INDEXES`; a folder is not checked) | `resolve_five_base_index` |
@@ -132,7 +132,7 @@ All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_
 | Two inputs whose outputs would get the same name (`output_stem` in `aligner/mod.rs`), or `--basename` with more than one input | `reject_output_name_collision` |
 | `--unmapped` or `--ambiguous` with two `-1`/`-2` pairs whose read-2 files have the same file name | `reject_output_name_collision` |
 
-`--most_valid_alignments` and `--dovetail` have no effect.
+Outside 5-Base and TAPS runs, `--most_valid_alignments` and `--dovetail` have no effect.
 
 ## Links
 

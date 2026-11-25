@@ -68,8 +68,8 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 
 ## 5-Base: coverage at methylated CpG islands
 
-- **What the code does.** 5-Base runs align with bwa-mem3's methylation-aware mode, which does not count a read T at a genomic C as a mismatch (`bwamem3_options` in `aligner/options.rs`); no other engine is accepted (`reject_non_bwamem3_flags` in `aligner/config.rs`). See [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
-- **What the developer measured** on the NA12878 and HG002 demo data: bwa-mem3 keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs. minimap2 and Bowtie 2, which count each methylated CpG as a mismatch, kept 0.48–0.50× there, read partly methylated CpGs at 15 or more per 151 bp 6–11 points low, and lost more with a MAPQ filter. This is why 5-Base aligns with bwa-mem3 only.
+- **What the code does.** 5-Base runs align with bwa-mem3's methylation-aware mode, `--meth=5base --meth-scoring neutral` (`bwamem3_options` in `aligner/options.rs`); no other engine is accepted (`reject_non_bwamem3_flags` in `aligner/config.rs`). See [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
+- **What the developer measured** on the NA12878 and HG002 demo data: bwa-mem3 keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 and Bowtie 2, which count each methylated CpG as a mismatch, CpGs up to about 9 per 151 bp were unaffected, the densest CpGs that are ≥80% methylated kept 40–50% of the expected coverage, and partly methylated CpGs at 15 or more per 151 bp read 6–11 points low. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse. The developer gives these results as the reason 5-Base aligns with bwa-mem3 only.
 
 ## M-bias
 

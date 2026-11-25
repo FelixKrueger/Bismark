@@ -52,12 +52,13 @@ sources:
 | Combination | Message names |
 |---|---|
 | `--taps` with `--illumina_5base` (or its alias `--five_base`) | different chemistries; pick one |
-| `--taps` with `--bowtie2`, `--hisat2`, `--minimap2` or `--rammap` | `--taps` aligns with bwa-mem3 only |
+| `--taps` with `--bowtie2`, `--hisat2`, `--minimap2` or `--rammap` (`reject_non_bwamem3_flags`) | `--taps` aligns with bwa-mem3 only |
+| `--taps` with `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2`, `--path_to_rammap` or an `--mm2_*` option (`reject_non_bwamem3_flags`) | has no effect with `--taps` (bwa-mem3 only) |
 | `--five_base_duplex`, `--five_base_consensus`, `--five_base_consensus_from_bam`, `--five_base_deconvolution`, `--five_base_umi_qname`, or `--five_base_emit_multiplicity` other than `duplex` | validated for Illumina 5-Base only, not TAPS |
 | `--five_base_min_mapq` above 0 | it filters only the duplex/consensus pass, which `--taps` does not run |
 | `--five_base_umi_len` above 0 | the 5-Base inline-UMI read structure is not validated for TAPS |
 
-After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply, with messages that name `--taps` and TAPS: paired-end only, directional only, FastQ only, and no `--slam`, `--combined_index`, `--ambiguous` or `--ambig_bam`. The bwa-mem3 tuning options that `--bwamem3` rejects are rejected with "is not supported with --taps" (`reject_bwamem3_tuning` in `aligner/options.rs`).
+After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply, with messages that name `--taps` and TAPS: paired-end only, directional only, FastQ only, and no `--slam`, `--combined_index`, `--ambiguous` or `--ambig_bam`. The bwa-mem3 tuning options that `--illumina_5base` rejects are rejected with "is not supported with --taps" (`reject_bwamem3_tuning` in `aligner/options.rs`).
 
 ## Options it accepts
 
@@ -69,7 +70,7 @@ After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply,
 | `-p`, `--multicore`, `--path_to_bwamem3`, output options | As for `--illumina_5base`: [usage/align-5-base-reads.md](align-5-base-reads.md) |
 | `--nucleotide_coverage` | Runs bam2nuc on the final BAM (`run_nucleotide_coverage` in `aligner/mod.rs`); bam2nuc counts the genomic sequence under each alignment, so the chemistry does not change it |
 
-The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 --meth-tags none -K 100000000 -t <n>` (`bwamem3_options` in `aligner/options.rs`). The index files, the contig check, the version check, which pairs are kept, what `--unmapped` writes, and the overhang bases that are not called are the same as for `--illumina_5base --bwamem3`: see [usage/align-5-base-reads.md](align-5-base-reads.md).
+The bwa-mem3 options are fixed: `mem --meth=taps --meth-scoring neutral --meth-context all --meth-seed-prune=spec30 --meth-tags none -K 100000000 -t <n>` (`bwamem3_options` in `aligner/options.rs`). The index files, the contig check, the version check, which pairs are kept, what `--unmapped` writes, and the overhang bases that are not called are the same as for `--illumina_5base`: see [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## How the run names itself
 
