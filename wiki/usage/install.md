@@ -5,7 +5,7 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-22
+updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
@@ -22,13 +22,16 @@ sources:
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
     commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/config.rs
+    commit: 457509a
 ---
 
 # Install Bismark
 
 ## Summary
 
-Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base `--bwamem3` and TAPS `--taps` runs.
+Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base runs (`--illumina_5base`, unless `--minimap2`, `--bowtie2` or `--hisat2` is given) and TAPS `--taps` runs.
 
 ## Ways to get it
 

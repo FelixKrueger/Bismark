@@ -5,14 +5,14 @@ description: Run the aligner on single-end or paired-end reads, choose the libra
 tags: [alignment, bowtie2, hisat2, minimap2, library-type, 5-base]
 page_id: align-reads
 subject_status: current
-updated: 2026-11-21
+updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
     commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a199ad4
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: a199ad4
@@ -125,7 +125,7 @@ Each input (read 1 for paired-end) names its own outputs: the file name with `.f
 
 ## 5-Base data
 
-`--illumina_5base` aligns Illumina 5-Base reads (methylated C read as T) with minimap2, Bowtie 2, HISAT2 or bwa-mem3 against the unconverted genome: see [usage/align-5-base-reads.md](align-5-base-reads.md).
+`--illumina_5base` aligns Illumina 5-Base reads (methylated C read as T) with bwa-mem3 (the default), minimap2, Bowtie 2 or HISAT2 against the unconverted genome: see [usage/align-5-base-reads.md](align-5-base-reads.md).
 
 ## Links
 
