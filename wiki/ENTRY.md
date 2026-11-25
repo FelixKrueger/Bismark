@@ -10,7 +10,7 @@ Bismark aligns bisulfite, EM-seq, Illumina 5-Base and TAPS sequencing reads to a
 | genome index, `bismark_genome_preparation`, `Bisulfite_Genome`, `Bwamem3_Index`, `prepare --bwamem3` | `usage/prepare-a-genome.md` |
 | align, map reads, paired-end, Bowtie 2, HISAT2, minimap2, threads | `usage/align-reads.md`, `reference/aligner-cli.md` |
 | directional, non-directional, PBAT, library type | `usage/align-reads.md`, `troubleshooting/data-quality.md` |
-| 5-Base, `--illumina_5base`, bwa-mem3, `--bwamem3`, UMI, duplex, consensus, 5-Base `--unmapped` | `usage/align-5-base-reads.md`, `reference/aligner-cli.md` |
+| 5-Base, `--illumina_5base`, bwa-mem3, `--bwamem3`, 5-Base default engine, 5-Base `--minimap2`, UMI, duplex, consensus, 5-Base `--unmapped` | `usage/align-5-base-reads.md`, `reference/aligner-cli.md` |
 | 5-Base low coverage, methylated CpG islands, CpG-dense regions | `troubleshooting/data-quality.md`, `usage/align-5-base-reads.md` |
 | TAPS, `--taps`, TET-assisted pyridine borane | `usage/align-taps-reads.md`, `usage/align-5-base-reads.md` |
 | temp disk space, `--temp_dir`, named pipes, FIFO, `--no_stream_converted`, a streamed run that hangs | `usage/align-reads.md`, `troubleshooting/errors.md` |

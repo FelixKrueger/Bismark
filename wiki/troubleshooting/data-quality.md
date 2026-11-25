@@ -12,10 +12,10 @@ sources:
     commit: a199ad4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: db29eb9
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a199ad4
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: a199ad4
@@ -68,13 +68,13 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 
 ## 5-Base: low coverage at methylated CpG islands
 
-- **Cause in the code.** 5-Base runs without `--bwamem3` give the raw reads to minimap2 or Bowtie 2 against the unconverted genome, with the engine's normal scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` in `aligner/options.rs`). Each methylated CpG is then a mismatch. Bowtie 2 aligns end-to-end with a fixed score limit, `--score_min L,0,-0.6` by default (`default_linear_score` in `aligner/options.rs`), so a read with many methylated CpGs falls below it. The same read unmethylated stays above it.
+- **Cause in the code.** 5-Base runs with `--minimap2` or `--bowtie2` give the raw reads to minimap2 or Bowtie 2 against the unconverted genome, with the engine's normal scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` in `aligner/options.rs`). Each methylated CpG is then a mismatch. Bowtie 2 aligns end-to-end with a fixed score limit, `--score_min L,0,-0.6` by default (`default_linear_score` in `aligner/options.rs`), so a read with many methylated CpGs falls below it. The same read unmethylated stays above it.
 - **What the developer measured** on the NA12878 and HG002 demo data:
   - CpGs up to about 9 per 151 bp are unaffected.
   - Partly methylated CpGs at 15 or more per 151 bp read 6–11 points low.
   - The densest CpGs that are ≥80% methylated keep 40–50% of the expected coverage.
   - Both engines are affected.
-- **What helps.** Align with `--bwamem3`, which runs bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`): see [usage/align-5-base-reads.md](../usage/align-5-base-reads.md). The developer measured that it keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 or Bowtie 2, expect methylated CpG islands (imprinted regions, the inactive X, hypermethylated islands) to be under-covered. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse.
+- **What helps.** Align with bwa-mem3, the default engine (no engine flag, or `--bwamem3`), which runs its methylation-aware mode (`bwamem3_options` in `aligner/options.rs`): see [usage/align-5-base-reads.md](../usage/align-5-base-reads.md). The developer measured that it keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 or Bowtie 2, expect methylated CpG islands (imprinted regions, the inactive X, hypermethylated islands) to be under-covered. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse.
 
 ## M-bias
 
