@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use tempfile::TempDir;
 
 /// Decompress the first FASTA contig of a `.fa.gz` into uppercase bytes.
@@ -87,17 +88,19 @@ fn have_bwamem3() -> bool {
 }
 
 /// The 5-Base engine a control gate runs on.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Engine {
     Minimap2,
     BwaMem3,
+    /// bwa-mem3 with no engine flag: the index is found in `<genome>/Bwamem3_Index/`.
+    BwaMem3Default,
 }
 
 impl Engine {
     fn available(self) -> bool {
         match self {
             Engine::Minimap2 => have_minimap2(),
-            Engine::BwaMem3 => have_bwamem3(),
+            Engine::BwaMem3 | Engine::BwaMem3Default => have_bwamem3(),
         }
     }
 
@@ -105,15 +108,15 @@ impl Engine {
     fn token(self) -> &'static str {
         match self {
             Engine::Minimap2 => "mm2",
-            Engine::BwaMem3 => "bwamem3",
+            Engine::BwaMem3 | Engine::BwaMem3Default => "bwamem3",
         }
     }
 
-    /// The engine flag; for bwa-mem3 also builds `<genome>/Bwamem3_Index/` from `genome.fa`.
-    fn prepare(self, genome: &Path) -> &'static str {
+    /// The engine flag, if any; for bwa-mem3 also builds `<genome>/Bwamem3_Index/` from `genome.fa`.
+    fn prepare(self, genome: &Path) -> Option<&'static str> {
         match self {
-            Engine::Minimap2 => "--minimap2",
-            Engine::BwaMem3 => {
+            Engine::Minimap2 => Some("--minimap2"),
+            Engine::BwaMem3 | Engine::BwaMem3Default => {
                 let dir = genome.join("Bwamem3_Index");
                 fs::create_dir_all(&dir).unwrap();
                 fs::copy(genome.join("genome.fa"), dir.join("genome.fa")).unwrap();
@@ -127,7 +130,7 @@ impl Engine {
                     "bwa-mem3 index --meth failed: {}",
                     String::from_utf8_lossy(&st.stderr)
                 );
-                "--bwamem3"
+                (self == Engine::BwaMem3).then_some("--bwamem3")
             }
         }
     }
@@ -899,6 +902,12 @@ fn five_base_controls_core_recovers_lambda_and_puc19_bwamem3() {
     controls_core(Engine::BwaMem3);
 }
 
+/// The documented default command: `--illumina_5base` with no engine flag and no index flag.
+#[test]
+fn five_base_controls_core_recovers_lambda_and_puc19_default_bwamem3() {
+    controls_core(Engine::BwaMem3Default);
+}
+
 fn controls_core(engine: Engine) {
     if !engine.available() {
         eprintln!("skipping: {engine:?} not available (control gate)");
@@ -929,7 +938,7 @@ fn controls_core(engine: Engine) {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
-        .arg(engine_flag)
+        .args(engine_flag)
         .arg("-1")
         .arg(&r1)
         .arg("-2")
@@ -939,7 +948,11 @@ fn controls_core(engine: Engine) {
         .arg("--output_dir")
         .arg(outdir.path())
         .assert()
-        .success();
+        .success()
+        .stderr(
+            predicate::str::contains("bwa-mem3 is the default engine since 3.5.0")
+                .count(usize::from(engine == Engine::BwaMem3Default)),
+        );
 
     // Bucket by qname prefix (`lam`/`puc`) = the control of origin.
     let bam = outdir
@@ -1052,7 +1065,7 @@ fn controls_consensus(engine: Engine) {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
-        .arg(engine_flag)
+        .args(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_consensus")
         .arg("-1")
@@ -1130,7 +1143,7 @@ fn controls_deconvolution(engine: Engine) {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
-        .arg(engine_flag)
+        .args(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_deconvolution")
         .arg("-1")

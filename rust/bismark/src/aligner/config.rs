@@ -128,8 +128,17 @@ pub(crate) fn bwamem3_mode_label(cli: &Cli) -> &'static str {
     }
 }
 
-pub(crate) const MINIMAP2_OPT_OUT: &str = "Add --minimap2 to align with minimap2 against the \
-     genome FASTA instead (no index needed, but it under-covers methylated CpG islands).";
+const MINIMAP2_OPT_OUT_TAIL: &str = "to align with minimap2 against the genome FASTA instead (no \
+     index needed, but it under-covers methylated CpG islands).";
+
+/// The `--minimap2` opt-out for a defaulted run; `--minimap2` rejects `--five_base_index`.
+pub(crate) fn minimap2_opt_out(cli: &Cli) -> String {
+    if cli.five_base_index.is_some() {
+        format!("Add --minimap2 and drop --five_base_index {MINIMAP2_OPT_OUT_TAIL}")
+    } else {
+        format!("Add --minimap2 {MINIMAP2_OPT_OUT_TAIL}")
+    }
+}
 
 /// `msg` followed by `tail` as its own sentence.
 fn then_sentence(msg: &str, tail: &str) -> String {
@@ -142,11 +151,11 @@ fn then_sentence(msg: &str, tail: &str) -> String {
 }
 
 /// Adds the `--minimap2` opt-out to an error of a run whose engine was defaulted to bwa-mem3.
-fn with_minimap2_opt_out<T>(defaulted: bool, r: Result<T>) -> Result<T> {
+fn with_minimap2_opt_out<T>(cli: &Cli, defaulted: bool, r: Result<T>) -> Result<T> {
     match r {
         Err(e) if defaulted => Err(AlignerError::Validation(then_sentence(
             &e.to_string(),
-            MINIMAP2_OPT_OUT,
+            &minimap2_opt_out(cli),
         ))),
         r => r,
     }
@@ -867,7 +876,12 @@ fn resolve_five_base_index(
             return Ok(Some(index.clone()));
         }
         if five_base_engine_defaulted(cli, aligner)
-            && let Some((name, flag)) = unconverted_index_kind(index)
+            && !index.is_dir()
+            && let Some((name, flag)) = unconverted_index_kind(
+                index,
+                discovery::index_env_for(Aligner::Bowtie2).as_deref(),
+                discovery::index_env_for(Aligner::Hisat2).as_deref(),
+            )
         {
             return Err(AlignerError::Validation(format!(
                 "--five_base_index {} is a {name} index, but --illumina_5base aligns with bwa-mem3 \
@@ -955,14 +969,18 @@ fn resolve_five_base_index(
     Ok(Some(prefix))
 }
 
-/// A Bowtie 2 or HISAT2 index at `prefix` (and no bwa-mem3 one): its name and engine flag.
-fn unconverted_index_kind(prefix: &Path) -> Option<(&'static str, &'static str)> {
-    let has = |suffix: &str| PathBuf::from(format!("{}.{suffix}", prefix.display())).is_file();
-    if has("meth.ann") {
+/// A Bowtie 2 or HISAT2 index at `prefix` or under its env folder (and no bwa-mem3 one): its
+/// name and engine flag.
+fn unconverted_index_kind(
+    prefix: &Path,
+    bowtie2_env: Option<&std::ffi::OsStr>,
+    hisat2_env: Option<&std::ffi::OsStr>,
+) -> Option<(&'static str, &'static str)> {
+    if PathBuf::from(format!("{}.meth.ann", prefix.display())).is_file() {
         None
-    } else if has("1.bt2") || has("1.bt2l") {
+    } else if discovery::unconverted_index_found(Aligner::Bowtie2, prefix, bowtie2_env) {
         Some(("Bowtie 2", "--bowtie2"))
-    } else if has("1.ht2") || has("1.ht2l") {
+    } else if discovery::unconverted_index_found(Aligner::Hisat2, prefix, hisat2_env) {
         Some(("HISAT2", "--hisat2"))
     } else {
         None
@@ -1076,7 +1094,8 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     if defaulted && cli.path_to_minimap2.is_some() {
         return Err(AlignerError::Validation(format!(
             "--path_to_minimap2 applies to --minimap2; --illumina_5base aligns with bwa-mem3 by \
-             default (its folder is set with --path_to_bwamem3). {MINIMAP2_OPT_OUT}"
+             default (its folder is set with --path_to_bwamem3). {}",
+            minimap2_opt_out(cli)
         )));
     }
     reject_old_flag(cli)?;
@@ -1185,7 +1204,10 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         if defaulted {
             AlignerError::Validation(then_sentence(
                 &e.to_string(),
-                &format!("--illumina_5base aligns with bwa-mem3 by default. {MINIMAP2_OPT_OUT}"),
+                &format!(
+                    "--illumina_5base aligns with bwa-mem3 by default. {}",
+                    minimap2_opt_out(cli)
+                ),
             ))
         } else {
             e
@@ -1361,6 +1383,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
     } else {
         None
     };
+    if cli.illumina_5base && aligner == Aligner::Minimap2 {
+        options::reject_five_base_minimap2_tuning(cli)?;
+    }
     // After genome discovery so a missing genome still wins, and before `detect_aligner` so the
     // run fails before anything is spawned or written (#1100).
     if cli.illumina_5base
@@ -1372,6 +1397,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         discovery::validate_unconverted_index(aligner, index, env.as_deref())?;
     }
     let five_base_index = with_minimap2_opt_out(
+        cli,
         defaulted,
         resolve_five_base_index(cli, aligner, &genome.genome_dir),
     )?;
@@ -1384,6 +1410,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         Aligner::BwaMem3 => cli.path_to_bwamem3.as_deref(),
     };
     let detected_aligner = with_minimap2_opt_out(
+        cli,
         defaulted,
         aligner::detect_aligner(aligner, path_to_aligner, chem, bwamem3_mode_label(cli)),
     )?;
@@ -1840,7 +1867,8 @@ fn resolve_aligner(cli: &Cli) -> Result<Aligner> {
     }
     if cli.five_base_index.is_some() {
         return Err(AlignerError::Validation(
-            "--five_base_index only applies to --illumina_5base --bowtie2/--hisat2/--bwamem3."
+            "--five_base_index only applies to --illumina_5base (bwa-mem3 by default, or \
+             --bowtie2/--hisat2) and --taps."
                 .into(),
         ));
     }
@@ -3467,6 +3495,36 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"), "got: {err}");
         assert!(cli_from(&["--illumina_5base", "--five_base_umi_qname"]).five_base_umi_qname);
+    }
+
+    #[test]
+    fn five_base_index_outside_5base_names_every_route() {
+        let err = resolve_aligner(&cli_from(&["--five_base_index", "x"])).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("only applies to --illumina_5base (bwa-mem3 by default, or --bowtie2/--hisat2) and --taps"),
+            "{err}"
+        );
+    }
+
+    /// A Bowtie 2 or HISAT2 index found through its env folder is named as that engine's.
+    #[test]
+    fn unconverted_index_kind_uses_the_env_folders() {
+        let env = tempfile::TempDir::new().unwrap();
+        for s in ["1.bt2", "1.ht2"] {
+            let stem = if s == "1.bt2" { "bt" } else { "ht" };
+            std::fs::write(env.path().join(format!("{stem}.{s}")), b"").unwrap();
+        }
+        let e = Some(env.path().as_os_str());
+        assert_eq!(
+            unconverted_index_kind(Path::new("bt"), e, None),
+            Some(("Bowtie 2", "--bowtie2"))
+        );
+        assert_eq!(
+            unconverted_index_kind(Path::new("ht"), None, e),
+            Some(("HISAT2", "--hisat2"))
+        );
+        assert_eq!(unconverted_index_kind(Path::new("bt"), None, None), None);
     }
 
     /// `--illumina_5base` engine selection: `--rammap` is rejected; `--bowtie2`/

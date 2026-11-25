@@ -126,17 +126,17 @@ pub fn detect_aligner(
 ) -> Result<DetectedAligner> {
     let path = resolve_aligner_path(kind, path_to)?;
 
-    let not_working = || AlignerError::AlignerNotWorking {
-        aligner: kind.name().to_string(),
-        cmd: path.display().to_string(),
-        path_flag: path_flag(kind).to_string(),
-    };
-
     // bwa-mem3 has no `--version` flag (it exits 1); its version is the `version` subcommand.
     let version_arg = if kind == Aligner::BwaMem3 {
         "version"
     } else {
         "--version"
+    };
+    let not_working = || AlignerError::AlignerNotWorking {
+        aligner: kind.name().to_string(),
+        cmd: path.display().to_string(),
+        probe: version_arg.to_string(),
+        path_flag: path_flag(kind).to_string(),
     };
     let output = Command::new(&path)
         .arg(version_arg)
@@ -291,6 +291,22 @@ fn is_version_triple(s: &str) -> bool {
 mod tests {
     use super::*;
     use crate::aligner::config::FiveBaseChemistry::{Illumina5Base, Taps};
+
+    /// The not-working message names the probe that was run.
+    #[test]
+    fn not_working_message_names_the_probe() {
+        let msg = |aligner: &str, probe: &str| {
+            AlignerError::AlignerNotWorking {
+                aligner: aligner.into(),
+                cmd: format!("/opt/bin/{aligner}"),
+                probe: probe.into(),
+                path_flag: "--path_to_x".into(),
+            }
+            .to_string()
+        };
+        assert!(msg("bwa-mem3", "version").contains("could not run '/opt/bin/bwa-mem3 version'"));
+        assert!(msg("bowtie2", "--version").contains("could not run '/opt/bin/bowtie2 --version'"));
+    }
 
     #[test]
     fn parses_standard_bowtie2_version_line() {
