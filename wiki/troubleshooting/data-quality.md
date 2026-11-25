@@ -1,7 +1,7 @@
 ---
 type: troubleshooting
 title: Mapping efficiency, library type, coverage and M-bias
-description: Low mapping efficiency, choosing the library type, coverage problems, low 5-Base coverage at methylated CpG islands, and M-bias trimming.
+description: Low mapping efficiency, choosing the library type, coverage problems, 5-Base coverage at methylated CpG islands, and M-bias trimming.
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
@@ -9,13 +9,13 @@ updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
-    commit: a199ad4
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: 457509a
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
     commit: a199ad4
@@ -40,7 +40,7 @@ The developer says users ask most often about low mapping efficiency, which libr
 
 1. Open the alignment report and find where the reads went ([reference/run-reports.md](../reference/run-reports.md)): `no alignments under any condition`, `did not map uniquely`, or `could not be extracted`.
 2. Check the library type line in the report header. A directional run aligns only OT and OB; reads from CTOT and CTOB find no alignment (`library_line` in `aligner/report.rs`). See the next section.
-3. The default score limit is `--score_min L,0,-0.2`, end-to-end; 5-Base runs with Bowtie 2 or HISAT2 default to `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`default_linear_score` in `aligner/options.rs`). `--score_min L,0,-0.6` allows more mismatches; `--local` allows soft-clipped ends with Bowtie 2, and with HISAT2 outside 5-Base.
+3. The default score limit is `--score_min L,0,-0.2`, end-to-end (`default_linear_score` in `aligner/options.rs`). `--score_min L,0,-0.6` allows more mismatches; `--local` allows soft-clipped ends with Bowtie 2 and HISAT2.
 4. Reads that map equally well to several places are counted under `did not map uniquely` and are not in the BAM. `--ambiguous` writes them to a file so you can inspect them. 5-Base and TAPS runs keep every proper pair at any MAPQ, so they reject `--ambiguous` (`resolve` in `aligner/config.rs`).
 
 ## Which library type?
@@ -66,15 +66,10 @@ The `CT/CT`, `CT/GA`, `GA/CT` and `GA/GA` lines give the unique hits on OT, OB, 
 - `--cutoff` (bedGraph and `.cov`, default 1) and `--coverage_threshold` (cytosine report) drop low-coverage positions.
 - The cytosine report lists every cytosine, including uncovered ones with counts `0 0`, unless `--coverage_threshold` is set.
 
-## 5-Base: low coverage at methylated CpG islands
+## 5-Base: coverage at methylated CpG islands
 
-- **Cause in the code.** 5-Base runs with `--minimap2` or `--bowtie2` give the raw reads to minimap2 or Bowtie 2 against the unconverted genome, with the engine's normal scoring (`five_base_build_argv` in `aligner/mod.rs`, `minimap2_options` in `aligner/options.rs`). Each methylated CpG is then a mismatch. Bowtie 2 aligns end-to-end with a fixed score limit, `--score_min L,0,-0.6` by default (`default_linear_score` in `aligner/options.rs`), so a read with many methylated CpGs falls below it. The same read unmethylated stays above it.
-- **What the developer measured** on the NA12878 and HG002 demo data:
-  - CpGs up to about 9 per 151 bp are unaffected.
-  - Partly methylated CpGs at 15 or more per 151 bp read 6–11 points low.
-  - The densest CpGs that are ≥80% methylated keep 40–50% of the expected coverage.
-  - Both engines are affected.
-- **What helps.** Align with bwa-mem3, the default engine (no engine flag, or `--bwamem3`), which runs its methylation-aware mode (`bwamem3_options` in `aligner/options.rs`): see [usage/align-5-base-reads.md](../usage/align-5-base-reads.md). The developer measured that it keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 or Bowtie 2, expect methylated CpG islands (imprinted regions, the inactive X, hypermethylated islands) to be under-covered. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse.
+- **What the code does.** 5-Base runs align with bwa-mem3's methylation-aware mode, `--meth=5base --meth-scoring neutral` (`bwamem3_options` in `aligner/options.rs`); no other engine is accepted (`reject_non_bwamem3_flags` in `aligner/config.rs`). See [usage/align-5-base-reads.md](../usage/align-5-base-reads.md).
+- **What the developer measured** on the NA12878 and HG002 demo data: bwa-mem3 keeps 1.01–1.02× DRAGEN's depth in the densest methylated CpGs, against 0.48–0.50× for minimap2. With minimap2 and Bowtie 2, which count each methylated CpG as a mismatch, CpGs up to about 9 per 151 bp were unaffected, the densest CpGs that are ≥80% methylated kept 40–50% of the expected coverage, and partly methylated CpGs at 15 or more per 151 bp read 6–11 points low. The developer found that filtering 5-Base BAMs by MAPQ makes the coverage loss worse. The developer gives these results as the reason 5-Base aligns with bwa-mem3 only.
 
 ## M-bias
 
