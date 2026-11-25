@@ -334,6 +334,8 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
 
+  With `--illumina_5base`, `--minimap2` selects the paired-end minimap2 `-x sr` engine against the genome FASTA, the 5-Base default before 3.5.0; without it, 5-Base aligns with bwa-mem3 (see the [5-Base guide](/Bismark/rust/illumina-5-base/#running-it)).
+
   **MAPQ:** minimap2 reports *positive* alignment scores (every preset Bismark can select awards 2 per matching base), so the best possible score is `2 × read_length` and Bismark normalises MAPQ against it, exactly as it does for Bowtie 2 `--local`. MAPQ is **22–44 for a uniquely-aligned read**, and can be **lower — down to 2 — when another strand instance produced a competing score** for the same read. This is **Bismark's own scale, not minimap2's**: minimap2 derives its own MAPQ from chain scores on a 0–60 scale, and Bismark discards it because it recomputes MAPQ across the 2–4 strand instances it runs. The same applies to `--rammap`.
 
   Four consequences worth knowing:
@@ -351,7 +353,7 @@ Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x ma
 
 Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2` or `--rammap`. Default: OFF.
 
-  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
+  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base --minimap2`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
 
 - `--mm2_short_reads`
 

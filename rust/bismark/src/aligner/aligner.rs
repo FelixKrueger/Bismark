@@ -88,6 +88,11 @@ fn path_flag(kind: Aligner) -> &'static str {
     }
 }
 
+/// Whether the `kind` executable exists (in `path_to`, else on `PATH`).
+pub(crate) fn aligner_found(kind: Aligner, path_to: Option<&Path>) -> bool {
+    resolve_aligner_path(kind, path_to).is_ok_and(|p| p.is_file())
+}
+
 /// Resolve the aligner executable path. If `path_to` is given it must be a
 /// directory (Perl requires this) and the binary name is appended; otherwise the
 /// binary is looked up on `PATH`.
@@ -111,12 +116,13 @@ fn resolve_aligner_path(kind: Aligner, path_to: Option<&Path>) -> Result<PathBuf
 
 /// Detect `kind`: resolve the path, run `--version`, parse the version, and warn
 /// if it is not the pinned version. Byte-identity is guaranteed only against the
-/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2). `chem` names the 5-Base-path mode in the
-/// bwa-mem3 messages; other aligners ignore it.
+/// pinned version (Bowtie 2 2.5.5 / HISAT2 2.2.2). `chem` and `mode` (the flags that chose
+/// bwa-mem3) name the 5-Base-path mode in the bwa-mem3 messages; other aligners ignore them.
 pub fn detect_aligner(
     kind: Aligner,
     path_to: Option<&Path>,
     chem: FiveBaseChemistry,
+    mode: &str,
 ) -> Result<DetectedAligner> {
     let path = resolve_aligner_path(kind, path_to)?;
 
@@ -162,7 +168,7 @@ pub fn detect_aligner(
                 "`bwa-mem3 version` printed no version ({}); {} needs \
                  bwa-mem3 >= {}.{}.{}.",
                 path.display(),
-                chem.engine_flags(),
+                mode,
                 MIN_BWAMEM3_VERSION.0,
                 MIN_BWAMEM3_VERSION.1,
                 MIN_BWAMEM3_VERSION.2
@@ -177,10 +183,7 @@ pub fn detect_aligner(
         return Err(AlignerError::Validation(format!(
             "bwa-mem3 {found} is too old or unrecognised: {} needs bwa-mem3 \
              >= {}.{}.{} ({why}).",
-            chem.engine_flags(),
-            MIN_BWAMEM3_VERSION.0,
-            MIN_BWAMEM3_VERSION.1,
-            MIN_BWAMEM3_VERSION.2
+            mode, MIN_BWAMEM3_VERSION.0, MIN_BWAMEM3_VERSION.1, MIN_BWAMEM3_VERSION.2
         )));
     }
     let version = parsed.unwrap_or_else(|| {
@@ -416,7 +419,13 @@ mod tests {
             "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.16.0; echo 'Compiler: gcc 15.2.0'; exit 0; }\n\
              echo \"ERROR: unknown command '$1'\" >&2; exit 1\n",
         );
-        let d = detect_aligner(Aligner::BwaMem3, Some(dir.path()), Illumina5Base).unwrap();
+        let d = detect_aligner(
+            Aligner::BwaMem3,
+            Some(dir.path()),
+            Illumina5Base,
+            "--illumina_5base --bwamem3",
+        )
+        .unwrap();
         assert_eq!(d.version, "0.16.0");
     }
 
@@ -424,9 +433,14 @@ mod tests {
     #[test]
     fn detect_bwamem3_rejects_too_old() {
         let dir = fake_bwamem3("#!/bin/sh\necho 0.15.1\n");
-        let err = detect_aligner(Aligner::BwaMem3, Some(dir.path()), Illumina5Base)
-            .unwrap_err()
-            .to_string();
+        let err = detect_aligner(
+            Aligner::BwaMem3,
+            Some(dir.path()),
+            Illumina5Base,
+            "--illumina_5base --bwamem3",
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("0.15.1") && err.contains("0.16.0"), "{err}");
         assert!(err.contains("--illumina_5base --bwamem3 needs"), "{err}");
     }
@@ -435,7 +449,7 @@ mod tests {
     #[test]
     fn detect_bwamem3_messages_name_taps_under_taps() {
         let old = fake_bwamem3("#!/bin/sh\necho 0.15.1\n");
-        let e = detect_aligner(Aligner::BwaMem3, Some(old.path()), Taps)
+        let e = detect_aligner(Aligner::BwaMem3, Some(old.path()), Taps, "--taps")
             .unwrap_err()
             .to_string();
         assert!(
@@ -443,7 +457,7 @@ mod tests {
             "{e}"
         );
         let empty = fake_bwamem3("#!/bin/sh\nexit 0\n");
-        let e = detect_aligner(Aligner::BwaMem3, Some(empty.path()), Taps)
+        let e = detect_aligner(Aligner::BwaMem3, Some(empty.path()), Taps, "--taps")
             .unwrap_err()
             .to_string();
         assert!(

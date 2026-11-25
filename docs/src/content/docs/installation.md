@@ -21,7 +21,7 @@ mamba install -c bioconda -c conda-forge bismark
 
 You get the single `bismark` binary plus the classic tool-name aliases, with **no `samtools`** dependency (BAM/SAM/CRAM I/O is pure-Rust). To install the legacy Perl implementation instead, pin `bismark=0.25.1`.
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need bwa-mem3, which the bioconda package (from 3.3.0) and the container include; with Homebrew or `cargo`, install it separately (see [Dependencies](#dependencies)).
+`--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` also need bwa-mem3, which the bioconda package (from 3.3.0) and the container include; with Homebrew or `cargo`, install it separately (see [Dependencies](#dependencies)) or run 5-Base with `--minimap2`.
 
 ### Install with Homebrew (macOS / Linux)
 
@@ -51,7 +51,7 @@ The release binaries and the container image also include the in-process rammap 
 
 **Updating:** re-run the `--branch` command and cargo picks up the newest commit automatically; re-running `cargo install bismark` is a no-op unless a newer version is published — add `--force` to reinstall in place.
 
-**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` (see [Dependencies](#dependencies)). No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
+**Prerequisites (source install):** a Rust toolchain (latest stable recommended; minimum supported Rust 1.89); a working C linker; and the alignment backend(s) on your `PATH` — **Bowtie 2** (+ `bowtie2-build`), or optionally **HISAT2** (+ `hisat2-build`) or **minimap2**, plus **bwa-mem3** for `--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` (see [Dependencies](#dependencies)). No `samtools` is required (BAM/SAM I/O is pure-Rust). Make sure `~/.cargo/bin` is on your `PATH`.
 
 ### Prebuilt binaries (no toolchain)
 
@@ -77,7 +77,7 @@ Bismark requires [Bowtie 2](http://bowtie-bio.sourceforge.net/bowtie2) (or [HISA
 --path_to_hisat2 </../../hisat2>
 ```
 
-`--taps`, `--illumina_5base --bwamem3` and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The bioconda package (from 3.3.0) and the container image include it; with Homebrew or a `cargo` install, add it from bioconda:
+`--taps`, `--illumina_5base` (bwa-mem3 is its default engine) and `bismark prepare --bwamem3` also need [bwa-mem3](https://github.com/fg-labs/bwa-mem3) 0.16.0 or later (CI and the container use 0.18.0). The bioconda package (from 3.3.0) and the container image include it; with Homebrew or a `cargo` install, add it from bioconda:
 
 ```bash
 mamba install -c bioconda -c conda-forge bwa-mem3

@@ -164,14 +164,19 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 }
 
 /// Never-silent notice for a run on the 5-Base path, naming the chemistry and the engine.
-fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String {
+fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry, defaulted: bool) -> String {
     match chem {
         config::FiveBaseChemistry::Illumina5Base => format!(
             "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
              with {} to the UNCONVERTED genome and methylation is called with inverted \
              polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
-             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
-            aligner.name()
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.{}",
+            aligner.name(),
+            if defaulted {
+                " bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one."
+            } else {
+                ""
+            }
         ),
         config::FiveBaseChemistry::Taps => format!(
             "Note: --taps is the TAPS (mC->T) mode: reads are aligned with {} to the \
@@ -283,7 +288,11 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if config.five_base {
         eprintln!(
             "{}",
-            five_base_notice(config.aligner, config.five_base_chemistry)
+            five_base_notice(
+                config.aligner,
+                config.five_base_chemistry,
+                config::five_base_engine_defaulted(cli, config.aligner)
+            )
         );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
@@ -2135,7 +2144,7 @@ pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
         Aligner::Bowtie2 | Aligner::Hisat2 => {
             format!("{} -p {n} --reorder", config.aligner_options)
         }
-        // minimap2 (default 5-Base engine): reuse the resolved options but lift the
+        // minimap2 (`--minimap2` 5-Base engine): reuse the resolved options but lift the
         // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
         // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
         // base string carries a resolved `-t {p}` (#1074 C2).
@@ -10609,7 +10618,7 @@ mod tests {
 
     #[test]
     fn taps_notice_names_taps_and_bwamem3() {
-        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps);
+        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps, false);
         assert!(
             n.starts_with("Note: --taps is the TAPS (mC->T) mode"),
             "{n}"
@@ -10630,8 +10639,12 @@ mod tests {
             "{n}"
         );
         assert!(
-            five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Illumina5Base)
-                .contains("concordance-validated vs DRAGEN")
+            five_base_notice(
+                Aligner::BwaMem3,
+                config::FiveBaseChemistry::Illumina5Base,
+                false
+            )
+            .contains("concordance-validated vs DRAGEN")
         );
     }
 
@@ -10643,7 +10656,7 @@ mod tests {
             config::Aligner::Hisat2,
             config::Aligner::BwaMem3,
         ] {
-            let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base);
+            let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base, false);
             assert!(
                 notice.contains(&format!(
                     "aligned with {} to the UNCONVERTED",
@@ -10653,6 +10666,15 @@ mod tests {
             );
             assert!(notice.contains("paired-end only"), "{notice}");
         }
+    }
+
+    #[test]
+    fn five_base_notice_names_the_default_engine_only_when_defaulted() {
+        let chem = config::FiveBaseChemistry::Illumina5Base;
+        let note =
+            "bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one.";
+        assert!(five_base_notice(config::Aligner::BwaMem3, chem, true).ends_with(note));
+        assert!(!five_base_notice(config::Aligner::BwaMem3, chem, false).contains(note));
     }
 
     #[test]

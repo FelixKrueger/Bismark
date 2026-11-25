@@ -100,7 +100,7 @@ be compared against the field-standard methylation reference.
   matched WGBS run **SRR6918157** (2,000,000 read-pair subset). Reference: **mouse GRCm39
   chromosome 19** (61.4 Mb, Ensembl release-110).
 - TAPS: `bismark_rs --illumina_5base --five_base_deconvolution --genome <chr19> -1 -2`
-  (the default minimap2 `-x sr` unconverted path).
+  (minimap2 `-x sr` against the unconverted genome, the default before 3.5.0).
 - WGBS: `bismark_genome_preparation_rs` then `bismark_rs --bowtie2` (the faithful
   bisulfite path), same chr19.
 - Both extracted with `bismark_methylation_extractor_rs -p --comprehensive --bedGraph`.
@@ -321,10 +321,12 @@ binary is the canonical `bismark` (post #1038).
 ### 1. Align + call each sample (whole GRCh38, paired-end)
 
 ```sh
-GENOME=/path/to/GRCh38            # bismark_genome_preparation'd
+GENOME=/path/to/GRCh38            # with Bwamem3_Index/ from `bismark prepare --bwamem3`
 S=NA12878                         # then repeat with S=HG002
 OUT=/scratch/5base/$S
 
+# bwa-mem3 is the engine from 3.5.0; add --minimap2 to every bismark line for the engine
+# the GA figures below were measured with
 # core per-read path (for the methylation concordance)
 bismark --illumina_5base --genome "$GENOME" -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz \
         --output_dir "$OUT" --temp_dir "$OUT/tmp" --multicore 8
@@ -398,7 +400,9 @@ The graduated modes were validated end-to-end on the real Illumina 5-Base demo (
 Sample8, 8 lanes, whole GRCh38) against the matching DRAGEN v4.4.6 reference, plus the
 deterministic lambda/pUC19 control gates that run in CI. Numbers below are the measured
 results from this document's runs (core: the 55M-CpG table above; deconvolution:
-`deconv_vs_vcf.py` over 8 lanes; consensus: the per-molecule duplex view):
+`deconv_vs_vcf.py` over 8 lanes; consensus: the per-molecule duplex view). They are
+minimap2 figures; the bwa-mem3 default is measured in
+[bwa-mem3 as the default engine](#bwa-mem3-as-the-default-engine-350) below.
 
 | mode | depth | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
 |---|---|---|---|---|---|---|
@@ -471,3 +475,60 @@ DRAGEN's `chr1` VCF and our `1` output match — earlier this silently scored 0%
 This is not required for the core/deconvolution GA contract — the NA12878 full-depth results
 plus the reproducible lambda/pUC19 CI gates already establish it — but it is strong
 independent cross-sample corroboration.
+
+## bwa-mem3 as the default engine (3.5.0)
+
+Before bwa-mem3 replaced minimap2 as the `--illumina_5base` default, both engines were
+compared on lane 1 of two samples with the same Bismark binary (`f701c86`), bwa-mem3 0.18.0
+vs minimap2 2.31, against each sample's full-depth DRAGEN v4.4.6 reference. The thresholds
+were registered before scoring (`plans/11232026_5base-bwamem3-default/spikes/`).
+
+| sample (lane 1) | metric | minimap2 | bwa-mem3 |
+|---|---|---|---|
+| NA12878 (66.3M pairs) | core r, CpGs both engines cover at cov ≥ 10 | 0.920 | 0.929 |
+| | call agreement at cov ≥ 10 | 89.9% | 90.0% |
+| | CpGs at cov ≥ 10 shared with DRAGEN | 111,029 | 124,764 |
+| | mean CpG methylation − DRAGEN | −1.31 pt | +0.18 pt |
+| | mapping efficiency | 93.7% | 96.7% |
+| | densest methylated CpGs, depth vs DRAGEN | 0.50× | 1.01× |
+| | deconvolution precision / recall | 94.7 / 72.7% | 94.5 / 74.3% |
+| | duplex own-strand methylation (DRAGEN 49.7%) | 47.2% | 49.3% |
+| | MAPQ-0 fraction | 3.7% | 5.1% |
+| HG002 (82.3M pairs) | core r, CpGs both engines cover at cov ≥ 10 | 0.944 | 0.949 |
+| | call agreement at cov ≥ 10 | 92.4% | 92.8% |
+| | CpGs at cov ≥ 10 shared with DRAGEN | 258,286 | 298,123 |
+| | mean CpG methylation − DRAGEN | −0.89 pt | −0.16 pt |
+| | mapping efficiency | 90.9% | 93.7% |
+| | densest methylated CpGs, depth vs DRAGEN | 0.49× | 1.03× |
+| | deconvolution precision / recall | 94.8 / 80.1% | 94.9 / 81.7% |
+| | MAPQ-0 fraction | 3.9% | 5.4% |
+
+Every threshold row passed on both samples. The dense, partly methylated CpGs (15 or more
+per 151 bp) are the closest to their bounds: bwa-mem3 covers them at 1.11× / 1.22× DRAGEN's
+depth and calls them 0.3 / 1.5 points high (minimap2: 0.94× / 0.96×, 6.2 / 7.4 points low).
+CHG and CHH methylation are 0.1 point higher with bwa-mem3. The two engines' MAPQ values are
+not comparable.
+
+### Full-depth contract run (NA12878 Sample8, all 8 lanes, bwa-mem3)
+
+524M pairs, `--illumina_5base --bwamem3 --five_base_umi_qname --five_base_deconvolution
+--five_base_duplex --five_base_consensus -p 24`, then deduplication and extraction as in the
+runbook above:
+
+| mode | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
+|---|---|---|---|---|---|
+| core (per-read, deduplicated) | 55.6M (cov>=1) / 54.0M (cov>=10) | 0.995 (0.999 cov>=10) | 99.5% (99.7% cov>=10) | n/a | n/a |
+| deconvolution | 168,589 DRAGEN hom CpG-SNVs covered | n/a | n/a | 94.0% | 96.9% |
+
+- **Core:** mean CpG methylation 0.01 points from DRAGEN at cov ≥ 10. Mapping efficiency
+  96.7%; CpG / CHG / CHH methylation 49.9 / 1.4 / 1.3%; duplicate rate 6.95%; MAPQ-0
+  fraction 5.1%. Both pre-registered floors (r ≥ 0.995 and call agreement ≥ 99.0% at
+  cov ≥ 10) pass.
+- **Deconvolution:** 239,087 `variant` CpGs, 224,666 of them DRAGEN C>T/G>A.
+- **Duplex:** 2.9M duplex-paired families of 473M; own-strand calls 49.5% methylated
+  (DRAGEN genome-wide 49.7%).
+- **Consensus:** per-strand mean methylation 49.95% / 49.93% vs DRAGEN 50.07% / 50.06% on the
+  6.75M CpGs per strand it covers. Per-CpG against the CX report: r 0.77 over 13.5M CpGs
+  (cov ≥ 1), 9,894 CpGs at cov ≥ 5.
+- **Resources:** 6 h 34 wall at 24 threads with all three 5-Base passes (the report's
+  alignment time is 3 h 52); peak RSS 118.5 GiB (26.4 GiB on lane 1 with the same flags).
