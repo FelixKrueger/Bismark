@@ -1349,6 +1349,18 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             genome.genome_dir.display()
         )));
     }
+    // Option errors come before the index and binary checks.
+    let five_base_options = if cli.illumina_5base
+        && matches!(
+            aligner,
+            Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3
+        ) {
+        Some(options::build_five_base_aligner_options(
+            cli, aligner, format,
+        )?)
+    } else {
+        None
+    };
     // After genome discovery so a missing genome still wins, and before `detect_aligner` so the
     // run fails before anything is spawned or written (#1100).
     if cli.illumina_5base
@@ -1375,14 +1387,11 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
         defaulted,
         aligner::detect_aligner(aligner, path_to_aligner, chem, bwamem3_mode_label(cli)),
     )?;
-    let (aligner_options, gap_penalties) = if cli.illumina_5base
-        && matches!(
-            aligner,
-            Aligner::Bowtie2 | Aligner::Hisat2 | Aligner::BwaMem3
-        ) {
-        options::build_five_base_aligner_options(cli, aligner, format)?
-    } else {
-        options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+    let (aligner_options, gap_penalties) = match five_base_options {
+        Some(opts) => opts,
+        None => {
+            options::build_aligner_options(cli, aligner, format, paired, hisat2_multicore_remap)?
+        }
     };
     // The SAME resolution `options::minimap2_options` renders `-x` from, so the emitted option
     // and the in-process rammap backend cannot drift (#1092). Must stay after

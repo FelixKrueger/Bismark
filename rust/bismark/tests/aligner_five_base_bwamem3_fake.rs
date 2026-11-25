@@ -1704,3 +1704,21 @@ fn explicit_bwamem3_with_a_bowtie2_index_keeps_the_bwamem3_message() {
         .stderr(predicate::str::contains("is a Bowtie 2 index").not())
         .stderr(predicate::str::contains("Add --minimap2").not());
 }
+
+#[cfg(unix)]
+#[test]
+fn default_engine_rejects_options_before_the_index_check() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for (extra, want) in [
+        (&["-X", "900"][..], "--maxins is not supported"),
+        (&["--local"][..], "--local is not supported"),
+        (&["-p", "1"][..], "-p of 2 or more"),
+    ] {
+        default_cmd(&run, run.out.path())
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(want))
+            .stderr(predicate::str::contains("needs its methylation index").not());
+    }
+}
