@@ -94,7 +94,7 @@ Outside 5-Base, every Bowtie 2 / HISAT2 run gets `--ignore-quals`, and every pai
 | `--prefix <p>` | none | Prefix plus `.`; trailing dots stripped |
 | `--bam` | on | Accepted; BAM is the only output |
 | `--gzip` | off | Gzip the converted reads when they are written as files (`convert.rs`); no effect when they are streamed; not with `--pbat` |
-| `--unmapped` (`--un`), `--ambiguous`, `--ambig_bam` | off | Extra outputs for unmapped and ambiguous reads; with `--illumina_5base` or `--taps`, only `--unmapped` (the unaligned pairs as read) |
+| `--unmapped` (`--un`), `--ambiguous`, `--ambig_bam` | off | Extra outputs for unmapped and ambiguous reads; with `--illumina_5base` or `--taps`, only `--unmapped` (the pairs counted as no alignment, as read) |
 | `--add_barcode`, `--add_umi` | off | `CB:Z:` / `UR:Z:` tags from the read name |
 | `--strandID` | off | `YS:Z:` strand tag; paired-end only, a note is printed for single-end |
 

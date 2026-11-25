@@ -20,6 +20,9 @@ sources:
     path: rust/bismark/src/aligner/mod.rs
     commit: db29eb9
   - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/aux_out.rs
+    commit: db29eb9
+  - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 855b812
   - repo: FelixKrueger/Bismark
@@ -76,7 +79,7 @@ They take the normal tuning options (`-N`, `-L`, `-D`, `-R`, `--score_min`, `--r
 
 A pair is written only when both mates are mapped and flagged proper, lie on one contig, are on opposite strands, and the reverse mate ends after the forward mate starts (`five_base_pair_geometry` in `aligner/mod.rs`). MAPQ is not filtered. A pair whose R1 is not flagged proper, or with an unmapped mate, counts as no alignment. A pair whose R2 is not flagged proper, or whose mates are on different contigs, on one strand, or point apart, is counted under "Proper pairs rejected" and as no alignment (`five_base_emit_pe_record`). Secondary and supplementary records are skipped. Every pair must come back from the engine, in FASTQ order, and the run fails when R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`).
 
-With `--unmapped`, each pair counted as no alignment is written to `<read-1 file>_unmapped_reads_1.fq.gz` and `<read-2 file>_unmapped_reads_2.fq.gz` exactly as it was read, read names included, so `--five_base_umi_qname` can read the UMI again on a re-run (`five_base_align_and_call_pe`, `write_raw_fastq_record`). A pair whose genomic window runs past a contig end is counted under "genomic sequence could not be extracted" and written nowhere (`FiveBasePair::Rejected`). `--ambiguous` and `--ambig_bam` stop the run: every proper pair is kept at any MAPQ, so no pair is ambiguous (`resolve` in `aligner/config.rs`).
+With `--unmapped`, each pair counted as no alignment is written to `<read-1 file>_unmapped_reads_1.fq.gz` and `<read-2 file>_unmapped_reads_2.fq.gz` (`aux_filename` in `aligner/aux_out.rs`; `--prefix`, `--basename` and `-o` as in [usage/align-reads.md](align-reads.md)), with each record's four lines as they were read, read names included; a last line without a newline gets one (`five_base_align_and_call_pe`, `write_raw_fastq_record`). A pair whose genomic window runs past a contig end is counted under "genomic sequence could not be extracted" and written nowhere (`five_base_emit_pe_record`). `--ambiguous` and `--ambig_bam` stop the run: every proper pair is kept at any MAPQ, so no pair is ambiguous (`resolve` in `aligner/config.rs`).
 
 ## Bases that are not called
 
@@ -90,7 +93,7 @@ All three are in `aligner/mod.rs`. They change `XM`, so the extractor and `--fiv
 
 ## Optional outputs
 
-Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`). `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone`). Both standalone modes align no reads, so `--unmapped`, `--ambiguous` and `--ambig_bam` stop them (`run` in `aligner/mod.rs`).
+Each is written next to the BAM: `--five_base_deconvolution` (`.5base_deconvolution.txt`), `--five_base_duplex` (`.5base_duplex.txt`), `--five_base_consensus` (`.5base_consensus.bam`, and `.5base_simplex.bam` with `--five_base_emit_multiplicity simplex|both`). `--five_base_bisulfite_bam <bam>` re-encodes an existing 5-Base BAM into bisulfite convention without re-aligning (`run_five_base_bisulfite_standalone`). `--five_base_consensus_from_bam` and `--five_base_bisulfite_bam` align no reads, so `--unmapped`, `--ambiguous` and `--ambig_bam` stop them (`run` in `aligner/mod.rs`).
 
 ## Links
 

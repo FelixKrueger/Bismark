@@ -5,11 +5,14 @@ description: Low mapping efficiency, choosing the library type, coverage problem
 tags: [troubleshooting, mapping-efficiency, library-type, coverage, m-bias, 5-base]
 page_id: troubleshooting
 subject_status: current
-updated: 2026-11-21
+updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/report.rs
     commit: a199ad4
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/config.rs
+    commit: db29eb9
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: a199ad4
@@ -38,7 +41,7 @@ The developer says users ask most often about low mapping efficiency, which libr
 1. Open the alignment report and find where the reads went ([reference/run-reports.md](../reference/run-reports.md)): `no alignments under any condition`, `did not map uniquely`, or `could not be extracted`.
 2. Check the library type line in the report header. A directional run aligns only OT and OB; reads from CTOT and CTOB find no alignment (`library_line` in `aligner/report.rs`). See the next section.
 3. The default score limit is `--score_min L,0,-0.2`, end-to-end; 5-Base runs with Bowtie 2 or HISAT2 default to `L,0,-0.6`, or `G,20,8` with Bowtie 2 `--local` (`default_linear_score` in `aligner/options.rs`). `--score_min L,0,-0.6` allows more mismatches; `--local` allows soft-clipped ends with Bowtie 2, and with HISAT2 outside 5-Base.
-4. Reads that map equally well to several places are counted under `did not map uniquely` and are not in the BAM. `--ambiguous` writes them to a file so you can inspect them.
+4. Reads that map equally well to several places are counted under `did not map uniquely` and are not in the BAM. `--ambiguous` writes them to a file so you can inspect them. 5-Base and TAPS runs keep every proper pair at any MAPQ, so they reject `--ambiguous` (`resolve` in `aligner/config.rs`).
 
 ## Which library type?
 
