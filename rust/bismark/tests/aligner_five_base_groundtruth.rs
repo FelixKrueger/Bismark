@@ -218,7 +218,7 @@ impl Gt {
 /// family.
 const N_FILLER: usize = 40;
 
-/// Append [`N_FILLER`] unmethylated OT pairs tiled over `filler` (fragments 120–200 bp, 60 bp
+/// Append [`N_FILLER`] unmethylated OT pairs tiled over `filler` (fragments 120–198 bp, 60 bp
 /// mates), each with its own dual UMI.
 fn filler_pairs(filler: &[u8], fq1: &mut Vec<u8>, fq2: &mut Vec<u8>) {
     let umi = |v: usize| -> String {
@@ -228,7 +228,7 @@ fn filler_pairs(filler: &[u8], fq1: &mut Vec<u8>, fq2: &mut Vec<u8>) {
     };
     let rl = 60usize;
     for i in 0..N_FILLER {
-        let (start, frag) = (i * 240, 120 + (i % 41) * 2);
+        let (start, frag) = (i * 240, 120 + i * 2);
         let name = format!("fill{i}:{}+{}", umi(2 * i + 1000), umi(2 * i + 1001));
         emit_fastq(fq1, &name, &filler[start..start + rl]);
         emit_fastq(
@@ -724,7 +724,8 @@ fn five_base_pe_groundtruth_real_aligner_bwamem3() {
     let cpgs = cpg_positions(&reference);
     let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
     let mut truth: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
-    for p in 0..reference.len() / frag {
+    // The driver needs 2 genome bases past each mate, so the last fragment stops short of the end.
+    for p in 0..(reference.len() - 2) / frag {
         let start = p * frag;
         let qname = format!("pair{p}");
         // R1: forward 5' end, methylation injected.

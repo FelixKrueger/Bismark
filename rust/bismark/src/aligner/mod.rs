@@ -8629,7 +8629,7 @@ mod tests {
         }
     }
 
-    // ---- #787 Illumina 5-Base per-record emission (hermetic, no minimap2) ----
+    // ---- #787 Illumina 5-Base per-record emission (hermetic, no aligner) ----
 
     fn five_base_genome(chr: &str, seq: &[u8]) -> Genome {
         let mut chromosomes = std::collections::HashMap::new();
@@ -10346,9 +10346,9 @@ mod tests {
             ))
             .unwrap()
         };
-        assert!(five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readA"), "R1").is_ok());
-        assert!(five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readA/2"), "R2").is_ok());
-        let err = five_base_check_lockstep("Bowtie 2", 7, "readA", &sam("readB"), "R1")
+        assert!(five_base_check_lockstep("bwa-mem3", 7, "readA", &sam("readA"), "R1").is_ok());
+        assert!(five_base_check_lockstep("bwa-mem3", 7, "readA", &sam("readA/2"), "R2").is_ok());
+        let err = five_base_check_lockstep("bwa-mem3", 7, "readA", &sam("readB"), "R1")
             .unwrap_err()
             .to_string();
         assert!(
@@ -10526,11 +10526,11 @@ mod tests {
             ))
             .unwrap()
         };
-        assert!(five_base_check_lockstep("Bowtie 2", 1, "readA\r", &sam("readA"), "R1").is_ok());
+        assert!(five_base_check_lockstep("bwa-mem3", 1, "readA\r", &sam("readA"), "R1").is_ok());
         let long = "x".repeat(300);
-        assert!(five_base_check_lockstep("Bowtie 2", 1, &long, &sam(&long[..254]), "R1").is_ok());
+        assert!(five_base_check_lockstep("bwa-mem3", 1, &long, &sam(&long[..254]), "R1").is_ok());
         let other = format!("y{}", &long[1..]);
-        assert!(five_base_check_lockstep("Bowtie 2", 1, &other, &sam(&long[..254]), "R1").is_err());
+        assert!(five_base_check_lockstep("bwa-mem3", 1, &other, &sam(&long[..254]), "R1").is_err());
     }
 
     #[test]

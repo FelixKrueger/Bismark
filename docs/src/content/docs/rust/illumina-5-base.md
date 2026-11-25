@@ -153,7 +153,7 @@ The emitted BAM is standard Bismark convention (`XM`/`XR`/`XG`), so the extracto
 [bwa-mem3](https://github.com/fg-labs/bwa-mem3) (0.16.0 or later) has a methylation-aware 5-Base mode
 (`mem --meth=5base`) that does not penalise a read `T` at a genomic `C`, so methylated reads
 from CpG-dense regions align as well as unmethylated ones (see the
-[known limitation](#known-limitation-cpg-dense-methylated-regions)). bwa-mem3 only places the
+[CpG-dense methylated regions](#cpg-dense-methylated-regions)). bwa-mem3 only places the
 reads; Bismark makes the methylation calls.
 
 It is the only 5-Base engine since 3.5.0. It costs more than the engines before it (see

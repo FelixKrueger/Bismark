@@ -97,7 +97,7 @@ accepted, as they were in Perl Bismark.
 
 - `-X <int>` / `--maxins <int>`
 
-  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500 (800 for `--illumina_5base --bowtie2`).
+  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.
 
 - `--parallel <int>`
 
@@ -353,7 +353,7 @@ Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x ma
 
 Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2` or `--rammap`. Default: OFF.
 
-  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base --minimap2`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
+  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr.
 
 - `--mm2_short_reads`
 

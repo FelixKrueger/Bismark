@@ -1003,6 +1003,32 @@ fn taps_five_base_baseq_masks_low_quality_calls() {
     assert_eq!(r1(&bam_records(&masked)), b".....z");
 }
 
+/// `--phred64-quals` reaches the 5-Base quality mask: `B` is Q2 in Phred+64 but Q33 in Phred+33.
+#[cfg(unix)]
+#[test]
+fn five_base_phred64_quals_decode_the_base_quality_mask() {
+    let r1 = |recs: &[bismark::io::BismarkRecord]| {
+        recs.iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1")
+            .xm()
+            .to_vec()
+    };
+    let reads = "@p\nATGTAC\n+\nhBhhhh\n";
+    let phred64 = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&phred64)
+        .args(["--phred64-quals", "--five_base_baseq", "30"])
+        .assert()
+        .success();
+    assert_eq!(r1(&bam_records(&phred64)), b".....z");
+    let phred33 = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&phred33)
+        .args(["--five_base_baseq", "30"])
+        .assert()
+        .success();
+    assert_eq!(r1(&bam_records(&phred33)), b".Z...z");
+}
+
 // ---- #1282: --unmapped in 5-Base/TAPS mode -------------------------------------------------
 
 /// --unmapped fixture: distinct mates with Illumina comments; `bothun` has both mates unmapped,
@@ -1825,8 +1851,9 @@ fn default_engine_uses_a_bwamem3_index_folder_despite_a_same_named_bowtie2_index
         .stderr(predicate::str::contains("is a Bowtie 2 index").not());
 }
 
-/// #1125 on bwa-mem3's input: variable mate lengths and Illumina header comments, `-p 4`,
-/// `--strandID`. Every pair comes back, in FASTQ order, with YS on both mates.
+/// #1125 on bwa-mem3's input: variable mate lengths, Illumina header comments and `--strandID`.
+/// Every pair comes back, in FASTQ order, with YS on both mates. The fake is single-threaded;
+/// `dense_twins_gate` checks the order under real bwa-mem3 threads.
 #[cfg(unix)]
 #[test]
 fn five_base_keeps_every_variable_length_pair_in_order_with_strand_ids() {
@@ -1860,7 +1887,8 @@ fn five_base_keeps_every_variable_length_pair_in_order_with_strand_ids() {
     let (mut fq1, mut fq2, mut placements) = (String::new(), String::new(), Vec::new());
     for p in 0..n_pairs {
         let frag = 200 + next(120) as usize;
-        let start = next((reference.len() - frag) as u64) as usize;
+        // The driver needs 2 genome bases past each mate.
+        let start = next((reference.len() - frag - 2) as u64) as usize;
         let (l1, l2) = (60 + next(66) as usize, 60 + next(66) as usize);
         record(
             &mut fq1,
@@ -1925,16 +1953,17 @@ fn five_base_keeps_every_variable_length_pair_in_order_with_strand_ids() {
         let rec = rec.unwrap();
         let inner = rec.inner();
         records += 1;
-        let ys = inner
+        let ys = match inner
             .data()
             .get(&noodles_sam::alignment::record::data::field::Tag::from(
                 *b"YS",
-            ))
-            .map(|v| format!("{v:?}"));
-        assert!(
-            ys.as_deref().is_some_and(|s| s.contains("OT")),
-            "every mate carries YS:Z:OT, got {ys:?}"
-        );
+            )) {
+            Some(noodles_sam::alignment::record_buf::data::field::Value::String(s)) => {
+                Some(s.to_string())
+            }
+            _ => None,
+        };
+        assert_eq!(ys.as_deref(), Some("OT"), "every mate carries YS:Z:OT");
         if u16::from(inner.flags()) & 0x40 != 0 {
             r1_names.push(String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned());
         }

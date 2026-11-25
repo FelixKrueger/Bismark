@@ -383,7 +383,7 @@ mod tests {
         ));
     }
 
-    /// The shape `five_base_reference_fasta` hands straight to minimap2.
+    /// A gzipped FASTA is a genome FASTA too.
     #[test]
     fn fasta_only_accepts_a_gzipped_fasta() {
         let tmp = TempDir::new().unwrap();

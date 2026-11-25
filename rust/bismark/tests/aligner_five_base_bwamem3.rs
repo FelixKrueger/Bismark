@@ -298,12 +298,16 @@ fn read_bam(out: &Path, stem: &str) -> Vec<(String, Vec<Mate>)> {
                 _ => {}
             }
         }
-        let ys = inner
+        let ys = match inner
             .data()
             .get(&noodles_sam::alignment::record::data::field::Tag::from(
                 *b"YS",
-            ))
-            .map(|v| format!("{v:?}"));
+            )) {
+            Some(noodles_sam::alignment::record_buf::data::field::Value::String(s)) => {
+                Some(s.to_string())
+            }
+            _ => None,
+        };
         let mate = Mate {
             flag: u16::from(inner.flags()),
             span: (start, rp),
@@ -367,10 +371,9 @@ fn dense_twins_gate(mode: &[&str]) {
         "two mates per kept pair"
     );
     assert!(
-        kept.values().flat_map(|m| m.iter()).all(|m| m
-            .ys
-            .as_deref()
-            .is_some_and(|s| s.contains("OT") || s.contains("OB"))),
+        kept.values()
+            .flat_map(|m| m.iter())
+            .all(|m| matches!(m.ys.as_deref(), Some("OT" | "OB"))),
         "--strandID tags both mates YS:Z:OT|OB"
     );
     assert!(

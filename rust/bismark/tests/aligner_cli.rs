@@ -7573,8 +7573,8 @@ fn combined_index_se_hisat2_sequential_banner_says_hisat2() {
 
 // ===========================================================================
 // #787 Illumina 5-Base (5mC->T) — PE end-to-end, FROM FASTQ.
-// Hermetic: a fake minimap2 (or bowtie2) that aligns against the UNCONVERTED
-// genome FASTA and emits TWO properly-paired primary records per read pair.
+// Hermetic: a fake bwa-mem3 that "aligns" against the UNCONVERTED genome and
+// emits TWO properly-paired primary records per read pair.
 // The driver re-reads both FASTQ files for the original bases and calls
 // methylation with INVERTED (5-Base) polarity.
 // ===========================================================================
@@ -7615,8 +7615,7 @@ awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
     idx
 }
 
-/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
-/// of the calls.
+/// An inline UMI the engine aligned is kept out of the calls by `--five_base_umi_len`.
 #[cfg(unix)]
 #[test]
 fn five_base_umi_bases_are_not_called() {
@@ -7741,7 +7740,7 @@ fn output_dir_is_created_with_a_notice() {
 }
 
 /// `--five_base_umi_len N` PE: deduplicates pairs sharing (R1 UMI, R2 UMI, chrom,
-/// pos, strand). Three read pairs map to chr1:1 (fake minimap2 PE): pairs p1/p2
+/// pos, strand). Three read pairs map to chr1:1 (fake bwa-mem3): pairs p1/p2
 /// share R1 UMI `AAA` and R2 UMI `TTT` (one is a duplicate, dropped), pair p3 has
 /// R1 UMI `CCC` (kept). BAM ends with 4 records (2 pairs); the run reports
 /// "removed 1 duplicate pair(s)".

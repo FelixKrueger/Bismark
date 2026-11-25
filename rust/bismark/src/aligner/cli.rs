@@ -79,7 +79,7 @@ pub struct Cli {
     /// Folder containing `hisat2`.
     #[arg(long = "path_to_hisat2", value_name = "PATH")]
     pub path_to_hisat2: Option<PathBuf>,
-    /// Folder containing `minimap2`.
+    /// Folder containing `minimap2` (not with `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_minimap2", value_name = "PATH")]
     pub path_to_minimap2: Option<PathBuf>,
     /// Folder containing `rammap`.

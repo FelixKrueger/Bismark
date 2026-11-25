@@ -1245,12 +1245,9 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
 
     // PE-minimap2/rammap is NOT byte-identity-reachable and is deferred (Felix 2026-06-05):
     // the Perl minimap2 paired-end path is unfinished WIP with no trustworthy byte-identity
-    // oracle. 5-Base PE (#787) is its OWN path (run_pe_five_base, bwa-mem3), so it is exempt.
-    // A positional paired uBAM/BINSEQ is still a SingleEnd layout here (#1135).
+    // oracle. A positional paired uBAM/BINSEQ is still a SingleEnd layout here (#1135).
     let paired = layout.is_paired() || crate::aligner::positional_input_is_paired(&layout)?;
-    if !cli.illumina_5base {
-        reject_unsupported_paired_aligner(aligner, paired)?;
-    }
+    reject_unsupported_paired_aligner(aligner, paired)?;
 
     // --combined_index (v2) scope guard: SE (directional OR non-directional)
     // Bowtie 2 only. Reject every not-yet-supported combination loudly (never
