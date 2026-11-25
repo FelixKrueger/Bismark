@@ -1229,8 +1229,7 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
                 "{flag} requires FASTQ input in v1 (drop --fasta)."
             )));
         }
-        // --multicore N is honoured: it sets the single aligner instance's thread count
-        // (minimap2 -t N / bowtie2,hisat2 -p N), the HISAT2 --multicore→-p precedent.
+        // --multicore N sets bwa-mem3 -t N (an explicit -p takes precedence).
         if cli.combined_index
             || cli.combined_index_sequential
             || cli.combined_index_single_pass
@@ -2956,13 +2955,13 @@ mod tests {
     }
 
     /// #1025: the paired-aligner guard — minimap2/rammap PE rejected,
-    /// Bowtie 2/HISAT2 PE allowed, and minimap2/rammap SE allowed.
+    /// Bowtie 2/HISAT2/bwa-mem3 PE allowed, and minimap2/rammap SE allowed.
     #[test]
     fn reject_unsupported_paired_aligner_guard() {
         // minimap2/rammap + PE → rejected.
         assert!(reject_unsupported_paired_aligner(Aligner::Minimap2, true).is_err());
         assert!(reject_unsupported_paired_aligner(Aligner::Rammap, true).is_err());
-        // Bowtie 2/HISAT2 + PE → allowed.
+        // Bowtie 2/HISAT2/bwa-mem3 + PE → allowed.
         assert!(reject_unsupported_paired_aligner(Aligner::Bowtie2, true).is_ok());
         assert!(reject_unsupported_paired_aligner(Aligner::Hisat2, true).is_ok());
         assert!(reject_unsupported_paired_aligner(Aligner::BwaMem3, true).is_ok());

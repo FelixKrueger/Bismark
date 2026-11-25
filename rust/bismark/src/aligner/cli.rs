@@ -73,7 +73,7 @@ pub struct Cli {
     /// as --five_base_index. Implied by `--taps`.
     #[arg(long = "bwamem3")]
     pub bwamem3: bool,
-    /// Folder containing the `bowtie2` executable (not the executable itself; not with
+    /// Folder containing the `bowtie2` executable, not the executable itself (not with
     /// `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_bowtie2", value_name = "PATH")]
     pub path_to_bowtie2: Option<PathBuf>,

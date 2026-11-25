@@ -1007,12 +1007,11 @@ fn taps_five_base_baseq_masks_low_quality_calls() {
 #[cfg(unix)]
 #[test]
 fn five_base_phred64_quals_decode_the_base_quality_mask() {
-    let r1 = |recs: &[bismark::io::BismarkRecord]| {
-        recs.iter()
+    let r1 = |run: &FakeRun| {
+        bam_records(run)
+            .into_iter()
             .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
             .expect("R1")
-            .xm()
-            .to_vec()
     };
     let reads = "@p\nATGTAC\n+\nhBhhhh\n";
     let phred64 = fake_run(reads, &[("chr1", 8)], SQ_OK);
@@ -1020,17 +1019,10 @@ fn five_base_phred64_quals_decode_the_base_quality_mask() {
         .args(["--phred64-quals", "--five_base_baseq", "30"])
         .assert()
         .success();
-    assert_eq!(r1(&bam_records(&phred64)), b".....z");
-    let quals: Vec<u8> = bam_records(&phred64)
-        .iter()
-        .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
-        .expect("R1")
-        .inner()
-        .quality_scores()
-        .as_ref()
-        .to_vec();
+    let rec = r1(&phred64);
+    assert_eq!(rec.xm(), b".....z");
     assert_eq!(
-        quals,
+        rec.inner().quality_scores().as_ref(),
         [40, 2, 40, 40, 40, 40],
         "BAM QUAL is the decoded Phred score"
     );
@@ -1039,7 +1031,7 @@ fn five_base_phred64_quals_decode_the_base_quality_mask() {
         .args(["--five_base_baseq", "30"])
         .assert()
         .success();
-    assert_eq!(r1(&bam_records(&phred33)), b".Z...z");
+    assert_eq!(r1(&phred33).xm(), b".Z...z");
 }
 
 // ---- #1282: --unmapped in 5-Base/TAPS mode -------------------------------------------------

@@ -122,7 +122,7 @@ column counts each engine's own CpGs at cov ≥ 10 in both it and DRAGEN.
 | Engine | Mapping efficiency | Pearson r vs DRAGEN | CpGs at cov ≥ 10 | Peak memory |
 |---|---|---|---|---|
 | minimap2 | 95.2% | 0.9646 | 817,312 | 15.5 GiB |
-| Bowtie 2 (`-X 800`, the 5-Base default) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
+| Bowtie 2 (`-X 800`, its 5-Base default) | 94.5% | 0.9643 | 822,432 | 8.4 GiB |
 | Bowtie 2 `-X 500` | 87.9% | 0.9631 | 554,655 | 8.4 GiB |
 | Bowtie 2 `--local -X 500` | 91.2% | 0.9635 | 580,613 | 8.4 GiB |
 | HISAT2 | 91.3% | 0.9631 | 664,790 | 8.3 GiB |
