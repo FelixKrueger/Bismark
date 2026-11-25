@@ -6,8 +6,8 @@ Plan: `plans/08062026_five-base-bisulfite-bam/PLAN.md` §9.1, §9.3, §9.5.
 ## Why this exists
 
 **No other fixture in the repo contains a single soft clip.** Bowtie 2 end-to-end never emits
-one, so no `bismark_bt2` fixture ever will — but minimap2 `-x sr` (`--minimap2`) is a 5-Base engine
-and its soft-clipped `nS`-prefixed reads are a common real-world 5-Base CIGAR shape. That shape is also exactly where
+one, so no `bismark_bt2` fixture ever will — but bwa-mem3, the 5-Base engine, soft-clips,
+so `nS`-prefixed reads are a common real-world 5-Base CIGAR shape. That shape is also exactly where
 the `NM` identity matters, since Bismark counts soft-clipped bases as mismatches.
 
 ## Contents

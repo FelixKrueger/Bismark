@@ -89,7 +89,7 @@ accepted, as they were in Perl Bismark.
 
 - `--ignore-quals` (always passed to the aligner)
 
-  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  When calculating a mismatch penalty, always consider the quality value at the mismatched position to be the highest possible, regardless of the actual value. i.e. input is treated as though all quality values are high. This is also the default behaviour when the input doesn't specify quality values (e.g. in `-f` mode). Bismark always passes this option to Bowtie 2 / HISAT2 itself; it is not a Bismark option and is rejected on the Bismark command line.
 
 - `-I <int>` / `--minins <int>`
 
@@ -97,7 +97,7 @@ accepted, as they were in Perl Bismark.
 
 - `-X <int>` / `--maxins <int>`
 
-  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500 (800 for `--illumina_5base --bowtie2`).
+  The maximum insert size for valid paired-end alignments. E.g. if `-X 100` is specified and a paired-end alignment consists of two 20-bp alignments in the proper orientation with a 60-bp gap between them, that alignment is considered valid (as long as `-I` is also satisfied). A 61-bp gap would not be valid in that case. Default: 500.
 
 - `--parallel <int>`
 
@@ -255,7 +255,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--bowtie2`
 
-  Default: ON (with `--illumina_5base`, bwa-mem3 is the default). Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
+  Default: ON (not with `--illumina_5base` or `--taps`, which align with bwa-mem3 only). Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
 
 - `--no_dovetail`
 
@@ -269,7 +269,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
   Specify `--no_dovetail` to turn off this behaviour for paired-end libraries. Default: OFF.
 
-  With `--illumina_5base`, Bowtie 2 never receives `--dovetail`, whatever is specified (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bowtie-2-and-hisat2-tuning)).
+  `--illumina_5base` and `--taps` reject `--no_dovetail` and `--dovetail` (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3)).
 
 
 ##### HISAT2 SPECIFIC OPTIONS:
@@ -290,11 +290,11 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--no-mixed` (always passed to the aligner)
 
-  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  This option disables the behaviour to try to find alignments for the individual mates if it cannot find a concordant or discordant alignment for a pair. Bismark always passes this option to Bowtie 2 / HISAT2 itself for paired-end runs; it is not a Bismark option and is rejected on the Bismark command line.
 
 - `--no-discordant` (always passed to the aligner)
 
-  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs (except in `--illumina_5base` mode); it is not a Bismark option and is rejected on the Bismark command line.
+  Normally, Bowtie 2 or HISAT2 look for discordant alignments if they cannot find any concordant alignments. A discordant alignment is an alignment where both mates align uniquely, but that does not satisfy the paired-end constraints (`--fr`/`--rf`/`--ff`, `-I`, `-X`). This option disables that behaviour. Bismark always passes it to Bowtie 2 / HISAT2 itself for paired-end runs; it is not a Bismark option and is rejected on the Bismark command line.
 
 ##### Bowtie 2 Effort options:
 
@@ -334,7 +334,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
 
-  With `--illumina_5base`, `--minimap2` selects the paired-end minimap2 `-x sr` engine against the genome FASTA, the 5-Base default before 3.5.0; without it, 5-Base aligns with bwa-mem3 (see the [5-Base guide](/Bismark/rust/illumina-5-base/#running-it)). The Bowtie 2 scoring and insert-size options (`-N`, `-L`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`) are rejected on that path.
+  Not with `--illumina_5base` or `--taps`: since 3.5.0 they align with bwa-mem3 only (see the [5-Base guide](/Bismark/rust/illumina-5-base/#running-it)).
 
   **MAPQ:** minimap2 reports *positive* alignment scores (every preset Bismark can select awards 2 per matching base), so the best possible score is `2 × read_length` and Bismark normalises MAPQ against it, exactly as it does for Bowtie 2 `--local`. MAPQ is **22–44 for a uniquely-aligned read**, and can be **lower — down to 2 — when another strand instance produced a competing score** for the same read. This is **Bismark's own scale, not minimap2's**: minimap2 derives its own MAPQ from chain scores on a 0–60 scale, and Bismark discards it because it recomputes MAPQ across the 2–4 strand instances it runs. The same applies to `--rammap`.
 
@@ -353,7 +353,7 @@ Using the minimap2 preset for Oxford Nanopore (ONT) vs reference mapping (`-x ma
 
 Using the minimap2 preset for PacBio vs reference mapping (`-x map-pb`). Only works in conjuntion with `--minimap2` or `--rammap`. Default: OFF.
 
-  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr. (The exception is `--illumina_5base --minimap2`, which reads the genome FASTA directly, so the preset's index parameters do apply.)
+  Note this preset differs from the default in index-build parameters (k-mer size and homopolymer compression), plus one chaining coefficient derived from that k-mer size. Bisulfite alignments run against a pre-built index, which supplies its own, so `--mm2_pacbio` is near-inert there — expect alignments equivalent to the default `map-ont`, which a `--rammap` run says on stderr.
 
 - `--mm2_short_reads`
 

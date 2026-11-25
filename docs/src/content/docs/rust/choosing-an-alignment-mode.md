@@ -93,11 +93,11 @@ For everything else, the combined index is the faster choice.
 
 ## Illumina 5-Base libraries
 
-5-Base reads align to the unconverted genome, so none of the modes above apply. bwa-mem3 is the
-default engine (since 3.5.0): it covers methylated CpG islands, at the cost of a 23 GB index and
-about 28 GiB of memory. `--illumina_5base --minimap2` needs no index and less memory but
-under-covers those regions. See
-[Choosing an engine](/Bismark/rust/illumina-5-base/#choosing-an-engine).
+5-Base reads align to the unconverted genome, so none of the modes above apply. Since 3.5.0 they
+align with bwa-mem3 only: it covers methylated CpG islands, at the cost of a 23 GB index and
+about 28 GiB of memory. The minimap2 and Bowtie 2 engines of 3.3.0 and 3.4.0 needed less but
+under-covered those regions. See
+[Engines before 3.5.0](/Bismark/rust/illumina-5-base/#engines-before-350).
 
 ## TAPS libraries
 

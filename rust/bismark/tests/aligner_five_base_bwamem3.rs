@@ -261,12 +261,14 @@ fn report(out: &Path, stem: &str) -> String {
     fs::read_to_string(out.join(format!("{stem}_1_bismark_bwamem3_PE_report.txt"))).unwrap()
 }
 
-/// One BAM record: flag, 0-based aligned span, and the XM call at each aligned genomic position.
+/// One BAM record: flag, 0-based aligned span, the XM call at each aligned genomic position,
+/// and the `--strandID` YS tag.
 struct Mate {
     flag: u16,
     span: (usize, usize),
     calls: HashMap<usize, u8>,
     xm: Vec<u8>,
+    ys: Option<String>,
 }
 
 /// The BAM's mates in file order, grouped by read name.
@@ -296,11 +298,22 @@ fn read_bam(out: &Path, stem: &str) -> Vec<(String, Vec<Mate>)> {
                 _ => {}
             }
         }
+        let ys = match inner
+            .data()
+            .get(&noodles_sam::alignment::record::data::field::Tag::from(
+                *b"YS",
+            )) {
+            Some(noodles_sam::alignment::record_buf::data::field::Value::String(s)) => {
+                Some(s.to_string())
+            }
+            _ => None,
+        };
         let mate = Mate {
             flag: u16::from(inner.flags()),
             span: (start, rp),
             calls,
             xm,
+            ys,
         };
         match pairs.last_mut() {
             Some((n, m)) if *n == name => m.push(mate),
@@ -344,7 +357,7 @@ fn dense_twins_gate(mode: &[&str]) {
         .collect();
     let (r1, r2) = write_pairs(reads.path(), "twins", &pairs);
     let t = Instant::now();
-    let out = setup.run_mode(mode, &r1, &r2, &[]);
+    let out = setup.run_mode(mode, &r1, &r2, &["--strandID"]);
     eprintln!("bwa-mem3 5-Base run: {:.1} s", t.elapsed().as_secs_f64());
 
     let bam = read_bam(out.path(), "twins");
@@ -356,6 +369,12 @@ fn dense_twins_gate(mode: &[&str]) {
     assert!(
         kept.values().all(|m| m.len() == 2),
         "two mates per kept pair"
+    );
+    assert!(
+        kept.values()
+            .flat_map(|m| m.iter())
+            .all(|m| matches!(m.ys.as_deref(), Some("OT" | "OB"))),
+        "--strandID tags both mates YS:Z:OT|OB"
     );
     assert!(
         kept.len() * 100 >= frags.len() * 95,
