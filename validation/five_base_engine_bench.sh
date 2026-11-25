@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # 5-Base default-engine benchmark harness (plans/10292026_5base-default-engine/).
+# Needs a Bismark 3.4.0 or earlier binary: 3.5.0 aligns 5-Base with bwa-mem3 only.
 #
 #   five_base_engine_bench.sh prep  <sample> <tag> <pairs>
 #       First <pairs> read pairs of L001 then L002, Trim Galore paired, md5s,

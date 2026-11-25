@@ -1,7 +1,8 @@
 //! Hermetic `--illumina_5base --bwamem3` tests against a fake `bwa-mem3` script.
 //!
 //! The fake answers `version` with `0.18.0` and otherwise prints a SAM header plus one
-//! R1 (FLAG 99) / R2 (FLAG 147) pair per FASTQ read pair, all mapped to `chr1:1`.
+//! R1 (FLAG 99) / R2 (FLAG 147) pair per FASTQ read pair, all mapped to `chr1:1`. Tests that
+//! need real placements use the table-driven fake in `common/fake_bwamem3.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,9 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
+
+#[path = "common/fake_bwamem3.rs"]
+mod fake_bwamem3;
 
 fn bin() -> Command {
     Command::cargo_bin("bismark").unwrap()
@@ -1364,9 +1368,7 @@ fn default_engine_is_bwamem3_and_matches_an_explicit_run() {
         .stderr(predicate::str::contains(
             "aligned with bwa-mem3 to the UNCONVERTED",
         ))
-        .stderr(predicate::str::contains(
-            "bwa-mem3 is the default engine since 3.5.0",
-        ));
+        .stderr(predicate::str::contains("default engine").not());
     assert!(
         fs::read_to_string(&argv)
             .unwrap()
@@ -1417,12 +1419,13 @@ fn default_engine_without_an_index_stops_before_writing() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--illumina_5base aligns with bwa-mem3 by default, which needs its methylation index",
+            "--illumina_5base aligns with bwa-mem3, which needs its methylation index",
         ))
         .stderr(predicate::str::contains("bismark prepare --bwamem3"))
         .stderr(predicate::str::contains(
-            "--five_base_index. Add --minimap2",
+            "or pass one as --five_base_index.",
         ))
+        .stderr(predicate::str::contains("--minimap2").not())
         .stderr(predicate::str::contains("not on PATH either").not());
     assert_eq!(
         fs::read_dir(run.out.path()).unwrap().count(),
@@ -1490,7 +1493,7 @@ fn default_engine_without_an_index_stops_before_writing() {
 
 #[cfg(unix)]
 #[test]
-fn default_engine_with_a_partial_genome_index_names_the_opt_out() {
+fn default_engine_with_a_partial_genome_index_names_the_rebuild() {
     let run = fake_run_with_genome_index();
     fs::remove_file(run.genome.path().join("Bwamem3_Index/genome.fa.meth.pac")).unwrap();
     default_cmd(&run, run.out.path())
@@ -1499,13 +1502,17 @@ fn default_engine_with_a_partial_genome_index_names_the_opt_out() {
         .stderr(predicate::str::contains(
             "genome.fa.meth.pac is missing from",
         ))
-        .stderr(predicate::str::contains("Add --minimap2"));
+        .stderr(predicate::str::contains(
+            "bismark_genome_preparation --bwamem3",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not());
     assert_eq!(fs::read_dir(run.out.path()).unwrap().count(), 0);
 }
 
+/// With or without `--bwamem3`, a missing index gets the same message.
 #[cfg(unix)]
 #[test]
-fn explicit_bwamem3_without_an_index_keeps_its_message() {
+fn explicit_bwamem3_without_an_index_gets_the_same_message() {
     let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
     bin()
         .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
@@ -1519,116 +1526,138 @@ fn explicit_bwamem3_without_an_index_keeps_its_message() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--illumina_5base --bwamem3 requires --five_base_index",
+            "--illumina_5base aligns with bwa-mem3, which needs its methylation index",
         ))
-        .stderr(predicate::str::contains("Add --minimap2").not());
+        .stderr(predicate::str::contains("--minimap2").not());
 }
 
+/// The other aligners' flags stop a 5-Base run before anything is spawned or written,
+/// standalone modes included.
 #[cfg(unix)]
 #[test]
-fn minimap2_opt_out_never_calls_bwamem3() {
-    let run = fake_run_with_genome_index();
-    let (mm2_dir, dumps) = (TempDir::new().unwrap(), TempDir::new().unwrap());
-    let argv = dumps.path().join("argv.txt");
-    write_exec(
-        &mm2_dir.path().join("minimap2"),
-        "#!/bin/sh\n[ \"$1\" = --version ] && { echo 2.31-r1302; exit 0; }\nexit 1\n",
-    );
-    let path = format!(
-        "{}:{}",
-        run.bins.path().display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    bin()
-        .env("PATH", path)
-        .env("FAKE_ARGV_DUMP", &argv)
-        .args(["--illumina_5base", "--minimap2", "--path_to_minimap2"])
-        .arg(mm2_dir.path())
-        .arg("--genome")
-        .arg(run.genome.path())
-        .arg("--output_dir")
-        .arg(run.out.path())
-        .arg("-1")
-        .arg(&run.r1)
-        .arg("-2")
-        .arg(&run.r2)
-        .assert()
-        .stderr(predicate::str::contains(
-            "minimap2 seems to be working fine",
-        ))
-        .stderr(predicate::str::contains("bwa-mem3").not());
-    assert!(!argv.exists(), "bwa-mem3 was called");
-}
-
-/// Bowtie 2, HISAT2 and minimap2 options on a defaulted run name the default engine and the engine that takes them.
-#[cfg(unix)]
-#[test]
-fn default_engine_names_itself_in_option_errors() {
-    let run = fake_run_with_genome_index();
-    let fails = |extra: &[&str], wants: &[&str]| {
-        let mut a = default_cmd(&run, run.out.path());
-        a.args(extra);
-        let mut assert = a.assert().failure();
-        for w in wants {
-            assert = assert.stderr(predicate::str::contains(*w));
-        }
-        assert.stderr(predicate::str::contains("with --bwamem3").not());
-    };
-    let tuning = [
-        "--illumina_5base (bwa-mem3 is its default engine)",
-        "add --bowtie2",
-    ];
-    let no_opt_out = |extra: &[&str]| {
-        let mut a = default_cmd(&run, run.out.path());
-        a.args(extra);
-        a.assert()
-            .failure()
-            .stderr(predicate::str::contains("Add --minimap2").not());
-    };
-    for (extra, head) in [
-        (&["-X", "800"][..], "--maxins is not supported"),
-        (&["--local"][..], "--local is not supported"),
-        (&["-D", "5"][..], "-D is not supported"),
+fn five_base_rejections_spawn_nothing_and_write_nothing() {
+    let other = TempDir::new().unwrap();
+    let o = other.path().to_str().unwrap();
+    for (extra, why) in [
+        (
+            &["--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--bowtie2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --bowtie2.",
+        ),
+        (
+            &["--hisat2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --hisat2.",
+        ),
+        (
+            &["--rammap"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --rammap.",
+        ),
+        (
+            &["--bwamem3", "--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--path_to_minimap2", o][..],
+            "--path_to_minimap2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_bowtie2", o][..],
+            "--path_to_bowtie2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_hisat2", o][..],
+            "--path_to_hisat2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_rammap", o][..],
+            "--path_to_rammap has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--mm2_nanopore"][..],
+            "--mm2_nanopore has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--mm2_maximum_length", "5000"][..],
+            "--mm2_maximum_length has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--five_base_bisulfite_bam", "x.bam", "--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--five_base_consensus_from_bam", "x.bam", "--bowtie2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --bowtie2.",
+        ),
     ] {
-        fails(extra, &[&[head][..], &tuning].concat());
-        no_opt_out(extra);
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let argv = run.bins.path().join("argv.txt");
+        let out_dir = run.out.path().join("never");
+        let mut c = bin();
+        c.arg("--illumina_5base")
+            .args(extra)
+            .arg("--five_base_index")
+            .arg(&run.index)
+            .arg("--path_to_bwamem3")
+            .arg(run.bins.path())
+            .arg("--genome")
+            .arg(run.genome.path())
+            .arg("--output_dir")
+            .arg(&out_dir)
+            .arg("-1")
+            .arg(&run.r1)
+            .arg("-2")
+            .arg(&run.r2)
+            .env("FAKE_ARGV_DUMP", &argv);
+        c.assert().failure().stderr(predicate::str::contains(why));
+        assert!(!argv.exists(), "{extra:?}: the engine was spawned");
+        assert!(!out_dir.exists(), "{extra:?}: output dir created");
     }
-    // Dovetail handling is engine-independent, so minimap2 takes both flags.
-    for flag in ["--no_dovetail", "--dovetail"] {
-        let head = format!("{flag} is not supported");
-        fails(
-            &[flag],
-            &[&[head.as_str()][..], &tuning, &["Add --minimap2"]].concat(),
-        );
-    }
+}
+
+/// Bowtie 2, HISAT2 and minimap2 options on a 5-Base run say "drop it" and suggest no other
+/// engine.
+#[cfg(unix)]
+#[test]
+fn five_base_option_errors_say_drop_it() {
+    let run = fake_run_with_genome_index();
     let splices = run.genome.path().join("splices.txt");
     fs::write(&splices, b"").unwrap();
-    let splices = ["--known-splicesite-infile", splices.to_str().unwrap()];
-    fails(
-        &splices,
-        &[
-            "(bwa-mem3 is its default engine)",
-            "5-Base alignment is unspliced",
-        ],
-    );
-    no_opt_out(&splices);
-    fails(
-        &["--no-spliced-alignment"],
-        &["(bwa-mem3 is its default engine)", "add --hisat2"],
-    );
-    no_opt_out(&["--no-spliced-alignment"]);
-    fails(
-        &["--mm2_short_reads"],
-        &[
-            "unless you also use --minimap2",
-            "--illumina_5base aligns with bwa-mem3 by default. Add --minimap2",
-        ],
-    );
-    let mm2 = TempDir::new().unwrap();
-    fails(
-        &["--path_to_minimap2", mm2.path().to_str().unwrap()],
-        &["--path_to_minimap2 applies to --minimap2", "Add --minimap2"],
-    );
+    let splices = splices.to_str().unwrap();
+    for (extra, flag) in [
+        (&["-X", "800"][..], "--maxins"),
+        (&["--local"][..], "--local"),
+        (&["-D", "5"][..], "-D"),
+        (&["--no_dovetail"][..], "--no_dovetail"),
+        (&["--dovetail"][..], "--dovetail"),
+        (
+            &["--known-splicesite-infile", splices][..],
+            "--known-splicesite-infile",
+        ),
+        (&["--no-spliced-alignment"][..], "--no-spliced-alignment"),
+    ] {
+        let mut assert = default_cmd(&run, run.out.path())
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "{flag} is not supported with --illumina_5base: bwa-mem3 uses its own scoring \
+                 and infers insert sizes itself; drop it."
+            )));
+        for other in ["--bowtie2", "--hisat2", "--minimap2", "default"] {
+            assert = assert.stderr(predicate::str::contains(other).not());
+        }
+    }
+    default_cmd(&run, run.out.path())
+        .arg("--mm2_short_reads")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--mm2_short_reads has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ))
+        .stderr(predicate::str::contains("unless you also use --minimap2").not());
 }
 
 #[cfg(unix)]
@@ -1643,71 +1672,55 @@ fn default_engine_names_itself_in_binary_errors() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "--illumina_5base (bwa-mem3 is its default engine) needs bwa-mem3 >= 0.16.0",
+            "--illumina_5base needs bwa-mem3 >= 0.16.0",
         ))
-        .stderr(predicate::str::contains("Add --minimap2"));
+        .stderr(predicate::str::contains("--minimap2").not());
     write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 0\n");
     default_cmd(&run, run.out.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("printed no version"))
         .stderr(predicate::str::contains(
-            "--illumina_5base (bwa-mem3 is its default engine) needs bwa-mem3 >= 0.16.0",
+            "--illumina_5base needs bwa-mem3 >= 0.16.0",
         ))
-        .stderr(predicate::str::contains("Add --minimap2"));
+        .stderr(predicate::str::contains("--minimap2").not());
     write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
     default_cmd(&run, run.out.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("bwa-mem3 version')"))
         .stderr(predicate::str::contains("--version").not())
-        .stderr(predicate::str::is_match(r"[.!?] Add --minimap2").unwrap());
+        .stderr(predicate::str::contains("--minimap2").not());
 }
 
 #[cfg(unix)]
 #[test]
-fn default_engine_points_an_unconverted_index_at_its_engine() {
-    for (ext, name, flag) in [
-        ("bt2", "Bowtie 2", "--bowtie2"),
-        ("bt2l", "Bowtie 2", "--bowtie2"),
-        ("ht2", "HISAT2", "--hisat2"),
-        ("ht2l", "HISAT2", "--hisat2"),
+fn five_base_names_an_unconverted_index() {
+    for (ext, name) in [
+        ("bt2", "Bowtie 2"),
+        ("bt2l", "Bowtie 2"),
+        ("ht2", "HISAT2"),
+        ("ht2l", "HISAT2"),
     ] {
-        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-        let idx = run.genome.path().join("plain");
-        fs::write(format!("{}.1.{ext}", idx.display()), b"").unwrap();
-        default_cmd(&run, run.out.path())
-            .arg("--five_base_index")
-            .arg(&idx)
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(format!("is a {name} index")))
-            .stderr(predicate::str::contains(format!("add {flag} to align")));
+        for explicit in [false, true] {
+            let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+            let idx = run.genome.path().join("plain");
+            fs::write(format!("{}.1.{ext}", idx.display()), b"").unwrap();
+            let mut c = default_cmd(&run, run.out.path());
+            if explicit {
+                c.arg("--bwamem3");
+            }
+            c.arg("--five_base_index")
+                .arg(&idx)
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains(format!(
+                    "is a {name} index; --illumina_5base needs a bwa-mem3 methylation index"
+                )))
+                .stderr(predicate::str::contains("bismark prepare --bwamem3"))
+                .stderr(predicate::str::contains("add --").not());
+        }
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn explicit_bwamem3_with_a_bowtie2_index_keeps_the_bwamem3_message() {
-    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-    let idx = run.genome.path().join("plain");
-    fs::write(format!("{}.1.bt2", idx.display()), b"").unwrap();
-    bin()
-        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
-        .arg(run.bins.path())
-        .arg("--genome")
-        .arg(run.genome.path())
-        .arg("--five_base_index")
-        .arg(&idx)
-        .arg("-1")
-        .arg(&run.r1)
-        .arg("-2")
-        .arg(&run.r2)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("bwa-mem3 index file"))
-        .stderr(predicate::str::contains("is a Bowtie 2 index").not())
-        .stderr(predicate::str::contains("Add --minimap2").not());
 }
 
 #[cfg(unix)]
@@ -1726,100 +1739,6 @@ fn default_engine_rejects_options_before_the_index_check() {
             .stderr(predicate::str::contains(want))
             .stderr(predicate::str::contains("needs its methylation index").not());
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn default_engine_opt_out_says_to_drop_five_base_index() {
-    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-    let missing = run.genome.path().join("nothing_here");
-    let mm2 = TempDir::new().unwrap();
-    for extra in [
-        &[][..],
-        &["--mm2_short_reads"][..],
-        &["--path_to_minimap2", mm2.path().to_str().unwrap()][..],
-    ] {
-        default_cmd(&run, run.out.path())
-            .arg("--five_base_index")
-            .arg(&missing)
-            .args(extra)
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(
-                "Add --minimap2 and drop --five_base_index",
-            ));
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn default_engine_tuning_hints_offer_dropping_the_option() {
-    let run = fake_run_with_genome_index();
-    default_cmd(&run, run.out.path())
-        .args(["-X", "900"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("or drop the option."))
-        .stderr(predicate::str::contains("Add --minimap2").not());
-    default_cmd(&run, run.out.path())
-        .arg("--dovetail")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "or drop the option. Add --minimap2",
-        ));
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_minimap2_rejects_the_bowtie2_options_it_ignores() {
-    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-    let mm2 = TempDir::new().unwrap();
-    let cmd = |extra: &[&str]| {
-        let mut c = bin();
-        c.args(["--illumina_5base", "--minimap2", "--path_to_minimap2"])
-            .arg(mm2.path())
-            .arg("--genome")
-            .arg(run.genome.path())
-            .arg("--output_dir")
-            .arg(run.out.path())
-            .arg("-1")
-            .arg(&run.r1)
-            .arg("-2")
-            .arg(&run.r2)
-            .args(extra);
-        c
-    };
-    for (extra, flag) in [
-        (&["-N", "1"][..], "-N"),
-        (&["-L", "20"][..], "-L"),
-        (&["--score_min", "L,0,-0.6"][..], "--score_min"),
-        (&["--rdg", "5,3"][..], "--rdg"),
-        (&["--rfg", "5,3"][..], "--rfg"),
-        (&["-I", "10"][..], "--minins"),
-        (&["-X", "900"][..], "--maxins"),
-    ] {
-        cmd(extra)
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(format!(
-                "{flag} has no effect with --illumina_5base --minimap2"
-            )))
-            .stderr(predicate::str::contains("drop it, or add --bowtie2"))
-            .stderr(predicate::str::contains("failed to execute").not());
-    }
-    let splices = run.genome.path().join("splices.txt");
-    fs::write(&splices, b"").unwrap();
-    cmd(&["--known-splicesite-infile", splices.to_str().unwrap()])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("5-Base alignment is unspliced"));
-    // Dovetail handling is engine-independent: the run gets past the option checks.
-    cmd(&["--no_dovetail"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("has no effect").not())
-        .stderr(predicate::str::contains("failed to execute minimap2"));
 }
 
 #[test]
@@ -1852,39 +1771,16 @@ fn bisulfite_minimap2_options_are_not_checked_as_5base() {
 fn help_describes_five_base_index_and_umi_len() {
     let out = bin().args(["align", "--help"]).output().unwrap();
     let help = String::from_utf8_lossy(&out.stdout);
-    assert!(help.contains("Rejected with `--minimap2`"), "{help}");
     assert!(
-        help.contains("The first N bases of each mate are not called, on every engine."),
+        help.contains("The bwa-mem3 methylation index of an `--illumina_5base` or `--taps` run"),
+        "{help}"
+    );
+    assert!(!help.contains("Rejected with `--minimap2`"), "{help}");
+    assert!(
+        help.contains("The first N bases of each mate are not called."),
         "{help}"
     );
     assert!(!help.contains("soft-clipping that prefix"), "{help}");
-}
-
-#[cfg(unix)]
-#[test]
-fn default_engine_opt_out_drops_five_base_index_on_option_and_binary_errors() {
-    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
-    let missing = run.genome.path().join("nothing_here");
-    default_cmd(&run, run.out.path())
-        .arg("--five_base_index")
-        .arg(&missing)
-        .arg("--dovetail")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--dovetail is not supported"))
-        .stderr(predicate::str::contains(
-            "Add --minimap2 and drop --five_base_index",
-        ));
-    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
-    default_cmd(&run, run.out.path())
-        .arg("--five_base_index")
-        .arg(&run.index)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("failed to execute bwa-mem3"))
-        .stderr(predicate::str::contains(
-            "Add --minimap2 and drop --five_base_index",
-        ));
 }
 
 /// Each engine's index is looked up under its own env folder, as the aligners do.
@@ -1927,4 +1823,127 @@ fn default_engine_uses_a_bwamem3_index_folder_despite_a_same_named_bowtie2_index
         .assert()
         .success()
         .stderr(predicate::str::contains("is a Bowtie 2 index").not());
+}
+
+/// #1125 on bwa-mem3's input: variable mate lengths and Illumina header comments, `-p 4`,
+/// `--strandID`. Every pair comes back, in FASTQ order, with YS on both mates.
+#[cfg(unix)]
+#[test]
+fn five_base_keeps_every_variable_length_pair_in_order_with_strand_ids() {
+    let mut x: u64 = 0x1125_5BA5_E000_0001;
+    let mut next = |n: u64| {
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (x >> 33) % n
+    };
+    let reference: Vec<u8> = (0..60_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+    let revcomp = |s: &[u8]| -> Vec<u8> {
+        s.iter()
+            .rev()
+            .map(|&b| match b {
+                b'A' => b'T',
+                b'C' => b'G',
+                b'G' => b'C',
+                _ => b'A',
+            })
+            .collect()
+    };
+    let record = |out: &mut String, header: &str, seq: &[u8]| {
+        out.push_str(&format!(
+            "@{header}\n{}\n+\n{}\n",
+            String::from_utf8_lossy(seq),
+            "I".repeat(seq.len())
+        ));
+    };
+    let n_pairs = 3000;
+    let (mut fq1, mut fq2, mut placements) = (String::new(), String::new(), Vec::new());
+    for p in 0..n_pairs {
+        let frag = 200 + next(120) as usize;
+        let start = next((reference.len() - frag) as u64) as usize;
+        let (l1, l2) = (60 + next(66) as usize, 60 + next(66) as usize);
+        record(
+            &mut fq1,
+            &format!("pair{p} 1:N:0:ACGT"),
+            &reference[start..start + l1],
+        );
+        let r2 = revcomp(&reference[start + frag - l2..start + frag]);
+        record(&mut fq2, &format!("pair{p} 2:N:0:ACGT"), &r2);
+        placements.push(fake_bwamem3::Placement {
+            qname: format!("pair{p}"),
+            contig: "chr1".into(),
+            r1: start,
+            r2: start + frag - l2,
+            r1_reverse: false,
+        });
+    }
+    let (genome, bins, out) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    fs::write(
+        genome.path().join("genome.fa"),
+        format!(">chr1\n{}\n", String::from_utf8_lossy(&reference)),
+    )
+    .unwrap();
+    let index = bins.path().join("idx.fa");
+    fake_bwamem3::install(
+        bins.path(),
+        &index,
+        &[("chr1", reference.len())],
+        &placements,
+    );
+    let (r1, r2) = (
+        genome.path().join("reads_1.fq"),
+        genome.path().join("reads_2.fq"),
+    );
+    fs::write(&r1, fq1).unwrap();
+    fs::write(&r2, fq2).unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--five_base_index")
+        .arg(&index)
+        .arg("--path_to_bwamem3")
+        .arg(bins.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .args(["-p", "4", "--strandID"])
+        .arg("--output_dir")
+        .arg(out.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    let bam = out.path().join("reads_1_bismark_bwamem3_pe.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let (mut r1_names, mut records) = (Vec::new(), 0usize);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        records += 1;
+        let ys = inner
+            .data()
+            .get(&noodles_sam::alignment::record::data::field::Tag::from(
+                *b"YS",
+            ))
+            .map(|v| format!("{v:?}"));
+        assert!(
+            ys.as_deref().is_some_and(|s| s.contains("OT")),
+            "every mate carries YS:Z:OT, got {ys:?}"
+        );
+        if u16::from(inner.flags()) & 0x40 != 0 {
+            r1_names.push(String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned());
+        }
+    }
+    let expected: Vec<String> = (0..n_pairs).map(|p| format!("pair{p}")).collect();
+    assert_eq!(
+        records,
+        2 * n_pairs,
+        "every pair written, none silently dropped"
+    );
+    assert_eq!(r1_names, expected, "pairs come back in FASTQ order");
 }

@@ -10,14 +10,13 @@ use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// Outputs not yet committed, and scratch files to delete on failure.
+/// Outputs not yet committed.
 #[derive(Default)]
 struct Pending {
     /// Set while a [`scope`] runs on this thread.
     active: bool,
     /// `(staged, final)` paths, in registration order.
     staged: Vec<(PathBuf, PathBuf)>,
-    scratch: Vec<PathBuf>,
 }
 
 thread_local! {
@@ -39,7 +38,7 @@ fn outside_scope(path: &Path) -> io::Error {
 }
 
 /// Run `f` as one driver run: publish its staged outputs if it succeeds, delete them
-/// and its scratch files if it fails.
+/// if it fails.
 pub(crate) fn scope<T, E: From<io::Error>>(f: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
     let was_active = PENDING.with(|p| std::mem::replace(&mut p.borrow_mut().active, true));
     let result = f().and_then(|v| match commit() {
@@ -49,13 +48,7 @@ pub(crate) fn scope<T, E: From<io::Error>>(f: impl FnOnce() -> Result<T, E>) -> 
     if result.is_err() {
         discard();
     }
-    PENDING.with(|p| {
-        let mut p = p.borrow_mut();
-        p.active = was_active;
-        if !was_active {
-            p.scratch.clear();
-        }
-    });
+    PENDING.with(|p| p.borrow_mut().active = was_active);
     result
 }
 
@@ -89,18 +82,6 @@ pub(crate) fn current(path: &Path) -> PathBuf {
     })
 }
 
-/// Register a scratch file that a failed [`scope`] deletes.
-pub(crate) fn scratch(path: &Path) -> io::Result<()> {
-    PENDING.with(|p| {
-        let mut p = p.borrow_mut();
-        if !p.active {
-            return Err(outside_scope(path));
-        }
-        p.scratch.push(path.to_path_buf());
-        Ok(())
-    })
-}
-
 /// Rename every staged output to its final name, all or nothing. Outputs are renamed
 /// in reverse registration order, so the BAM, staged first, is published last.
 pub(crate) fn commit() -> io::Result<()> {
@@ -124,16 +105,10 @@ pub(crate) fn commit() -> io::Result<()> {
     Ok(())
 }
 
-/// Delete every staged output and scratch file of the failed run.
+/// Delete every staged output of the failed run.
 fn discard() {
-    let (staged, scratch) = PENDING.with(|p| {
-        let mut p = p.borrow_mut();
-        (
-            std::mem::take(&mut p.staged),
-            std::mem::take(&mut p.scratch),
-        )
-    });
-    for path in staged.into_iter().map(|(s, _)| s).chain(scratch) {
+    let staged = PENDING.with(|p| std::mem::take(&mut p.borrow_mut().staged));
+    for path in staged.into_iter().map(|(s, _)| s) {
         if let Err(e) = std::fs::remove_file(&path)
             && e.kind() != io::ErrorKind::NotFound
         {
@@ -166,15 +141,12 @@ mod tests {
         assert_eq!(std::fs::read(&keep).unwrap(), b"done");
         assert_eq!(current(&keep), keep);
 
-        let tmp = dir.path().join(".scratch");
         let err = scope(|| -> io::Result<()> {
             io::Write::write_all(&mut create(&drop_)?, b"half")?;
-            std::fs::write(&tmp, b"x")?;
-            scratch(&tmp)?;
             Err(io::Error::other("engine failed"))
         });
         assert!(err.is_err());
-        assert!(!drop_.exists() && !partial_name(&drop_).exists() && !tmp.exists());
+        assert!(!drop_.exists() && !partial_name(&drop_).exists());
         assert!(keep.exists() && stale.exists());
     }
 
@@ -183,7 +155,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("x.bam");
         assert!(stage(&out).is_err());
-        assert!(scratch(&out).is_err());
         scope(|| -> io::Result<()> {
             let other = std::thread::scope(|s| s.spawn(|| stage(&out).is_err()).join().unwrap());
             assert!(other, "a worker thread must not stage");

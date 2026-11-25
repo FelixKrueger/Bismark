@@ -66,7 +66,7 @@ pub struct Cli {
     pub minimap2: bool,
 
     /// Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`) of the unconverted genome in
-    /// `<genome>/Bwamem3_Index/`, for `bismark --illumina_5base` (its default engine) and `bismark --taps`.
+    /// `<genome>/Bwamem3_Index/`, for `bismark --illumina_5base` and `bismark --taps`.
     /// Writes no bisulfite-converted genome.
     #[arg(long)]
     pub bwamem3: bool,

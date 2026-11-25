@@ -34,10 +34,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
-        # The Illumina 5-Base real-aligner gates shell out to minimap2, and #1095's
+      - name: Install minimap2 + samtools + bowtie2 (#1095 and bisulfite-mode aligner gates)
+        # The bisulfite-mode minimap2/Bowtie 2 gates shell out to those aligners, and #1095's
         # bisulfite-convention gates compare decompressed SAM text via samtools. Without
-        # either, those tests would no-op silently. CI must guarantee both so the gates
+        # them, those tests would no-op silently. CI must guarantee all three so the gates
         # can't pass vacuously (the tests themselves panic if the tool is missing while
         # $CI is set).
         run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
@@ -91,11 +91,11 @@ jobs:
         run: cargo build -p bismark --all-targets --features rammap-inprocess
       - name: cargo clippy -p bismark --features rammap-inprocess -D warnings
         run: cargo clippy -p bismark --all-targets --features rammap-inprocess -- -D warnings
-      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+      - name: Install minimap2 + samtools + bowtie2 (#1095 and bisulfite-mode aligner gates)
+        # `cargo test -p bismark` runs the bisulfite-mode minimap2/Bowtie 2 gates and the
         # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
         # the tool is missing (they must not pass vacuously). This feature job runs
-        # them too, so it needs both like the main `cargo test` job.
+        # them too, so it needs all three like the main `cargo test` job.
         run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
       - name: cargo test -p bismark --features rammap-inprocess
         run: cargo test -p bismark --features rammap-inprocess
@@ -127,11 +127,11 @@ jobs:
         run: cargo build -p bismark --all-targets --features binseq-input
       - name: cargo clippy -p bismark --features binseq-input -D warnings
         run: cargo clippy -p bismark --all-targets --features binseq-input -- -D warnings
-      - name: Install minimap2 + samtools + bowtie2 (5-Base #787 / #1095 / #1125 gates)
-        # `cargo test -p bismark` runs the 5-Base real-aligner gates (minimap2) and the
+      - name: Install minimap2 + samtools + bowtie2 (#1095 and bisulfite-mode aligner gates)
+        # `cargo test -p bismark` runs the bisulfite-mode minimap2/Bowtie 2 gates and the
         # #1095 bisulfite-convention gates (samtools), which panic when $CI is set and
         # the tool is missing (they must not pass vacuously). This feature job runs
-        # them too, so it needs both like the main `cargo test` job.
+        # them too, so it needs all three like the main `cargo test` job.
         run: ../.github/scripts/install-tools.sh minimap2 samtools bowtie2
       - name: cargo test -p bismark --features binseq-input
         run: cargo test -p bismark --features binseq-input
@@ -176,14 +176,14 @@ jobs:
         env:
           BISMARK_TEST_BWAMEM3: "1"
         run: cargo test -p bismark --test aligner_five_base_bwamem3 --test aligner_five_base_bwamem3_fake --test aligner_taps_bwamem3 --test genome_prep_bwamem3 --test genome_prep_bwamem3_fake
-      - name: The name filter selects every bwa-mem3 control gate
+      - name: The name filter selects every bwa-mem3 ground-truth gate
         run: |
           n=$(cargo test -p bismark --test aligner_five_base_groundtruth _bwamem3 -- --list | grep -c ': test$' || true)
-          [ "$n" -ge 4 ] || { echo "expected at least 4 _bwamem3 control gates, found $n"; exit 1; }
-      - name: cargo test (lambda/pUC19 control gates on bwa-mem3)
+          [ "$n" -eq 9 ] || { echo "expected 9 _bwamem3 ground-truth gates, found $n"; exit 1; }
+      - name: cargo test (ground-truth and lambda/pUC19 control gates on bwa-mem3)
         env:
           BISMARK_TEST_BWAMEM3: "1"
-        # The name filter keeps out the minimap2 gates in this file, which need minimap2 in CI.
+        # The `_hermetic` twins in this file run in the main test jobs.
         run: cargo test -p bismark --test aligner_five_base_groundtruth _bwamem3
 
   fmt:

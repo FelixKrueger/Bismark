@@ -164,19 +164,14 @@ fn hisat2_multicore_remap_notice(n: u32) -> String {
 }
 
 /// Never-silent notice for a run on the 5-Base path, naming the chemistry and the engine.
-fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry, defaulted: bool) -> String {
+fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String {
     match chem {
         config::FiveBaseChemistry::Illumina5Base => format!(
             "Note: --illumina_5base is the Illumina 5-Base (5mC->T) mode: reads are aligned \
              with {} to the UNCONVERTED genome and methylation is called with inverted \
              polarity (a read T at a genomic C = methylated). Directional, paired-end only. \
-             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.{}",
-            aligner.name(),
-            if defaulted {
-                " bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one."
-            } else {
-                ""
-            }
+             NOT byte-identical (Perl Bismark has no 5-Base oracle); concordance-validated vs DRAGEN.",
+            aligner.name()
         ),
         config::FiveBaseChemistry::Taps => format!(
             "Note: --taps is the TAPS (mC->T) mode: reads are aligned with {} to the \
@@ -288,11 +283,7 @@ pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
     if config.five_base {
         eprintln!(
             "{}",
-            five_base_notice(
-                config.aligner,
-                config.five_base_chemistry,
-                config::five_base_engine_defaulted(cli, config.aligner)
-            )
+            five_base_notice(config.aligner, config.five_base_chemistry)
         );
     }
     // Never-silent opt-in notice (Phase 3, design#5): --rammap is the pure-Rust
@@ -2132,25 +2123,14 @@ impl Drop for EngineChild {
 /// The bwa-mem3 environment variable that would override `--meth-seed-prune`.
 const BWAMEM3_SEED_PRUNE_ENV: &str = "BWAMEM3_METH_SEED_PRUNE";
 
-/// Effective 5-Base options with single-instance threading and input ordering.
+/// The bwa-mem3 options of a 5-Base run with its thread count.
 pub(crate) fn five_base_aligner_options(config: &RunConfig) -> String {
     let n = five_base_threads(
         config.bowtie_threads,
         config.multicore,
         std::thread::available_parallelism().ok().map(|x| x.get()),
     );
-    match config.aligner {
-        // `--reorder`: the driver pairs FASTQ and SAM records by position.
-        Aligner::Bowtie2 | Aligner::Hisat2 => {
-            format!("{} -p {n} --reorder", config.aligner_options)
-        }
-        // minimap2 (`--minimap2` 5-Base engine): reuse the resolved options but lift the
-        // faithful `-t` to `-t {n}` (all cores) for this non-byte-identical path.
-        // Token-safe: a plain `.replace("-t 2", …)` mangled `-t 20`→`-t {n}0` once the
-        // base string carries a resolved `-t {p}` (#1074 C2).
-        Aligner::Minimap2 | Aligner::Rammap => replace_minimap2_threads(&config.aligner_options, n),
-        Aligner::BwaMem3 => format!("{} -t {n}", config.aligner_options),
-    }
+    format!("{} -t {n}", config.aligner_options)
 }
 
 /// Explicit `-p`, then `--multicore` above one, then detected CPUs (2 if undetectable).
@@ -2165,93 +2145,22 @@ fn five_base_threads(
         .unwrap_or_else(|| detected.unwrap_or(2))
 }
 
-/// Set the value token after `-t` in a whitespace-separated minimap2 option string,
-/// token-safely. A `str::replace("-t 2", …)` is a SUBSTRING replace: once the base
-/// carries `-t 20`/`-t 25`/… it corrupts them to `-t 200`/`-t 255` (#1074 C2). This
-/// rewrites only the whole value token that immediately follows `-t`.
-///
-/// NB: coupled to `options::minimap2_options`, which renders the `-t <N>` token this
-/// finds; if that flag ever changes, this literal `"-t"` match must change with it.
-fn replace_minimap2_threads(opts: &str, n: usize) -> String {
-    let mut toks: Vec<String> = opts.split_whitespace().map(String::from).collect();
-    for i in 0..toks.len() {
-        if toks[i] == "-t" && i + 1 < toks.len() {
-            toks[i + 1] = n.to_string();
-            break;
-        }
-    }
-    toks.join(" ")
-}
-
-/// Build the per-engine spawn argv for a 5-Base run. minimap2: `<opts> <genome.fa>
-/// r1 r2` (positional FASTA + mates). bowtie2/hisat2: `<opts> -x <index> -1 r1 -2 r2`;
-/// bwa-mem3: `mem <opts> <prefix> r1 r2`. `reads` is always 2 (5-Base is paired-end).
+/// The bwa-mem3 argv of a 5-Base run: `mem <opts> <prefix> r1 r2` (the options already begin
+/// with the `mem` subcommand).
 fn five_base_build_argv(
     config: &RunConfig,
     opts: &str,
-    ref_path: &Path,
-    reads: &[&Path],
+    reads: [&Path; 2],
 ) -> Vec<std::ffi::OsString> {
     use std::ffi::OsString;
+    let idx = config
+        .five_base_index
+        .as_ref()
+        .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
     let mut args: Vec<OsString> = opts.split_whitespace().map(OsString::from).collect();
-    match config.aligner {
-        Aligner::Bowtie2 | Aligner::Hisat2 => {
-            let idx = config
-                .five_base_index
-                .as_ref()
-                .expect("five_base_index is required for bowtie2/hisat2 5-Base (guarded)");
-            args.push("-x".into());
-            args.push(idx.as_os_str().to_owned());
-            // 5-Base is paired-end (guarded at resolve()): always -1/-2.
-            args.push("-1".into());
-            args.push(reads[0].as_os_str().to_owned());
-            args.push("-2".into());
-            args.push(reads[1].as_os_str().to_owned());
-        }
-        // `mem <opts> <prefix> r1 r2`: the options already begin with the `mem` subcommand.
-        Aligner::BwaMem3 => {
-            let idx = config
-                .five_base_index
-                .as_ref()
-                .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
-            args.push(idx.as_os_str().to_owned());
-            args.push(reads[0].as_os_str().to_owned());
-            args.push(reads[1].as_os_str().to_owned());
-        }
-        Aligner::Minimap2 | Aligner::Rammap => {
-            // minimap2: positional <genome.fa> then the read file(s).
-            args.push(ref_path.as_os_str().to_owned());
-            for r in reads {
-                args.push(r.as_os_str().to_owned());
-            }
-        }
-    }
+    args.push(idx.as_os_str().to_owned());
+    args.extend(reads.iter().map(|r| r.as_os_str().to_owned()));
     args
-}
-
-/// Resolve the reference FASTA minimap2 will align against. A single-FASTA genome
-/// is passed through directly (no copy); a multi-FASTA genome is decompressed +
-/// concatenated once into a temp plain FASTA (so minimap2 sees one file, with the
-/// same contig names — hence the same RNAMEs the in-memory `genome`/`refid` use).
-/// Returns `(reference_path, Some(temp_to_delete))` for the multi-FASTA case.
-fn five_base_reference_fasta(config: &RunConfig) -> Result<(PathBuf, Option<PathBuf>)> {
-    let fastas = &config.genome.fastas;
-    if fastas.len() == 1 {
-        return Ok((fastas[0].clone(), None));
-    }
-    let tmp = config
-        .output
-        .output_dir
-        .join(".bismark_5base_concat_ref.fa");
-    let mut out = BufWriter::new(File::create(&tmp)?);
-    staging::scratch(&tmp)?;
-    for f in fastas {
-        let mut r = open_reader(f)?;
-        std::io::copy(&mut r, &mut out)?;
-        out.write_all(b"\n")?; // guard against a missing trailing newline between files
-    }
-    out.flush()?;
-    Ok((tmp.clone(), Some(tmp)))
 }
 
 /// `(name, length)` per contig from a BWA `.ann`: a `<len> <n_seqs> <seed>` header line, then
@@ -2420,7 +2329,7 @@ fn mask_low_quality(seq: &[u8], qual: &[u8], baseq: u8, offset: u8) -> Vec<u8> {
         .collect()
 }
 
-/// Turn one minimap2 primary [`SamRecord`] + the original read into a Bismark
+/// Turn one engine primary [`SamRecord`] + the original read into a Bismark
 /// record with INVERTED (5-Base) methylation polarity, or `None` (unmapped, or the
 /// chromosome-edge length guard fired). Pure (no I/O) so it is unit-testable with a
 /// canned `SamRecord` + tiny in-memory genome. Increments the alignment-outcome and
@@ -2492,8 +2401,7 @@ fn five_base_emit_record(
 // ===========================================================================
 // #787 Illumina 5-Base PAIRED-END driver. Opt-in, never-silent, concordance-gated
 // (NOT byte-identical: Perl Bismark has no 5-Base oracle). It does NOT convert the
-// reads: one engine runs in PE mode against the unconverted genome (minimap2 on the
-// FASTA; bowtie2/hisat2/bwa-mem3 on `--five_base_index`);
+// reads: one bwa-mem3 instance runs in PE mode against the unconverted genome's index;
 // the PE index (0 OT / 3 OB — directional only) comes from R1's strand, and the
 // byte-frozen PE extract + paired_end_sam_output are reused with the inverted call.
 // ===========================================================================
@@ -2516,7 +2424,8 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             f.display()
         )));
     }
-    if config.aligner == Aligner::BwaMem3 && std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
+    debug_assert_eq!(config.aligner, Aligner::BwaMem3);
+    if std::env::var_os(BWAMEM3_SEED_PRUNE_ENV).is_some() {
         eprintln!(
             "Note: {BWAMEM3_SEED_PRUNE_ENV} is set; it is ignored (bwa-mem3 runs with \
              --meth-seed-prune=spec30)."
@@ -2524,30 +2433,20 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
     }
     let genome = read_genome_into_memory(&config.genome.fastas)?;
     let refid = build_refid(&genome);
-    if config.aligner == Aligner::BwaMem3 {
-        let index = config
-            .five_base_index
-            .as_ref()
-            .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
-        check_contigs_match(
-            &genome_contigs(&genome),
-            &read_bwa_ann(index)?,
-            "bwa-mem3 index",
-        )?;
-    }
+    let index = config
+        .five_base_index
+        .as_ref()
+        .expect("five_base_index is required for bwa-mem3 5-Base (guarded)");
+    check_contigs_match(
+        &genome_contigs(&genome),
+        &read_bwa_ann(index)?,
+        "bwa-mem3 index",
+    )?;
     let mut header = generate_sam_header(&genome, &config.command_line);
     let genome_folder = format!("{}/", config.genome.genome_dir.display());
     let tok = config.aligner.token();
     let fb_opts = five_base_aligner_options(config);
-    if config.aligner == Aligner::BwaMem3 {
-        add_bwamem3_pg(&mut header, config, &fb_opts);
-    }
-    // Only minimap2 reads the genome FASTA; the other engines align against an index.
-    let (ref_path, ref_tmp) = if config.aligner == Aligner::Minimap2 {
-        five_base_reference_fasta(config)?
-    } else {
-        (PathBuf::new(), None)
-    };
+    add_bwamem3_pg(&mut header, config, &fb_opts);
 
     for (read_1, read_2) in mates1.iter().zip(mates2) {
         let bam_path =
@@ -2577,17 +2476,15 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
                 library: config.library,
             },
         )?;
-        if config.aligner == Aligner::BwaMem3 {
-            writeln!(
-                report,
-                "bwa-mem3 version: {}",
-                config.detected_aligner.version
-            )?;
-            if config.five_base_chemistry == config::FiveBaseChemistry::Taps {
-                writeln!(report, "Library chemistry: TAPS (mC->T)")?;
-            }
-            writeln!(report)?;
+        writeln!(
+            report,
+            "bwa-mem3 version: {}",
+            config.detected_aligner.version
+        )?;
+        if config.five_base_chemistry == config::FiveBaseChemistry::Taps {
+            writeln!(report, "Library chemistry: TAPS (mC->T)")?;
         }
+        writeln!(report)?;
 
         let mut counters = Counters::default();
         five_base_align_and_call_pe(
@@ -2596,7 +2493,6 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
             &refid,
             Path::new(read_1),
             Path::new(read_2),
-            &ref_path,
             &mut sinks,
             &mut counters,
         )?;
@@ -2692,9 +2588,6 @@ fn run_pe_five_base(config: &RunConfig, mates1: &[String], mates2: &[String]) ->
         staging::commit()?;
     }
 
-    if let Some(tmp) = ref_tmp {
-        let _ = std::fs::remove_file(tmp);
-    }
     Ok(())
 }
 
@@ -2707,13 +2600,12 @@ fn five_base_align_and_call_pe(
     refid: &HashMap<String, usize>,
     read_1: &Path,
     read_2: &Path,
-    ref_path: &Path,
     sinks: &mut PeSinks,
     counters: &mut Counters,
 ) -> Result<()> {
     let bin = &config.detected_aligner.path;
     let opts = five_base_aligner_options(config);
-    let args = five_base_build_argv(config, &opts, ref_path, &[read_1, read_2]);
+    let args = five_base_build_argv(config, &opts, [read_1, read_2]);
     let child = std::process::Command::new(bin)
         .args(&args)
         // The variable overrides bwa-mem3's --meth-seed-prune flag.
@@ -2738,14 +2630,12 @@ fn five_base_align_and_call_pe(
     })?;
     let mut sam = BufReader::new(stdout);
     let mut sam_line = String::new();
-    if config.aligner == Aligner::BwaMem3 {
-        let sq = five_base_read_sq_header(&mut sam)
-            .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
-        if sq.is_empty() {
-            return Err(engine.failure("ended before writing its SAM header"));
-        }
-        check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
+    let sq = five_base_read_sq_header(&mut sam)
+        .map_err(|e| engine.failure(&format!("output could not be read ({e})")))?;
+    if sq.is_empty() {
+        return Err(engine.failure("ended before writing its SAM header"));
     }
+    check_contigs_match(&genome_contigs(genome), &sq, "bwa-mem3 output header")?;
 
     let mut r1 = open_reader(read_1)?;
     let mut r2 = open_reader(read_2)?;
@@ -2795,7 +2685,7 @@ fn five_base_align_and_call_pe(
             (&b, &a)
         };
 
-        // #787: force whitespace truncation (see the SE path) — minimap2 PE truncates the
+        // #787: force whitespace truncation (see the SE path) — the engine truncates the
         // QNAME at the first space, so the real Illumina header's `1:N:0:` comment must be
         // dropped here too or every pair desyncs.
         let identifier = five_base_fastq_id(&id1);
@@ -10448,28 +10338,6 @@ mod tests {
         assert!(broken.is_err(), "tag-after-suffix must fail to pair");
     }
 
-    /// #1074 C2: the 5-Base `-t` lift must be token-safe. A `str::replace("-t 2", …)`
-    /// corrupts `-t 20`→`-t {n}0` once the base carries a resolved `-t {p}`; the
-    /// token-wise rewrite must set only the whole value after `-t`.
-    #[test]
-    fn replace_minimap2_threads_is_token_safe() {
-        // the C2 regression: -t 20 must stay -t 20 (old bug: -t 200)
-        assert_eq!(
-            replace_minimap2_threads("-a --MD --secondary=no -t 20 -x sr -K 250K", 20),
-            "-a --MD --secondary=no -t 20 -x sr -K 250K"
-        );
-        // faithful base -t 2 lifted to the 5-Base auto-scale
-        assert_eq!(
-            replace_minimap2_threads("-a -t 2 -x sr", 128),
-            "-a -t 128 -x sr"
-        );
-        // -t 25 (also has "-t 2" as a substring) rewritten cleanly
-        assert_eq!(
-            replace_minimap2_threads("-a -t 25 -x sr", 8),
-            "-a -t 8 -x sr"
-        );
-    }
-
     #[test]
     fn five_base_lockstep_accepts_mate_suffix_and_rejects_another_read() {
         let sam = |q: &str| {
@@ -10489,10 +10357,10 @@ mod tests {
         );
     }
 
-    fn five_base_stub(aligner: config::Aligner) -> RunConfig {
+    fn five_base_stub() -> RunConfig {
         let mut c = config::run_config_stub(
-            aligner,
-            config::Mm2Preset::Sr,
+            config::Aligner::BwaMem3,
+            config::Mm2Preset::MapOnt,
             PathBuf::from("ct"),
             PathBuf::from("ga"),
             config::LibraryType::Directional,
@@ -10502,13 +10370,8 @@ mod tests {
             },
         );
         c.five_base = true;
-        c.aligner_options = match aligner {
-            Aligner::Hisat2 => "-q --score-min L,0,-0.6 --no-spliced-alignment".into(),
-            Aligner::BwaMem3 => {
-                crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Illumina5Base)
-            }
-            _ => "-q --score-min L,0,-0.6 --maxins 800".into(),
-        };
+        c.aligner_options =
+            crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Illumina5Base);
         c.bowtie_threads = Some(4);
         c
     }
@@ -10557,7 +10420,7 @@ mod tests {
 
     #[test]
     fn taps_bwamem3_options_append_threads() {
-        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        let mut c = five_base_stub();
         c.five_base_chemistry = config::FiveBaseChemistry::Taps;
         c.aligner_options =
             crate::aligner::options::bwamem3_options(config::FiveBaseChemistry::Taps);
@@ -10569,42 +10432,18 @@ mod tests {
 
     #[test]
     fn bwamem3_options_append_threads_and_argv_is_prefix_then_mates() {
-        let mut c = five_base_stub(config::Aligner::BwaMem3);
+        let mut c = five_base_stub();
         c.five_base_index = Some(PathBuf::from("/idx/g.fa"));
         let opts = five_base_aligner_options(&c);
         assert!(opts.starts_with("mem --meth=5base"), "{opts}");
         assert!(opts.ends_with("-K 100000000 -t 4"), "{opts}");
-        let argv: Vec<String> = five_base_build_argv(
-            &c,
-            &opts,
-            Path::new("/unused.fa"),
-            &[Path::new("r1.fq"), Path::new("r2.fq")],
-        )
-        .into_iter()
-        .map(|s| s.into_string().unwrap())
-        .collect();
+        let argv: Vec<String> =
+            five_base_build_argv(&c, &opts, [Path::new("r1.fq"), Path::new("r2.fq")])
+                .into_iter()
+                .map(|s| s.into_string().unwrap())
+                .collect();
         assert_eq!(argv.first().map(String::as_str), Some("mem"));
         assert_eq!(&argv[argv.len() - 3..], ["/idx/g.fa", "r1.fq", "r2.fq"]);
-        assert!(!argv.iter().any(|a| a == "/unused.fa"), "{argv:?}");
-    }
-
-    #[test]
-    fn five_base_bowtie2_and_hisat2_keep_input_order() {
-        for (aligner, expected) in [
-            (
-                config::Aligner::Bowtie2,
-                "-q --score-min L,0,-0.6 --maxins 800 -p 4 --reorder",
-            ),
-            (
-                config::Aligner::Hisat2,
-                "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
-            ),
-        ] {
-            assert_eq!(
-                five_base_aligner_options(&five_base_stub(aligner)),
-                expected
-            );
-        }
     }
 
     #[test]
@@ -10618,7 +10457,7 @@ mod tests {
 
     #[test]
     fn taps_notice_names_taps_and_bwamem3() {
-        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps, false);
+        let n = five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Taps);
         assert!(
             n.starts_with("Note: --taps is the TAPS (mC->T) mode"),
             "{n}"
@@ -10639,47 +10478,29 @@ mod tests {
             "{n}"
         );
         assert!(
-            five_base_notice(
-                Aligner::BwaMem3,
-                config::FiveBaseChemistry::Illumina5Base,
-                false
-            )
-            .contains("concordance-validated vs DRAGEN")
+            five_base_notice(Aligner::BwaMem3, config::FiveBaseChemistry::Illumina5Base)
+                .contains("concordance-validated vs DRAGEN")
         );
     }
 
     #[test]
-    fn five_base_notice_names_the_engine_that_runs() {
-        for aligner in [
-            config::Aligner::Minimap2,
-            config::Aligner::Bowtie2,
-            config::Aligner::Hisat2,
+    fn five_base_notice_names_bwamem3() {
+        let notice = five_base_notice(
             config::Aligner::BwaMem3,
-        ] {
-            let notice = five_base_notice(aligner, config::FiveBaseChemistry::Illumina5Base, false);
-            assert!(
-                notice.contains(&format!(
-                    "aligned with {} to the UNCONVERTED",
-                    aligner.name()
-                )),
-                "{notice}"
-            );
-            assert!(notice.contains("paired-end only"), "{notice}");
-        }
-    }
-
-    #[test]
-    fn five_base_notice_names_the_default_engine_only_when_defaulted() {
-        let chem = config::FiveBaseChemistry::Illumina5Base;
-        let note =
-            "bwa-mem3 is the default engine since 3.5.0; --minimap2 selects the previous one.";
-        assert!(five_base_notice(config::Aligner::BwaMem3, chem, true).ends_with(note));
-        assert!(!five_base_notice(config::Aligner::BwaMem3, chem, false).contains(note));
+            config::FiveBaseChemistry::Illumina5Base,
+        );
+        assert!(
+            notice.contains("aligned with bwa-mem3 to the UNCONVERTED")
+                && notice.contains("paired-end only")
+                && !notice.contains("default")
+                && !notice.contains("--minimap2"),
+            "{notice}"
+        );
     }
 
     #[test]
     fn five_base_summary_prints_the_options_that_run() {
-        let config = five_base_stub(config::Aligner::Bowtie2);
+        let config = five_base_stub();
         let summary = config.summary();
         assert!(
             summary.contains(&format!(

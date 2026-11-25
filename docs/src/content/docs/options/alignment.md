@@ -255,7 +255,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 - `--bowtie2`
 
-  Default: ON (with `--illumina_5base`, bwa-mem3 is the default). Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
+  Default: ON (not with `--illumina_5base` or `--taps`, which align with bwa-mem3 only). Uses Bowtie 2. Bismark limits Bowtie 2 to only perform end-to-end alignments, i.e. searches for alignments involving all read characters (also called untrimmed or unclipped alignments). Bismark assumes that raw sequence data is adapter and/or quality trimmed where appropriate. Both small (`.bt2`) and large (`.bt2l`) Bowtie 2 indexes are supported.
 
 - `--no_dovetail`
 
@@ -269,7 +269,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
   Specify `--no_dovetail` to turn off this behaviour for paired-end libraries. Default: OFF.
 
-  With `--illumina_5base`, Bowtie 2 never receives `--dovetail`, whatever is specified (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bowtie-2-and-hisat2-tuning)).
+  `--illumina_5base` and `--taps` reject `--no_dovetail` and `--dovetail` (see the [5-Base guide](/Bismark/rust/illumina-5-base/#bwa-mem3---bwamem3)).
 
 
 ##### HISAT2 SPECIFIC OPTIONS:
@@ -334,7 +334,7 @@ For reads that have multiple alignments a random alignment is written out to a s
 
 Uses minimap2 as the underlying read aligner. This mode is very new and currently experimental. Expect that things may change in the near future. The default mapping mode is `--nanopore` (preset `-x map-ont` (Nanopore reads)). Internally, minimap2 is run with the options `-a --MD`. More information here: https://lh3.github.io/minimap2/minimap2.html. Default: OFF.
 
-  With `--illumina_5base`, `--minimap2` selects the paired-end minimap2 `-x sr` engine against the genome FASTA, the 5-Base default before 3.5.0; without it, 5-Base aligns with bwa-mem3 (see the [5-Base guide](/Bismark/rust/illumina-5-base/#running-it)). The Bowtie 2 scoring and insert-size options (`-N`, `-L`, `--score_min`, `--rdg`, `--rfg`, `-I`, `-X`) are rejected on that path.
+  Not with `--illumina_5base` or `--taps`: since 3.5.0 they align with bwa-mem3 only (see the [5-Base guide](/Bismark/rust/illumina-5-base/#running-it)).
 
   **MAPQ:** minimap2 reports *positive* alignment scores (every preset Bismark can select awards 2 per matching base), so the best possible score is `2 × read_length` and Bismark normalises MAPQ against it, exactly as it does for Bowtie 2 `--local`. MAPQ is **22–44 for a uniquely-aligned read**, and can be **lower — down to 2 — when another strand instance produced a competing score** for the same read. This is **Bismark's own scale, not minimap2's**: minimap2 derives its own MAPQ from chain scores on a 0–60 scale, and Bismark discards it because it recomputes MAPQ across the 2–4 strand instances it runs. The same applies to `--rammap`.
 

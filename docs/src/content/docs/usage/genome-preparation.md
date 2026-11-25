@@ -19,7 +19,7 @@ bismark prepare --path_to_aligner /usr/bin/bowtie2/ --verbose /data/genomes/homo
 
 ### bwa-mem3 methylation index (`--bwamem3`)
 
-`bismark --taps` and `bismark --illumina_5base` (bwa-mem3 is its default engine since 3.5.0) align with bwa-mem3, which converts the
+`bismark --taps` and `bismark --illumina_5base` (since 3.5.0) align with bwa-mem3, which converts the
 genome itself, so they need a bwa-mem3 methylation index instead of the bisulfite genomes:
 
 ```

@@ -56,9 +56,9 @@ fn samtools_available() -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    // Fail loud in CI: these gates must not pass vacuously (#1095 review HIGH-3; the same
-    // guard `aligner_five_base_groundtruth.rs` uses for minimap2). A silent skip left the
-    // load-bearing idempotence gate reporting green in CI while asserting nothing.
+    // Fail loud in CI: these gates must not pass vacuously (#1095 review HIGH-3). A silent
+    // skip left the load-bearing idempotence gate reporting green in CI while asserting
+    // nothing.
     if !present && std::env::var_os("CI").is_some() {
         panic!(
             "samtools not found but $CI is set: the #1095 gates compare decompressed SAM text \
