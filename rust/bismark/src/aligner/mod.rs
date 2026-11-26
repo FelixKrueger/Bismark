@@ -186,6 +186,7 @@ fn five_base_notice(aligner: Aligner, chem: config::FiveBaseChemistry) -> String
 /// Entry point: resolve the config, then run the pipeline. `command_line` is the
 /// verbatim argv (program name excluded), for the eventual `@PG` `CL:` line.
 pub fn run(cli: &cli::Cli, command_line: String) -> Result<()> {
+    config::reject_slam(cli)?;
     let expanded = config::expand_taps(cli)?;
     // Everything below, both standalone dispatches included, sees the expanded flags.
     let cli: &cli::Cli = &expanded;

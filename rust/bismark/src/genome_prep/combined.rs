@@ -14,7 +14,6 @@ use crate::genome_prep::error::GenomePrepError;
 use crate::genome_prep::{convert, indexer};
 
 /// Build the combined reference + index under `combined_dir`.
-#[allow(clippy::too_many_arguments)]
 pub fn build(
     files: &[PathBuf],
     combined_dir: &Path,
@@ -22,11 +21,10 @@ pub fn build(
     aligner: Aligner,
     threads: u32,
     large_index: bool,
-    slam: bool,
 ) -> Result<(), GenomePrepError> {
     std::fs::create_dir_all(combined_dir)?;
     let combined_fa = combined_dir.join("genome_mfa.combined.fa");
-    convert::write_combined(files, &combined_fa, slam)?;
+    convert::write_combined(files, &combined_fa)?;
     indexer::run_one(
         indexer_bin,
         aligner,

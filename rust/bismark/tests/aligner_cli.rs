@@ -1304,6 +1304,61 @@ fn old_flag_and_misplaced_nucleotide_coverage_are_rejected() {
     }
 }
 
+/// `--slam` stops every align path with one message, ahead of the TAPS expansion and the
+/// standalone 5-Base paths; `--help` doesn't list it.
+#[cfg(unix)]
+#[test]
+fn slam_is_rejected_on_every_align_path() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+    let temp = TempDir::new().unwrap();
+    let want = bismark::aligner::config::SLAM_NOT_SUPPORTED;
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(temp.path())
+        .arg("--slam")
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(want));
+    let g = genome.path().to_str().unwrap();
+    let cases: [&[&str]; 4] = [
+        &[
+            "--taps",
+            "--five_base_min_mapq",
+            "5",
+            "--genome",
+            g,
+            "--slam",
+        ],
+        &["--illumina_5base", "--bowtie2", "--genome", g, "--slam"],
+        &["--five_base_consensus_from_bam", "in.bam", "--slam"],
+        &["--five_base_bisulfite_bam", "in.bam", "--slam"],
+    ];
+    for args in cases {
+        bin()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(want));
+    }
+    bin()
+        .args(["align", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--genome"))
+        .stdout(predicate::str::contains("--slam").not());
+}
+
 /// [`make_genome`] with a chr1 holding every dinucleotide, which bam2nuc needs; the
 /// fake aligners' 6M hit at chr1:1 still reads `ACGTAC`.
 #[cfg(unix)]

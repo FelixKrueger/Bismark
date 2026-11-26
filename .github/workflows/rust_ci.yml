@@ -236,13 +236,13 @@ jobs:
           command -v samtools >/dev/null || { echo "samtools missing"; exit 1; }
           perl -v
           samtools --version >/dev/null
-      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 13 ran)
+      - name: Run live-Perl byte-identity oracles (fail-loud + prove all 12 ran)
         env:
           # Makes a skipped oracle panic.
           BISMARK_REQUIRE_PERL: "1"
         run: |
           set -euo pipefail
-          EXPECTED=13
+          EXPECTED=12
           out=$(cargo test -p bismark \
                   -- --exact \
                   perl_vs_rust_byte_identical_mfa \
@@ -250,7 +250,6 @@ jobs:
                   perl_vs_rust_byte_identical_single_fasta \
                   perl_vs_rust_edge_inputs_mfa \
                   perl_vs_rust_mixed_case_glob_order \
-                  perl_vs_rust_slam \
                   perl_vs_rust_genomic_composition \
                   perl_vs_rust_gzip_input \
                   perl_vs_rust_se_three_way \

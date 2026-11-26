@@ -249,8 +249,8 @@ pub struct Cli {
     /// PBAT library.
     #[arg(long)]
     pub pbat: bool,
-    /// SLAM-seq mode.
-    #[arg(long)]
+    /// Not supported (hidden): stops with an error.
+    #[arg(long, hide = true)]
     pub slam: bool,
     /// EXPERIMENTAL (v2, opt-in, never-silent): align against a single combined
     /// CT+GA index (`Bisulfite_Genome/Combined/BS_combined`, built by

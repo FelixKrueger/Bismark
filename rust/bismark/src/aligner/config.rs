@@ -1012,6 +1012,7 @@ pub(crate) fn expand_taps(cli: &Cli) -> Result<Cow<'_, Cli>> {
 
 /// Resolve a parsed [`Cli`] + the verbatim command line into a [`RunConfig`].
 pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
+    reject_slam(cli)?;
     let expanded = expand_taps(cli)?;
     let cli: &Cli = &expanded;
     let aligner = resolve_aligner(cli)?;
@@ -1206,11 +1207,6 @@ pub fn resolve(cli: &Cli, command_line: String) -> Result<RunConfig> {
             return Err(AlignerError::Unsupported(format!(
                 "{flag} is directional only in v1 (drop --non_directional/--pbat): \
                  the {label} library is directional."
-            )));
-        }
-        if cli.slam {
-            return Err(AlignerError::Unsupported(format!(
-                "{flag} is not supported with --slam."
             )));
         }
         for (set, opt) in [
@@ -1615,11 +1611,6 @@ fn reject_combined_index_unsupported(
 /// covered by the gate, and so must fail loudly rather than silently no-op
 /// (rev-1 plan-review finding — fail-loud, not defer).
 fn reject_unsupported_output_flags(cli: &Cli) -> Result<()> {
-    if cli.slam {
-        return Err(AlignerError::Unsupported(
-            "--slam (SLAM-seq methylation call) is not yet supported in v1.".into(),
-        ));
-    }
     if cli.non_bs_mm {
         return Err(AlignerError::Unsupported(
             "--non_bs_mm (extra XA non-bisulfite-mismatch tag) is not yet supported in v1.".into(),
@@ -1822,6 +1813,17 @@ fn validate_multicore(cli: &Cli) -> Result<()> {
         return Err(AlignerError::Validation(format!(
             "Core usage needs to be set to 1 or more (currently selected {m}). Please respecify!"
         )));
+    }
+    Ok(())
+}
+
+/// Error for the hidden `--slam` flag.
+pub const SLAM_NOT_SUPPORTED: &str = "--slam is not supported: Bismark 3.x has no SLAM-seq mode.";
+
+/// Reject the hidden `--slam` flag; runs before any other check.
+pub(crate) fn reject_slam(cli: &Cli) -> Result<()> {
+    if cli.slam {
+        return Err(AlignerError::Unsupported(SLAM_NOT_SUPPORTED.into()));
     }
     Ok(())
 }
@@ -2362,6 +2364,42 @@ mod tests {
     }
 
     #[test]
+    fn slam_is_rejected_first() {
+        let (_t, g, r1, r2) = fasta_only_genome_and_reads();
+        let (g, r1, r2) = (
+            g.to_str().unwrap(),
+            r1.to_str().unwrap(),
+            r2.to_str().unwrap(),
+        );
+        let cases: [&[&str]; 3] = [
+            &["--genome", g, "-1", r1, "-2", r2, "--slam"],
+            &[
+                "--taps",
+                "--five_base_min_mapq",
+                "5",
+                "--genome",
+                g,
+                "--slam",
+            ],
+            &[
+                "--illumina_5base",
+                "--bowtie2",
+                "--genome",
+                g,
+                "-1",
+                r1,
+                "-2",
+                r2,
+                "--slam",
+            ],
+        ];
+        for v in cases {
+            let e = resolve(&cli_from(v), "c".into()).unwrap_err().to_string();
+            assert!(e.contains(SLAM_NOT_SUPPORTED), "{v:?}: {e}");
+        }
+    }
+
+    #[test]
     fn taps_scope_guards_name_taps() {
         let (_t, g, r1, r2) = fasta_only_genome_and_reads();
         let (g, r1, r2) = (
@@ -2371,11 +2409,10 @@ mod tests {
         );
         let base = ["--five_base_index", "/x/i.fa", "--genome", g];
         let pe = ["-1", r1, "-2", r2];
-        let cases: [(&[&str], &str); 8] = [
+        let cases: [(&[&str], &str); 7] = [
             (&[], "paired-end only"),
             (&["--non_directional"], "directional only"),
             (&["--pbat"], "directional only"),
-            (&["--slam"], "--slam"),
             (&["--fasta"], "FASTQ input"),
             (&["--combined_index"], "--combined_index"),
             (&["--ambiguous"], "--ambiguous does not apply"),

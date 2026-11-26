@@ -15,7 +15,7 @@ calls, writes the BAM and the report, and everything downstream (deduplication, 
 bismark2report, bismark2summary) runs as usual.
 
 - **Paired-end, directional libraries only.** Single-end input, `--non_directional`, `--pbat`,
-  `--slam`, `--fasta` and `--combined_index` are rejected.
+  `--fasta` and `--combined_index` are rejected.
 - **5mC and 5hmC both read as methylated.** TAPS converts both, so a call is their sum; Bismark
   does not separate them.
 - **No variant calling.** A genuine `C>T` variant reads exactly like methylation on that strand.

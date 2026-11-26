@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 
 /// Create a temp directory containing a fake `bowtie2-build` that exits 0,
 /// so Step III "succeeds" without a real indexer. Returns the bin dir.
@@ -450,20 +451,34 @@ fn perl_vs_rust_mixed_case_glob_order() {
     );
 }
 
-/// `--slam` (T→C / A→G) with fixed `_CT_`/`_GA_` headers — vs real Perl.
+/// `--slam` stops before writing anything; `--help` doesn't list it.
 #[test]
-fn perl_vs_rust_slam() {
-    oracle_compare(
-        |dir| {
-            fs::create_dir_all(dir).unwrap();
-            fs::write(dir.join("g.fa"), b">chr1\nACGTacgtNRYK\nTTTTCCCCGGGGAAAA\n").unwrap();
-        },
-        &["--slam"],
-        &[
-            "Bisulfite_Genome/CT_conversion/genome_mfa.CT_conversion.fa",
-            "Bisulfite_Genome/GA_conversion/genome_mfa.GA_conversion.fa",
-        ],
-    );
+fn prepare_slam_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let genome = tmp.path().join("genome");
+    fs::create_dir_all(&genome).unwrap();
+    fs::write(genome.join("g.fa"), b">chr1\nACGT\n").unwrap();
+    let bin = fake_indexer_dir(tmp.path());
+    let want = bismark::genome_prep::cli::SLAM_REMOVED;
+    for extra in [&[][..], &["--bwamem3"][..]] {
+        Command::cargo_bin("bismark_genome_preparation")
+            .unwrap()
+            .env("BISMARK_BIN", &bin)
+            .arg("--slam")
+            .args(extra)
+            .arg(&genome)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains(want));
+    }
+    assert!(!genome.join("Bisulfite_Genome").exists());
+    assert!(!genome.join("Bwamem3_Index").exists());
+    Command::cargo_bin("bismark_genome_preparation")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--slam").not());
 }
 
 /// `--genomic_composition`: the mono/di-nucleotide frequency table vs real

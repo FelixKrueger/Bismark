@@ -10,16 +10,16 @@
 //!   bismark_genome_preparation <ext.args> BismarkIndex
 //!   ext.args: --bowtie2 | --hisat2 ; --slam (params.slamseq)
 //! ```
-//! **Tiers:** Tier 1 parse only. The conformance concern is "are `--bowtie2` /
-//! `--hisat2` / `--slam` accepted flags" — Tier 1 settles that. Tier 2 `validate()`
+//! **Tiers:** Tier 1 parse only for `--bowtie2` / `--hisat2`; `--slam` is a reject row
+//! (`validate()` stops on it before touching the filesystem). Tier 2 `validate()`
 //! is intentionally skipped: this crate's `validate()` canonicalizes the positional
 //! genome dir (needs a real path on disk) and there is no over-strict-validate risk
-//! for these three flags, so a `validate()` row would add a filesystem fixture for no
+//! for these flags, so a `validate()` row would add a filesystem fixture for no
 //! extra conformance signal.
 //!
 //! Re-scout on any methylseq version bump (pinned 4.2.0).
 
-use bismark::genome_prep::cli::Cli;
+use bismark::genome_prep::cli::{Cli, SLAM_REMOVED};
 use clap::Parser;
 
 #[test]
@@ -33,15 +33,6 @@ fn methylseq_genomepreparation_accept_rows_parse() {
             "hisat2 (--aligner bismark_hisat)",
             vec!["bismark_genome_preparation", "--hisat2", "BismarkIndex"],
         ),
-        (
-            "slamseq (params.slamseq → --slam)",
-            vec![
-                "bismark_genome_preparation",
-                "--bowtie2",
-                "--slam",
-                "BismarkIndex",
-            ],
-        ),
     ];
     for (label, argv) in rows {
         assert!(
@@ -50,4 +41,20 @@ fn methylseq_genomepreparation_accept_rows_parse() {
              (a parse rejection here = a methylseq drop-in gap)"
         );
     }
+}
+
+#[test]
+fn methylseq_slamseq_command_is_rejected() {
+    let argv = [
+        "bismark_genome_preparation",
+        "--bowtie2",
+        "--slam",
+        "BismarkIndex",
+    ];
+    let e = Cli::try_parse_from(argv)
+        .expect("--slam still parses")
+        .validate()
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains(SLAM_REMOVED), "{e}");
 }

@@ -25,13 +25,6 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
     let config = cli.validate()?;
     let logger = Logger::new(config.verbose);
 
-    if config.slam {
-        logger.note("`--slam` is deprecated and slated for removal in a future release.");
-        logger.note(
-            "Genome will be generated and indexed with in-silico T->C transitions, \
-             and NOT in BISULFITE MODE",
-        );
-    }
     // ── Step I — discover FASTA, validate explicit aligner path, make folders ──
     logger.info("Bismark Genome Preparation - Step I: Preparing folders");
     let files = discovery::find_fasta_files(&config.genome_folder)?;
@@ -63,16 +56,10 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
 
     // ── Step II — bisulfite conversion (the byte-identity core) ──
     logger.info("Bismark Genome Preparation - Step II: Bisulfite converting reference genome");
-    let counts =
-        convert::convert_split(&files, &ct_dir, &ga_dir, config.single_fasta, config.slam)?;
+    let counts = convert::convert_split(&files, &ct_dir, &ga_dir, config.single_fasta)?;
     println!("\nTotal number of conversions performed:");
-    if config.slam {
-        println!("T->C:\t{}", counts.ct);
-        println!("A->G:\t{}", counts.ga);
-    } else {
-        println!("C->T:\t{}", counts.ct);
-        println!("G->A:\t{}", counts.ga);
-    }
+    println!("C->T:\t{}", counts.ct);
+    println!("G->A:\t{}", counts.ga);
 
     // ── Step III — external indexer (concurrent CT/GA) ──
     let bin = match explicit_bin {
@@ -108,7 +95,6 @@ pub fn run(cli: Cli) -> Result<(), GenomePrepError> {
             config.aligner,
             config.threads,
             config.large_index,
-            config.slam,
         )?;
     }
 
