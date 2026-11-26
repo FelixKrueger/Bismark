@@ -278,34 +278,40 @@ pub(crate) fn bwamem3_options(chem: FiveBaseChemistry) -> String {
     )
 }
 
-/// Bowtie 2 / minimap2 tuning that has no bwa-mem3 equivalent.
+/// Bowtie 2 and HISAT2 options that have no bwa-mem3 equivalent.
 fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
-    let set: [(bool, &str); 15] = [
-        (cli.local, "--local"),
-        (cli.score_min.is_some(), "--score_min"),
-        (cli.seedmms.is_some(), "-N"),
-        (cli.seedlen.is_some(), "-L"),
-        (cli.seed_extension_fails.is_some(), "-D"),
-        (cli.reseed_repetitive_seeds.is_some(), "-R"),
-        (cli.rdg.is_some(), "--rdg"),
-        (cli.rfg.is_some(), "--rfg"),
-        (cli.minins.is_some(), "--minins"),
-        (cli.maxins.is_some(), "--maxins"),
-        (cli.dovetail, "--dovetail"),
-        (cli.no_dovetail, "--no_dovetail"),
-        (cli.nosplice, "--no-spliced-alignment"),
-        (cli.known_splices.is_some(), "--known-splicesite-infile"),
+    const SCORING: &str = "bwa-mem3 uses its own scoring and infers insert sizes itself";
+    const SPLICING: &str = "bwa-mem3 does not do spliced alignment";
+    let set: [(bool, &str, &str); 15] = [
+        (cli.local, "--local", SCORING),
+        (cli.score_min.is_some(), "--score_min", SCORING),
+        (cli.seedmms.is_some(), "-N", SCORING),
+        (cli.seedlen.is_some(), "-L", SCORING),
+        (cli.seed_extension_fails.is_some(), "-D", SCORING),
+        (cli.reseed_repetitive_seeds.is_some(), "-R", SCORING),
+        (cli.rdg.is_some(), "--rdg", SCORING),
+        (cli.rfg.is_some(), "--rfg", SCORING),
+        (cli.minins.is_some(), "--minins", SCORING),
+        (cli.maxins.is_some(), "--maxins", SCORING),
+        (cli.dovetail, "--dovetail", SCORING),
+        (cli.no_dovetail, "--no_dovetail", SCORING),
+        (cli.nosplice, "--no-spliced-alignment", SPLICING),
+        (
+            cli.known_splices.is_some(),
+            "--known-splicesite-infile",
+            SPLICING,
+        ),
         (
             cli.most_valid_alignments.is_some(),
             "--most_valid_alignments",
+            SCORING,
         ),
     ];
-    let Some(&(_, flag)) = set.iter().find(|(on, _)| *on) else {
+    let Some(&(_, flag, why)) = set.iter().find(|(on, _, _)| *on) else {
         return Ok(());
     };
     Err(AlignerError::Validation(format!(
-        "{flag} is not supported with {}: bwa-mem3 uses its own scoring and infers insert sizes \
-         itself; drop it.",
+        "{flag} is not supported with {}: {why}; drop it.",
         FiveBaseChemistry::of(cli).flag()
     )))
 }
@@ -630,6 +636,22 @@ mod tests {
                 "{args:?}: {e}"
             );
         }
+        for (args, flag) in [
+            (&["--no-spliced-alignment"][..], "--no-spliced-alignment"),
+            (
+                &["--known-splicesite-infile", "s.txt"],
+                "--known-splicesite-infile",
+            ),
+        ] {
+            assert_eq!(
+                taps_opts(args).unwrap_err().to_string(),
+                format!(
+                    "{flag} is not supported with --taps: bwa-mem3 does not do spliced alignment; \
+                     drop it."
+                ),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
@@ -660,11 +682,44 @@ mod tests {
                     && !e.contains("--minimap2"),
                 "{args:?}: {e}"
             );
+            let splice = args[0].contains("splice");
+            assert_eq!(
+                e.contains("bwa-mem3 does not do spliced alignment;"),
+                splice,
+                "{args:?}: {e}"
+            );
+            assert_eq!(
+                e.contains("bwa-mem3 uses its own scoring and infers insert sizes itself;"),
+                !splice,
+                "{args:?}: {e}"
+            );
         }
         for p in ["0", "1"] {
             let e = bwm3(&["-p", p]).unwrap_err().to_string();
             assert!(e.contains("-p of 2 or more"), "{e}");
         }
+    }
+
+    #[test]
+    fn bwamem3_tuning_first_match_wins() {
+        assert_eq!(
+            bwm3(&["--local", "--no-spliced-alignment"])
+                .unwrap_err()
+                .to_string(),
+            "--local is not supported with --illumina_5base: bwa-mem3 uses its own scoring and \
+             infers insert sizes itself; drop it."
+        );
+        assert_eq!(
+            bwm3(&[
+                "--no-spliced-alignment",
+                "--known-splicesite-infile",
+                "s.txt"
+            ])
+            .unwrap_err()
+            .to_string(),
+            "--no-spliced-alignment is not supported with --illumina_5base: bwa-mem3 does not do \
+             spliced alignment; drop it."
+        );
     }
 
     /// Perl's `Getopt::Long` is case-insensitive by default, so `'n|seedmms=i'` /
