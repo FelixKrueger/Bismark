@@ -1569,10 +1569,23 @@ fn explicit_bwamem3_without_an_index_gets_the_same_message() {
 fn five_base_rejections_spawn_nothing_and_write_nothing() {
     let other = TempDir::new().unwrap();
     let o = other.path().to_str().unwrap();
+    let splices = other.path().join("splices.txt");
+    fs::write(&splices, b"").unwrap();
+    let splices = splices.to_str().unwrap();
     for (extra, why) in [
         (
             &["--minimap2"][..],
             "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--no-spliced-alignment"][..],
+            "--no-spliced-alignment is not supported with --illumina_5base: bwa-mem3 does not do \
+             spliced alignment; drop it.",
+        ),
+        (
+            &["--known-splicesite-infile", splices][..],
+            "--known-splicesite-infile is not supported with --illumina_5base: bwa-mem3 does not \
+             do spliced alignment; drop it.",
         ),
         (
             &["--bowtie2"][..],
@@ -1657,25 +1670,31 @@ fn five_base_option_errors_say_drop_it() {
     let splices = run.genome.path().join("splices.txt");
     fs::write(&splices, b"").unwrap();
     let splices = splices.to_str().unwrap();
-    for (extra, flag) in [
-        (&["-X", "800"][..], "--maxins"),
-        (&["--local"][..], "--local"),
-        (&["-D", "5"][..], "-D"),
-        (&["--no_dovetail"][..], "--no_dovetail"),
-        (&["--dovetail"][..], "--dovetail"),
+    const SCORING: &str = "bwa-mem3 uses its own scoring and infers insert sizes itself";
+    const SPLICING: &str = "bwa-mem3 does not do spliced alignment";
+    for (extra, flag, why) in [
+        (&["-X", "800"][..], "--maxins", SCORING),
+        (&["--local"][..], "--local", SCORING),
+        (&["-D", "5"][..], "-D", SCORING),
+        (&["--no_dovetail"][..], "--no_dovetail", SCORING),
+        (&["--dovetail"][..], "--dovetail", SCORING),
         (
             &["--known-splicesite-infile", splices][..],
             "--known-splicesite-infile",
+            SPLICING,
         ),
-        (&["--no-spliced-alignment"][..], "--no-spliced-alignment"),
+        (
+            &["--no-spliced-alignment"][..],
+            "--no-spliced-alignment",
+            SPLICING,
+        ),
     ] {
         let mut assert = default_cmd(&run, run.out.path())
             .args(extra)
             .assert()
             .failure()
             .stderr(predicate::str::contains(format!(
-                "{flag} is not supported with --illumina_5base: bwa-mem3 uses its own scoring \
-                 and infers insert sizes itself; drop it."
+                "{flag} is not supported with --illumina_5base: {why}; drop it."
             )));
         for other in ["--bowtie2", "--hisat2", "--minimap2", "default"] {
             assert = assert.stderr(predicate::str::contains(other).not());
@@ -1807,6 +1826,8 @@ fn help_describes_five_base_index_and_umi_len() {
         "{help}"
     );
     assert!(!help.contains("Rejected with `--minimap2`"), "{help}");
+    assert!(help.contains("--five_base_index <PATH>"), "{help}");
+    assert!(!help.contains("<BASENAME>"), "{help}");
     assert!(
         help.contains("The first N bases of each mate are not called."),
         "{help}"

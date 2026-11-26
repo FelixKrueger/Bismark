@@ -137,7 +137,7 @@ pub struct Cli {
     /// FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder written
     /// by `bismark_genome_preparation --bwamem3`. Checked before the run starts; optional when
     /// `<genome>/Bwamem3_Index/` exists.
-    #[arg(long = "five_base_index", value_name = "BASENAME")]
+    #[arg(long = "five_base_index", value_name = "PATH")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
     /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
