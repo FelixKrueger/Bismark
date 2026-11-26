@@ -42,7 +42,7 @@ mamba install -c bioconda -c conda-forge bismark
 cargo install bismark
 
 # 3. Container image (nothing to install; drop-in for nf-core/methylseq)
-docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.4.0
+docker pull ghcr.io/felixkrueger/bismark:latest    # or pin a specific release, e.g. :3.5.0
 
 # 4. Prebuilt binaries — download from the Releases page and put on your PATH
 #    https://github.com/FelixKrueger/Bismark/releases
