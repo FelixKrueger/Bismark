@@ -5,14 +5,14 @@ description: Every option of the bismark aligner, its default, and the combinati
 tags: [cli, alignment, options]
 page_id: aligner-cli
 subject_status: current
-updated: 2026-11-25
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: d48c830
@@ -21,7 +21,7 @@ sources:
     commit: 667e20b
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
     commit: 667e20b
@@ -108,8 +108,9 @@ All need `--illumina_5base` (alias `--five_base`): `--five_base_index`, `--five_
 
 | Case | Where |
 |---|---|
+| `--slam` (hidden; there is no SLAM-seq mode) | `reject_slam`, before any other check in `run` (`aligner/mod.rs`) and `resolve` |
 | `--sam`, `--cram` | `resolve_output` |
-| `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
+| `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample`, `--sam-no-hd` | `reject_unsupported_output_flags` |
 | `--old_flag` | `reject_old_flag` |
 | `--nucleotide_coverage`, `--old_flag`, `--unmapped`, `--ambiguous` or `--ambig_bam` with `--five_base_consensus_from_bam` / `--five_base_bisulfite_bam` | `run` in `aligner/mod.rs` |
 | `--ambiguous` or `--ambig_bam` with `--illumina_5base` or `--taps` | `resolve` |
