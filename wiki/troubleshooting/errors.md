@@ -15,13 +15,13 @@ sources:
     commit: 12634a2
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
     commit: 3225cc7
@@ -46,6 +46,9 @@ sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/bwamem3.rs
     commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/genome_prep/cli.rs
+    commit: a96f6db
 ---
 
 # Errors that stop a run
@@ -66,6 +69,8 @@ Each row gives the start of a message that stops a run, its cause in the code, a
 | `--include_overlap requires --paired-end` | `--include_overlap` with `-s`, or on a file auto-detected as single-end (`process_one_file` in `extractor/mod.rs`) | Drop `--include_overlap`: single-end reads have no read 2 |
 | `<a> and <b> would both write <file>, so the second would overwrite the first` | Two `bismark extract` inputs would write the same splitting report, M-bias or bedGraph file, for example `a/s.bam` with `b/s.cram`, or one file given twice (`reject_output_name_collision` in `extractor/cli.rs`, `OutputNameCollision` in `extractor/error.rs`) | Rename one input, or run each with its own `--output_dir`: [usage/extract-methylation-calls.md](../usage/extract-methylation-calls.md) |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
+| `--slam is not supported: Bismark 3.x has no SLAM-seq mode.` | `bismark align --slam`; the hidden flag is checked before any other option (`reject_slam` in `aligner/config.rs`, called first by `run` in `aligner/mod.rs` and by `resolve`) | Drop `--slam` |
+| `--slam was removed in Bismark 3.5.0: the Bismark 3.x aligner has no SLAM-seq mode.` | `bismark prepare --slam`; the hidden flag is checked before the genome folder is read (`Cli::validate` in `genome_prep/cli.rs`) | Drop `--slam` |
 | `<a> and <b> would both write their output to the name '<name>'` | Two aligner inputs (read 1 for paired-end) get the same output name, or `--basename` was given with more than one input (`reject_output_name_collision` in `aligner/config.rs`) | Rename one input, or run each with its own `--output_dir`; how outputs are named: [usage/align-reads.md](../usage/align-reads.md) |
 | `<a> and <b> would both write their mate-2 reads to '<file>'` | `--unmapped` or `--ambiguous` with two `-1`/`-2` pairs whose read-2 files have the same file name (`reject_output_name_collision` in `aligner/config.rs`) | Rename one read-2 file, or run each pair with its own `--output_dir` |
 | `bwa-mem3 index file <file> is missing` | A bwa-mem3 index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |

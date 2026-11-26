@@ -5,20 +5,20 @@ description: Run Illumina 5-Base data with bwa-mem3, which pairs Bismark keeps, 
 tags: [alignment, 5-base, bwa-mem3, umi]
 page_id: align-5-base-reads
 subject_status: current
-updated: 2026-11-25
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aux_out.rs
     commit: db29eb9
@@ -52,7 +52,7 @@ sources:
 
 ## The engine
 
-bwa-mem3 is the only 5-Base engine (`resolve_aligner` in `aligner/config.rs`); `--bwamem3` is optional. `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap`, `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2`, `--path_to_rammap` and the `--mm2_*` options stop the run before anything is read or written, also with `--five_base_consensus_from_bam` and `--five_base_bisulfite_bam` (`reject_non_bwamem3_flags`, called from `expand_taps`, which `run` in `aligner/mod.rs` and `resolve` call first). `--bwamem3` needs `--illumina_5base` or `--taps`. The 5-Base option errors and `-p 1` come before the index and binary checks (`resolve`). `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. Threads come from `-p`, else `--multicore` above 1, else all detected cores (2 if none are detected) (`five_base_threads` in `aligner/mod.rs`).
+bwa-mem3 is the only 5-Base engine (`resolve_aligner` in `aligner/config.rs`); `--bwamem3` is optional. `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap`, `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2`, `--path_to_rammap` and the `--mm2_*` options stop the run before anything is read or written, also with `--five_base_consensus_from_bam` and `--five_base_bisulfite_bam` (`reject_non_bwamem3_flags`, called from `expand_taps`, which `run` in `aligner/mod.rs` and `resolve` call right after `reject_slam`). `--bwamem3` needs `--illumina_5base` or `--taps`. The 5-Base option errors and `-p 1` come before the index and binary checks (`resolve`). `--path_to_bwamem3 <folder>` names the folder that holds `bwa-mem3`. Threads come from `-p`, else `--multicore` above 1, else all detected cores (2 if none are detected) (`five_base_threads` in `aligner/mod.rs`).
 
 The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 does not, and gives this as the reason bwa-mem3 is the only engine: see [troubleshooting/data-quality.md](../troubleshooting/data-quality.md).
 

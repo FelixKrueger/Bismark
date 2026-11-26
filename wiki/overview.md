@@ -5,14 +5,14 @@ description: What Bismark does, who uses it, the usual workflow order, when to u
 tags: [methylation, bisulfite, overview]
 page_id: overview
 subject_status: current
-updated: 2026-11-25
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/cli.rs
     commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/cli.rs
     commit: aaea96c
@@ -21,7 +21,7 @@ sources:
     commit: aaea96c
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/pair_class.rs
     commit: aaea96c
@@ -40,6 +40,9 @@ sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/dedup/pipeline.rs
     commit: aaea96c
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/genome_prep/cli.rs
+    commit: a96f6db
 ---
 
 # Bismark overview
@@ -73,12 +76,13 @@ The developer gave this order. Most workflows run these steps:
 - Reads are FastQ (default) or FastA; `--pbat` accepts only FastQ and no `--gzip` (`resolve_library` in `aligner/config.rs`).
 - minimap2 and rammap align single-end reads only; paired-end input, including a positional paired uBAM, unaligned CRAM or BINSEQ file, is rejected (`reject_unsupported_paired_aligner` in `aligner/config.rs`).
 - Read files with Windows (CRLF) line endings are rejected before alignment (`reject_crlf_inputs` in `aligner/mod.rs`).
-- `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--slam`, `--ambiguous` or `--ambig_bam` (`resolve` in `aligner/config.rs`). It aligns with bwa-mem3 only: `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap`, their `--path_to_*` and the `--mm2_*` options stop the run (`reject_non_bwamem3_flags` in `aligner/config.rs`), and `--bwamem3` is optional. bwa-mem3 needs version 0.16.0 or newer and a bwa-mem3 index: `<genome>/Bwamem3_Index/` from `bismark prepare --bwamem3`, or `--five_base_index` (`resolve_aligner` and `resolve_five_base_index` in `aligner/config.rs`, `detect_aligner` in `aligner/aligner.rs`).
+- `--illumina_5base` needs paired-end, directional, FastQ input, and does not combine with `--combined_index`, `--ambiguous` or `--ambig_bam` (`resolve` in `aligner/config.rs`). It aligns with bwa-mem3 only: `--bowtie2`, `--hisat2`, `--minimap2`, `--rammap`, their `--path_to_*` and the `--mm2_*` options stop the run (`reject_non_bwamem3_flags` in `aligner/config.rs`), and `--bwamem3` is optional. bwa-mem3 needs version 0.16.0 or newer and a bwa-mem3 index: `<genome>/Bwamem3_Index/` from `bismark prepare --bwamem3`, or `--five_base_index` (`resolve_aligner` and `resolve_five_base_index` in `aligner/config.rs`, `detect_aligner` in `aligner/aligner.rs`).
 - 5-Base runs use bwa-mem3's methylation-aware mode (`bwamem3_options` in `aligner/options.rs`). The developer measured that minimap2 and Bowtie 2 under-cover and under-call CpG-dense, heavily methylated regions, and that bwa-mem3 covers them, and gives this as the reason it is the only 5-Base engine; see [troubleshooting/data-quality.md](troubleshooting/data-quality.md).
 - 5-Base runs keep only pairs on one contig, on opposite strands, pointing at each other (`five_base_pair_geometry` in `aligner/mod.rs`).
 - `--taps` runs TAPS libraries on the 5-Base path with bwa-mem3 only, under the same paired-end, directional, FastQ limits, and rejects the 5-Base duplex, consensus, deconvolution, UMI, `--five_base_min_mapq` and `--five_base_emit_multiplicity` options (`expand_taps` in `aligner/config.rs`).
 - The aligner writes BAM only; `--sam` and `--cram` are rejected (`resolve_output` in `aligner/config.rs`).
-- `--slam`, `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
+- `--non_bs_mm`, `--rg_tag`/`--rg_id`/`--rg_sample` and `--sam-no-hd` stop the run (`reject_unsupported_output_flags` in `aligner/config.rs`).
+- There is no SLAM-seq mode. The hidden `--slam` flag stops `bismark align` before any other check (`reject_slam` in `aligner/config.rs`), and stops `bismark prepare` before the genome folder is read (`Cli::validate` in `genome_prep/cli.rs`).
 - `--nucleotide_coverage` runs bam2nuc on each final BAM once alignment has finished (`run_nucleotide_coverage` in `aligner/mod.rs`); `--old_flag` stops the run (`reject_old_flag` in `aligner/config.rs`).
 - `bismark dedup` and paired-end `bismark extract` reject coordinate-sorted BAMs (`@HD SO:coordinate`); single-end extraction accepts them (`check_not_coordinate_sorted` in `io/read.rs`).
 - `bismark dedup --umi_mismatches` above 0 needs `--barcode`/`--umi` or `--bclconvert` (`Cli::validate` in `dedup/cli.rs`).

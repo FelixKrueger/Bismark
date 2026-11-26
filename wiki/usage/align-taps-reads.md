@@ -5,20 +5,20 @@ description: Run TAPS data with --taps, what it turns on, the options it accepts
 tags: [alignment, taps, bwa-mem3, 5-base]
 page_id: align-taps-reads
 subject_status: current
-updated: 2026-11-25
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/cli.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
     commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: d48c830
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
     commit: 855b812
@@ -47,7 +47,7 @@ sources:
 
 ## What `--taps` checks first
 
-`expand_taps` stops the run, before anything starts, for each of these:
+The hidden `--slam` flag stops the run before these checks (`reject_slam` in `aligner/config.rs`). `expand_taps` stops the run, before anything starts, for each of these:
 
 | Combination | Message names |
 |---|---|
@@ -58,7 +58,7 @@ sources:
 | `--five_base_min_mapq` above 0 | it filters only the duplex/consensus pass, which `--taps` does not run |
 | `--five_base_umi_len` above 0 | the 5-Base inline-UMI read structure is not validated for TAPS |
 
-After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply, with messages that name `--taps` and TAPS: paired-end only, directional only, FastQ only, and no `--slam`, `--combined_index`, `--ambiguous` or `--ambig_bam`. The bwa-mem3 tuning options that `--illumina_5base` rejects are rejected with "is not supported with --taps" (`reject_bwamem3_tuning` in `aligner/options.rs`).
+After the expansion, the 5-Base checks in `resolve` (`aligner/config.rs`) apply, with messages that name `--taps` and TAPS: paired-end only, directional only, FastQ only, and no `--combined_index`, `--ambiguous` or `--ambig_bam`. The bwa-mem3 tuning options that `--illumina_5base` rejects are rejected with "is not supported with --taps" (`reject_bwamem3_tuning` in `aligner/options.rs`).
 
 ## Options it accepts
 

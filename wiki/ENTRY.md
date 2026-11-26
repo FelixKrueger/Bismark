@@ -17,6 +17,7 @@ Bismark aligns bisulfite, EM-seq, Illumina 5-Base and TAPS sequencing reads to a
 | CRLF, Windows line endings, read names stop matching | `troubleshooting/errors.md` |
 | two inputs with the same name, "would both write", output overwritten, `--basename` with several inputs | `troubleshooting/errors.md`, `usage/align-reads.md`, `usage/extract-methylation-calls.md` |
 | an aligner option, a rejected flag | `reference/aligner-cli.md` |
+| SLAM-seq, `--slam` | `troubleshooting/errors.md`, `overview.md` |
 | XM, XR, XG, FLAG, BAM tags, methylation call string | `reference/bam-output.md` |
 | mapping efficiency, alignment report, deduplication report | `reference/run-reports.md`, `troubleshooting/data-quality.md` |
 | duplicates, `deduplicate_bismark`, UMI, `--umi_mismatches`, UMI mismatches, RRBS | `usage/deduplicate-alignments.md` |
