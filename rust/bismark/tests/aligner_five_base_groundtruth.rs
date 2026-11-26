@@ -1,18 +1,17 @@
-//! #787 Illumina 5-Base SYNTHETIC GROUND-TRUTH gate, using the REAL minimap2.
+//! #787 Illumina 5-Base SYNTHETIC GROUND-TRUTH gates.
 //!
 //! A true "concordance vs DRAGEN" gate is impossible without DRAGEN (proprietary
 //! FPGA, no reference output) and without a public raw 5-Base dataset. This is the
 //! achievable, stronger substitute: we synthesize reads from a known reference with
-//! a KNOWN methylation pattern (5mC -> T at chosen CpGs), align them with the REAL
-//! `minimap2` to the UNCONVERTED genome via `--illumina_5base`, and assert the
-//! pipeline recovers the correct methylated (`Z`) vs unmethylated (`z`) CpG call at
-//! every aligned CpG. Validates the whole FROM-FASTQ chain on a real aligner (not
-//! the hermetic fake in `cli.rs`).
+//! a KNOWN methylation pattern (5mC -> T at chosen CpGs), align them to the UNCONVERTED
+//! genome via `--illumina_5base`, and assert the pipeline recovers the correct
+//! methylated (`Z`) vs unmethylated (`z`) CpG call at every aligned CpG.
 //!
-//! The check is PER GENOMIC POSITION (walks the BAM POS+CIGAR), so it is robust to
-//! minimap2 soft-clipping read ends (a clipped CpG is simply not checked) while
-//! still catching any wrong-polarity call. Gated on `minimap2` being on PATH; absent
-//! -> no-op (CI without minimap2 stays green).
+//! Each gate runs on the real bwa-mem3 (`_bwamem3`, only with `BISMARK_TEST_BWAMEM3=1`) and,
+//! where it tests the driver rather than the aligner, on a placement-table fake (`_hermetic`,
+//! every job). The check is PER GENOMIC POSITION (walks the BAM POS+CIGAR), so it is robust
+//! to soft-clipped read ends (a clipped CpG is simply not checked) while still catching any
+//! wrong-polarity call.
 
 use std::collections::HashMap;
 use std::fs;
@@ -21,7 +20,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use tempfile::TempDir;
+
+#[path = "common/fake_bwamem3.rs"]
+mod fake_bwamem3;
+use fake_bwamem3::Placement;
 
 /// Decompress the first FASTA contig of a `.fa.gz` into uppercase bytes.
 fn load_first_contig_gz(path: &Path) -> Vec<u8> {
@@ -52,27 +56,77 @@ fn bin() -> Command {
     Command::cargo_bin("bismark").unwrap()
 }
 
-fn have_minimap2() -> bool {
-    let present = StdCommand::new("minimap2")
-        .arg("--version")
+/// Runs only with `BISMARK_TEST_BWAMEM3=1`; then a missing `bwa-mem3` fails the test.
+fn have_bwamem3() -> bool {
+    if std::env::var_os("BISMARK_TEST_BWAMEM3").is_none() {
+        return false;
+    }
+    let ok = StdCommand::new("bwa-mem3")
+        .arg("version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    // Fail loud in CI: these real-aligner gates must not pass vacuously (#787 review).
-    // Locally (no $CI) a missing minimap2 just skips the gate.
-    if !present && std::env::var_os("CI").is_some() {
-        panic!(
-            "minimap2 not found but $CI is set: the 5-Base ground-truth gates require \
-             minimap2 on PATH in CI (install it in the workflow) — refusing to no-op."
-        );
+    assert!(
+        ok,
+        "BISMARK_TEST_BWAMEM3 is set but `bwa-mem3 version` does not run"
+    );
+    true
+}
+
+/// The 5-Base engine a control gate runs on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Engine {
+    BwaMem3,
+    /// bwa-mem3 with no engine flag: the index is found in `<genome>/Bwamem3_Index/`.
+    BwaMem3Default,
+}
+
+impl Engine {
+    fn available(self) -> bool {
+        match self {
+            Engine::BwaMem3 | Engine::BwaMem3Default => have_bwamem3(),
+        }
     }
-    present
+
+    /// The engine's output-name token (`<stem>_bismark_<token>_pe.bam`).
+    fn token(self) -> &'static str {
+        match self {
+            Engine::BwaMem3 | Engine::BwaMem3Default => "bwamem3",
+        }
+    }
+
+    /// The engine flag, if any; for bwa-mem3 also builds `<genome>/Bwamem3_Index/` from `genome.fa`.
+    fn prepare(self, genome: &Path) -> Option<&'static str> {
+        match self {
+            Engine::BwaMem3 | Engine::BwaMem3Default => {
+                let dir = genome.join("Bwamem3_Index");
+                fs::create_dir_all(&dir).unwrap();
+                fs::copy(genome.join("genome.fa"), dir.join("genome.fa")).unwrap();
+                let st = StdCommand::new("bwa-mem3")
+                    .args(["index", "--meth"])
+                    .arg(dir.join("genome.fa"))
+                    .output()
+                    .unwrap();
+                assert!(
+                    st.status.success(),
+                    "bwa-mem3 index --meth failed: {}",
+                    String::from_utf8_lossy(&st.stderr)
+                );
+                (self == Engine::BwaMem3).then_some("--bwamem3")
+            }
+        }
+    }
 }
 
 /// Deterministic pseudo-random ACGT reference (fixed LCG → stable CpG layout).
 fn gen_reference(n: usize) -> Vec<u8> {
+    gen_sequence(n, 0x2545_F491_4F6C_DD1D)
+}
+
+/// Deterministic pseudo-random ACGT sequence from `seed`.
+fn gen_sequence(n: usize, seed: u64) -> Vec<u8> {
     let bases = [b'A', b'C', b'G', b'T'];
-    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut x: u64 = seed;
     (0..n)
         .map(|_| {
             x = x
@@ -103,7 +157,7 @@ fn write_genome(dir: &Path, reference: &[u8]) {
 /// Forward 5-Base reads (exact reference slices) with a KNOWN methylation pattern:
 /// every even-indexed CpG inside a read's non-anchored core is "methylated" (its
 /// cytosine written `T`, simulating 5mC->T); all other CpGs keep `C`. The 12 bp
-/// flanks are kept exact so minimap2 anchors and does not soft-clip the core.
+/// flanks are kept exact so the aligner anchors and does not soft-clip the core.
 ///
 /// Returns the FASTQ bytes and, per read qname, the ground truth:
 /// `genomic CpG position (0-based) -> expected methylated?`.
@@ -141,6 +195,219 @@ fn make_methylated_reads(reference: &[u8], read_len: usize, n_reads: usize) -> (
     (fastq, truth)
 }
 
+/// The engine a synthetic ground-truth gate runs on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gt {
+    /// Real bwa-mem3, with filler pairs on a second contig so it can estimate the insert size
+    /// and flag the fixture's few pairs as proper.
+    BwaMem3,
+    /// The placement-table fake: the fixture's own truth, no filler.
+    Hermetic,
+}
+
+impl Gt {
+    fn available(self) -> bool {
+        match self {
+            Gt::BwaMem3 => have_bwamem3(),
+            Gt::Hermetic => cfg!(unix),
+        }
+    }
+}
+
+/// Filler pairs on the `filler` contig of a real-bwa-mem3 run; each is its own single-strand
+/// family.
+const N_FILLER: usize = 40;
+
+/// Append [`N_FILLER`] unmethylated OT pairs tiled over `filler` (fragments 120–198 bp, 60 bp
+/// mates), each with its own dual UMI.
+fn filler_pairs(filler: &[u8], fq1: &mut Vec<u8>, fq2: &mut Vec<u8>) {
+    let umi = |v: usize| -> String {
+        (0..8)
+            .map(|i| ['A', 'C', 'G', 'T'][(v >> (2 * i)) & 3])
+            .collect()
+    };
+    let rl = 60usize;
+    for i in 0..N_FILLER {
+        let (start, frag) = (i * 240, 120 + i * 2);
+        let name = format!("fill{i}:{}+{}", umi(2 * i + 1000), umi(2 * i + 1001));
+        emit_fastq(fq1, &name, &filler[start..start + rl]);
+        emit_fastq(
+            fq2,
+            &name,
+            &revcomp(&filler[start + frag - rl..start + frag]),
+        );
+    }
+}
+
+fn emit_fastq(fq: &mut Vec<u8>, name: &str, bytes: &[u8]) {
+    fq.extend_from_slice(format!("@{name}\n").as_bytes());
+    fq.extend_from_slice(bytes);
+    fq.extend_from_slice(b"\n+\n");
+    fq.extend_from_slice(&vec![b'I'; bytes.len()]);
+    fq.push(b'\n');
+}
+
+/// The outputs of one synthetic run (reads `r1.fq`/`r2.fq`).
+struct GtRun {
+    _genome: TempDir,
+    _bins: TempDir,
+    out: TempDir,
+    stderr: String,
+}
+
+impl GtRun {
+    /// `<out>/r1_bismark_bwamem3_<suffix>`.
+    fn file(&self, suffix: &str) -> PathBuf {
+        self.out.path().join(format!("r1_bismark_bwamem3_{suffix}"))
+    }
+}
+
+/// Align `fq1`/`fq2` against `reference` (`chr1`) on `engine` with `--illumina_5base` plus
+/// `extra`. `placements` is where each pair of the fixture maps on `chr1`.
+fn run_gt(
+    engine: Gt,
+    reference: &[u8],
+    mut fq1: Vec<u8>,
+    mut fq2: Vec<u8>,
+    placements: &[Placement],
+    extra: &[&str],
+) -> GtRun {
+    let (genome, bins, out, temp) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let mut cmd = bin();
+    match engine {
+        Gt::BwaMem3 => {
+            let filler = gen_sequence(10_000, 0x5EED_F111_F111_0001);
+            filler_pairs(&filler, &mut fq1, &mut fq2);
+            write_genome_multi(genome.path(), &[("chr1", reference), ("filler", &filler)]);
+            Engine::BwaMem3Default.prepare(genome.path());
+        }
+        Gt::Hermetic => {
+            write_genome(genome.path(), reference);
+            let prefix = bins.path().join("idx.fa");
+            fake_bwamem3::install(
+                bins.path(),
+                &prefix,
+                &[("chr1", reference.len())],
+                placements,
+            );
+            cmd.arg("--five_base_index")
+                .arg(&prefix)
+                .arg("--path_to_bwamem3")
+                .arg(bins.path());
+        }
+    }
+    let (read1, read2) = (genome.path().join("r1.fq"), genome.path().join("r2.fq"));
+    fs::write(&read1, &fq1).unwrap();
+    fs::write(&read2, &fq2).unwrap();
+    let done = cmd
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--illumina_5base")
+        .args(extra)
+        .arg("-1")
+        .arg(&read1)
+        .arg("-2")
+        .arg(&read2)
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(out.path())
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&done.get_output().stderr).into_owned();
+    GtRun {
+        _genome: genome,
+        _bins: bins,
+        out,
+        stderr,
+    }
+}
+
+fn placed(qname: &str, r1: usize, r2: usize, r1_reverse: bool) -> Placement {
+    Placement {
+        qname: qname.to_string(),
+        contig: "chr1".into(),
+        r1,
+        r2,
+        r1_reverse,
+    }
+}
+
+/// The CpG target inside the R1∩R2 overlap of a 140 bp fragment starting at `frag_start`.
+fn pick_overlap_cpg(cpgs: &[usize], frag_start: usize) -> usize {
+    *cpgs
+        .iter()
+        .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
+        .expect("a CpG in the mate overlap")
+}
+
+/// One molecule as two FR pairs. TOP strand (+ref orientation) carries `T` at `t` (5mC or a
+/// variant); the BOTTOM strand keeps `C` there unless `variant` (a homozygous C>T is on both
+/// strands). OT pair: R1 forward-left + R2 reverse-right; OB pair: R1 reverse-right + R2
+/// forward-left. `both_strands = false` emits the OT pair alone (a simplex family).
+#[allow(clippy::too_many_arguments)]
+fn molecule(
+    reference: &[u8],
+    (fq1, fq2, placements): (&mut Vec<u8>, &mut Vec<u8>, &mut Vec<Placement>),
+    s: usize,
+    t: usize,
+    variant: bool,
+    (ua, ub): (&str, &str),
+    both_strands: bool,
+) {
+    let (frag, rl) = (140usize, 100usize);
+    let mut top = reference[s..s + frag].to_vec();
+    top[t - s] = b'T';
+    let bot = if variant {
+        top.clone()
+    } else {
+        reference[s..s + frag].to_vec()
+    };
+    let top_name = format!("top_{s}:{ua}+{ub}");
+    emit_fastq(fq1, &top_name, &top[0..rl]);
+    emit_fastq(fq2, &top_name, &revcomp(&top[frag - rl..frag]));
+    placements.push(placed(&top_name, s, s + frag - rl, false));
+    if both_strands {
+        let bot_name = format!("bot_{s}:{ub}+{ua}");
+        emit_fastq(fq1, &bot_name, &revcomp(&bot[frag - rl..frag]));
+        emit_fastq(fq2, &bot_name, &bot[0..rl]);
+        placements.push(placed(&bot_name, s + frag - rl, s, true));
+    }
+}
+
+/// Whether a BAM record is on `chr1` (the fixture), not the real-aligner filler.
+fn on_chr1(inner: &noodles_sam::alignment::RecordBuf) -> bool {
+    inner.reference_sequence_id() == Some(0)
+}
+
+/// Read index of genomic position `gpos` in a record, walking POS + CIGAR.
+fn read_index_at(inner: &noodles_sam::alignment::RecordBuf, gpos: usize) -> Option<usize> {
+    let ref_start = usize::from(inner.alignment_start()?) - 1;
+    let (mut ri, mut rp) = (0usize, ref_start);
+    for op in inner.cigar().as_ref().iter() {
+        use noodles_sam::alignment::record::cigar::op::Kind::*;
+        let len = op.len();
+        match op.kind() {
+            Match | SequenceMatch | SequenceMismatch => {
+                if gpos >= rp && gpos < rp + len {
+                    return Some(ri + gpos - rp);
+                }
+                ri += len;
+                rp += len;
+            }
+            Insertion | SoftClip => ri += len,
+            Deletion | Skip => rp += len,
+            _ => {}
+        }
+    }
+    None
+}
+
 /// THE PAIRED-END DUPLEX GATE: each molecule is sequenced as TWO read-pairs (top-strand
 /// pair + bottom-strand pair) with the dual UMI swapped in the read NAME, both mapping to
 /// the SAME fragment. Run PE with `--five_base_umi_qname --five_base_duplex`. The two
@@ -149,105 +416,50 @@ fn make_methylated_reads(reference: &[u8], read_len: usize, n_reads: usize) -> (
 /// molecule (methylation) from the homozygous C>T molecule (variant) — proving the PE
 /// strand handling (molecule strand for pairing and reconciliation).
 #[test]
-fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (PE duplex gate)");
+fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule_bwamem3() {
+    duplex_gate(Gt::BwaMem3);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule_hermetic() {
+    duplex_gate(Gt::Hermetic);
+}
+
+fn duplex_gate(engine: Gt) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (PE duplex gate)");
         return;
     }
     let reference = gen_reference(900);
-    let genome = TempDir::new().unwrap();
-    write_genome(genome.path(), &reference);
     let cpgs = cpg_positions(&reference);
-    let (frag, rl) = (140usize, 100usize); // R1 covers [0,100), R2 covers [40,140)
-    // Target CpG inside the R1∩R2 overlap [40,100) of each fragment.
-    let pick = |frag_start: usize| -> usize {
-        *cpgs
-            .iter()
-            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
-            .expect("a CpG in the mate overlap")
-    };
-    let sm = 100usize; // 5mC molecule fragment start
-    let sv = 500usize; // variant molecule fragment start
-    let tm = pick(sm);
-    let tv = pick(sv);
-
-    let mut fq1 = Vec::new();
-    let mut fq2 = Vec::new();
-    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
-        fq.extend_from_slice(format!("@{name}\n").as_bytes());
-        fq.extend_from_slice(bytes);
-        fq.extend_from_slice(b"\n+\n");
-        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
-        fq.push(b'\n');
-    };
-    // Build one molecule's two pairs: T at the + target (5mC or variant on the + strand);
-    // `variant` also makes the - strand carry it.
-    let mut molecule = |s: usize, t: usize, variant: bool, umi_a: &str, umi_b: &str| {
-        // Top strand in + orientation, read by the top pair: the target set to T.
-        let mut g_plus = reference[s..s + frag].to_vec();
-        g_plus[t - s] = b'T';
-        // The - strand in + orientation, as the bottom pair's reads carry it: intact at the
-        // target for 5mC, T (from the + variant) for a variant.
-        let minus_src = if variant {
-            g_plus.clone()
-        } else {
-            reference[s..s + frag].to_vec()
-        };
-        let g_minus_rc = revcomp(&minus_src);
-        // Both mates of a pair carry their molecule strand's bases.
-        let g_plus_rc = revcomp(&g_plus);
-        // Top-strand pair (molecule OT): R1 forward-left, R2 reverse-right. UMI A+B.
-        emit(
-            &mut fq1,
-            &format!("top_{s}:{umi_a}+{umi_b}"),
-            &g_plus[0..rl],
+    let (sm, sv) = (100usize, 500usize); // 5mC / variant molecule fragment starts
+    let (mut fq1, mut fq2, mut placements) = (Vec::new(), Vec::new(), Vec::new());
+    for (s, variant, umis) in [
+        (sm, false, ("AACCGGTT", "TTGGCCAA")),
+        (sv, true, ("GGGGAAAA", "CCCCTTTT")),
+    ] {
+        let t = pick_overlap_cpg(&cpgs, s);
+        molecule(
+            &reference,
+            (&mut fq1, &mut fq2, &mut placements),
+            s,
+            t,
+            variant,
+            umis,
+            true,
         );
-        emit(
-            &mut fq2,
-            &format!("top_{s}:{umi_a}+{umi_b}"),
-            &g_plus_rc[0..rl],
-        );
-        // Bottom-strand pair (molecule OB): R1 reverse-right, R2 forward-left. UMI B+A.
-        emit(
-            &mut fq1,
-            &format!("bot_{s}:{umi_b}+{umi_a}"),
-            &g_minus_rc[0..rl],
-        );
-        emit(
-            &mut fq2,
-            &format!("bot_{s}:{umi_b}+{umi_a}"),
-            &minus_src[0..rl],
-        );
-    };
-    molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
-    molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
+    }
+    let run = run_gt(
+        engine,
+        &reference,
+        fq1,
+        fq2,
+        &placements,
+        &["--five_base_umi_qname", "--five_base_duplex"],
+    );
 
-    let read1 = genome.path().join("r1.fq");
-    let read2 = genome.path().join("r2.fq");
-    fs::write(&read1, &fq1).unwrap();
-    fs::write(&read2, &fq2).unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--five_base_umi_qname")
-        .arg("--five_base_duplex")
-        .arg("-1")
-        .arg(&read1)
-        .arg("-2")
-        .arg(&read2)
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .assert()
-        .success();
-
-    let report =
-        fs::read_to_string(outdir.path().join("r1_bismark_mm2_pe.5base_duplex.txt")).unwrap();
+    let report = fs::read_to_string(run.file("pe.5base_duplex.txt")).unwrap();
     let families: Vec<Vec<String>> = report
         .lines()
         .filter(|l| !l.starts_with('#') && !l.is_empty())
@@ -258,9 +470,10 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
         .iter()
         .filter(|f| f.len() >= 8 && f[4] == "2+2")
         .collect();
-    assert!(
-        paired.len() >= 2,
-        "PE: expected >=2 duplex-paired families (2+2 members each)\nreport:\n{report}"
+    assert_eq!(
+        paired.len(),
+        2,
+        "PE: expected 2 duplex-paired families (2+2 members each)\nreport:\n{report}"
     );
     let variant_sites: u32 = paired.iter().map(|f| f[5].parse::<u32>().unwrap()).sum();
     let methyl_sites: u32 = paired.iter().map(|f| f[6].parse::<u32>().unwrap()).sum();
@@ -297,90 +510,60 @@ fn five_base_pe_duplex_groundtruth_pairs_two_pairs_per_molecule() {
 /// run with `--five_base_consensus`. The PE collapse must emit ONE consensus read per
 /// duplex family into `<out>_pe.5base_consensus.bam`, with the 5mC CpG called `Z` and the
 /// homozygous C>T CpG masked to `.` (the asymmetric reconciliation over all four reads).
+///
+/// FAITHFUL duplex fixture (molecule-strand, not coverage-strand): at a `+` CpG only the TOP
+/// strand carries that cytosine's methylation, so every OT read shows `T` while every OB read
+/// shows `C` (confirmed on real Illumina data); a homozygous C>T variant is on both strands.
 #[test]
-fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (PE consensus gate)");
+fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant_bwamem3() {
+    consensus_gate(Gt::BwaMem3);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant_hermetic() {
+    consensus_gate(Gt::Hermetic);
+}
+
+fn consensus_gate(engine: Gt) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (PE consensus gate)");
         return;
     }
     let reference = gen_reference(900);
-    let genome = TempDir::new().unwrap();
-    write_genome(genome.path(), &reference);
     let cpgs = cpg_positions(&reference);
-    let (frag, rl) = (140usize, 100usize);
-    let pick = |frag_start: usize| -> usize {
-        *cpgs
-            .iter()
-            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
-            .expect("a CpG in the mate overlap")
-    };
     let (sm, sv) = (100usize, 500usize);
-    let (tm, tv) = (pick(sm), pick(sv));
+    let (tm, tv) = (pick_overlap_cpg(&cpgs, sm), pick_overlap_cpg(&cpgs, sv));
+    let (mut fq1, mut fq2, mut placements) = (Vec::new(), Vec::new(), Vec::new());
+    molecule(
+        &reference,
+        (&mut fq1, &mut fq2, &mut placements),
+        sm,
+        tm,
+        false,
+        ("AACCGGTT", "TTGGCCAA"),
+        true,
+    );
+    molecule(
+        &reference,
+        (&mut fq1, &mut fq2, &mut placements),
+        sv,
+        tv,
+        true,
+        ("GGGGAAAA", "CCCCTTTT"),
+        true,
+    );
+    let run = run_gt(
+        engine,
+        &reference,
+        fq1,
+        fq2,
+        &placements,
+        &["--five_base_umi_qname", "--five_base_consensus"],
+    );
 
-    let mut fq1 = Vec::new();
-    let mut fq2 = Vec::new();
-    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
-        fq.extend_from_slice(format!("@{name}\n").as_bytes());
-        fq.extend_from_slice(bytes);
-        fq.extend_from_slice(b"\n+\n");
-        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
-        fq.push(b'\n');
-    };
-    // FAITHFUL duplex fixture (molecule-strand, not coverage-strand). A real 5-Base duplex
-    // is two complementary strands of ONE molecule. At a `+` CpG, only the TOP strand carries
-    // that cytosine's methylation (the bottom strand has G there), so EVERY read of the OT
-    // molecule shows `T` at `t` while EVERY read of the OB molecule shows the unconverted `C`
-    // — confirmed on real Illumina data (OB forward reads are 0.8% T at `+` CpGs vs 49% for
-    // OT). A homozygous C>T variant, by contrast, is present on BOTH strands, so the OB reads
-    // also show `T`. The consensus must therefore key own/opposite on MOLECULE strand.
-    let mut molecule = |s: usize, t: usize, variant: bool, ua: &str, ub: &str| {
-        // TOP strand in +ref orientation: 5mC (or variant) → T at t.
-        let mut top = reference[s..s + frag].to_vec();
-        top[t - s] = b'T';
-        // BOTTOM strand in +ref orientation: unconverted C at t, UNLESS a homozygous variant.
-        let bot = if variant {
-            top.clone()
-        } else {
-            reference[s..s + frag].to_vec()
-        };
-        // Proper FR pairs. OT molecule: R1 fwd (left) + R2 rev (right), both TOP strand.
-        // OB molecule: R1 rev (right) + R2 fwd (left), both BOTTOM strand.
-        let (ot_r1, ot_r2) = (top[0..rl].to_vec(), revcomp(&top[frag - rl..frag]));
-        let (ob_r1, ob_r2) = (revcomp(&bot[frag - rl..frag]), bot[0..rl].to_vec());
-        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), &ot_r1);
-        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), &ot_r2);
-        emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), &ob_r1);
-        emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), &ob_r2);
-    };
-    molecule(sm, tm, false, "AACCGGTT", "TTGGCCAA");
-    molecule(sv, tv, true, "GGGGAAAA", "CCCCTTTT");
-
-    let read1 = genome.path().join("r1.fq");
-    let read2 = genome.path().join("r2.fq");
-    fs::write(&read1, &fq1).unwrap();
-    fs::write(&read2, &fq2).unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--five_base_umi_qname")
-        .arg("--five_base_consensus")
-        .arg("-1")
-        .arg(&read1)
-        .arg("-2")
-        .arg(&read2)
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .assert()
-        .success();
-
-    let bam = outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam");
-    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let mut reader =
+        bismark::io::BamReader::from_path(&run.file("pe.5base_consensus.bam")).unwrap();
     let (mut n, mut z_at_tm, mut dot_at_tv) = (0usize, false, false);
     // The `-`-strand cytosine of the same CpG dinucleotide sits at tm+1 (a genomic G). It is
     // scored ONLY by the reverse consensus record (GA call); forward-only emission left it
@@ -389,42 +572,22 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
     for rec in reader.records() {
         let rec = rec.unwrap();
         let inner = rec.inner();
+        if !on_chr1(inner) {
+            continue;
+        }
         n += 1;
         let xm = bismark::io::tags::xm(inner.data()).unwrap();
-        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
-        let read_at = |gpos: usize| -> Option<usize> {
-            let (mut ri, mut rp) = (0usize, ref_start);
-            for op in inner.cigar().as_ref().iter() {
-                use noodles_sam::alignment::record::cigar::op::Kind::*;
-                let len = op.len();
-                match op.kind() {
-                    Match | SequenceMatch | SequenceMismatch => {
-                        for _ in 0..len {
-                            if rp == gpos {
-                                return Some(ri);
-                            }
-                            ri += 1;
-                            rp += 1;
-                        }
-                    }
-                    Insertion | SoftClip => ri += len,
-                    Deletion | Skip => rp += len,
-                    _ => {}
-                }
-            }
-            None
-        };
-        if let Some(ri) = read_at(tm)
+        if let Some(ri) = read_index_at(inner, tm)
             && xm[ri] == b'Z'
         {
             z_at_tm = true;
         }
-        if let Some(ri) = read_at(tm + 1)
+        if let Some(ri) = read_index_at(inner, tm + 1)
             && (xm[ri] == b'Z' || xm[ri] == b'z')
         {
-            minus_called = true; // `-`-strand CpG now scored by the reverse record
+            minus_called = true;
         }
-        if let Some(ri) = read_at(tv) {
+        if let Some(ri) = read_index_at(inner, tv) {
             if xm[ri] == b'.' {
                 dot_at_tv = true;
             }
@@ -434,7 +597,7 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
             );
         }
     }
-    // Two records per duplex family now (forward `+` calls + reverse `-` calls) × 2 molecules.
+    // Two records per duplex family (forward `+` calls + reverse `-` calls) × 2 molecules.
     assert_eq!(
         n, 4,
         "PE: forward+reverse consensus record per duplex family"
@@ -451,84 +614,57 @@ fn five_base_pe_consensus_groundtruth_collapses_and_masks_variant() {
 /// space, e.g. `@LH00757:...:ANCGTTG+NGGTGTA 1:N:0:GTAACTGAAG+TCNCGACTCC`. The aligner
 /// truncates the SAM QNAME at the first whitespace, so the 5-Base lockstep must derive
 /// its read identifier the same way (whitespace-truncated) regardless of `--icpc`;
-/// otherwise every read desyncs ("expected ..._1:N:0:..., minimap2 emitted ..."). This
-/// gate feeds Illumina-style spaced headers through the real-minimap2 5-Base PE path and
-/// asserts it runs and still recovers the methylation calls (no lockstep desync from
-/// the spaced header).
+/// otherwise every read desyncs. This gate feeds Illumina-style spaced headers through the
+/// 5-Base PE path and asserts it runs and still recovers the methylation calls.
 #[test]
-fn five_base_groundtruth_illumina_spaced_header_no_desync() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (spaced-header regression)");
+fn five_base_groundtruth_illumina_spaced_header_no_desync_bwamem3() {
+    spaced_header_gate(Gt::BwaMem3);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_groundtruth_illumina_spaced_header_no_desync_hermetic() {
+    spaced_header_gate(Gt::Hermetic);
+}
+
+fn spaced_header_gate(engine: Gt) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (spaced-header regression)");
         return;
     }
     let reference = gen_reference(900);
-    let genome = TempDir::new().unwrap();
-    write_genome(genome.path(), &reference);
-    let (plain, truth) = make_methylated_reads(&reference, 120, 5);
-    // Rewrite each `@<name>` header line in the plain FASTQ to add the Illumina
-    // dual-index comment, producing R1 (` 1:N:0:...`) and R2 (` 2:N:0:...`) files.
-    // R2 carries the reverse-complement of the R1 sequence (FR orientation).
+    let (read_len, n_reads) = (120usize, 5usize);
+    let (plain, truth) = make_methylated_reads(&reference, read_len, n_reads);
+    // Rewrite each `@<name>` header line to add the Illumina dual-index comment, producing R1
+    // (` 1:N:0:...`) and R2 (` 2:N:0:...`). R2 is the reverse complement of R1 (FR, same span).
     let lines: Vec<&[u8]> = plain.split_inclusive(|&b| b == b'\n').collect();
-    let n_reads = lines.len() / 4;
-    let mut fq1 = Vec::new();
-    let mut fq2 = Vec::new();
-    for r in 0..n_reads {
+    let (mut fq1, mut fq2, mut placements) = (Vec::new(), Vec::new(), Vec::new());
+    for r in 0..lines.len() / 4 {
         let base = r * 4;
-        // Header: strip the trailing newline and append the comment.
-        let hdr = &lines[base][..lines[base].len() - 1]; // drop '\n'
-        let seq_line = lines[base + 1];
-        let seq_bytes = &seq_line[..seq_line.len() - 1]; // drop '\n'
-
-        // R1: same sequence, comment suffix ` 1:N:0:GTAACTGAAG+TCNCGACTCC`.
-        fq1.extend_from_slice(hdr);
-        fq1.extend_from_slice(b" 1:N:0:GTAACTGAAG+TCNCGACTCC\n");
-        fq1.extend_from_slice(seq_bytes);
-        fq1.push(b'\n');
-        fq1.extend_from_slice(b"+\n");
-        fq1.extend_from_slice(&vec![b'I'; seq_bytes.len()]);
-        fq1.push(b'\n');
-
-        // R2: revcomp of the same sequence, comment suffix ` 2:N:0:GTAACTGAAG+TCNCGACTCC`.
-        let rc = revcomp(seq_bytes);
-        fq2.extend_from_slice(hdr);
-        fq2.extend_from_slice(b" 2:N:0:GTAACTGAAG+TCNCGACTCC\n");
-        fq2.extend_from_slice(&rc);
-        fq2.push(b'\n');
-        fq2.extend_from_slice(b"+\n");
-        fq2.extend_from_slice(&vec![b'I'; rc.len()]);
-        fq2.push(b'\n');
+        let name = String::from_utf8_lossy(&lines[base][1..lines[base].len() - 1]).into_owned();
+        let seq = &lines[base + 1][..lines[base + 1].len() - 1];
+        emit_fastq(
+            &mut fq1,
+            &format!("{name} 1:N:0:GTAACTGAAG+TCNCGACTCC"),
+            seq,
+        );
+        emit_fastq(
+            &mut fq2,
+            &format!("{name} 2:N:0:GTAACTGAAG+TCNCGACTCC"),
+            &revcomp(seq),
+        );
+        placements.push(placed(&name, r * read_len, r * read_len, false));
     }
-    let read1 = genome.path().join("r1.fq");
-    let read2 = genome.path().join("r2.fq");
-    fs::write(&read1, &fq1).unwrap();
-    fs::write(&read2, &fq2).unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
+    let run = run_gt(engine, &reference, fq1, fq2, &placements, &[]);
 
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("-1")
-        .arg(&read1)
-        .arg("-2")
-        .arg(&read2)
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .assert()
-        .success();
-
-    let bam = outdir.path().join("r1_bismark_mm2_pe.bam");
-    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let mut reader = bismark::io::BamReader::from_path(&run.file("pe.bam")).unwrap();
     let (mut n_r1, mut checked_meth) = (0usize, 0usize);
     for rec in reader.records() {
         let rec = rec.unwrap();
         let inner = rec.inner();
         let flag = u16::from(inner.flags());
-        // Only check R1 records for methylation (R2 XM is in revcomp orientation).
-        if flag & 0x80 != 0 {
+        // Only R1 records (R2 XM is in revcomp orientation), on the fixture's contig.
+        if flag & 0x80 != 0 || !on_chr1(inner) {
             continue;
         }
         n_r1 += 1;
@@ -539,27 +675,8 @@ fn five_base_groundtruth_illumina_spaced_header_no_desync() {
             continue;
         };
         let xm = bismark::io::tags::xm(inner.data()).unwrap();
-        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
-        let (mut ri, mut rp) = (0usize, ref_start);
-        let mut read_at = HashMap::<usize, usize>::new();
-        for op in inner.cigar().as_ref().iter() {
-            use noodles_sam::alignment::record::cigar::op::Kind::*;
-            let len = op.len();
-            match op.kind() {
-                Match | SequenceMatch | SequenceMismatch => {
-                    for _ in 0..len {
-                        read_at.insert(rp, ri);
-                        ri += 1;
-                        rp += 1;
-                    }
-                }
-                Insertion | SoftClip => ri += len,
-                Deletion | Skip => rp += len,
-                _ => {}
-            }
-        }
         for &(cpg_pos, methylated) in expect {
-            if let Some(&ri) = read_at.get(&cpg_pos)
+            if let Some(ri) = read_index_at(inner, cpg_pos)
                 && methylated
                 && xm[ri] == b'Z'
             {
@@ -591,28 +708,24 @@ fn revcomp(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// THE PE GATE: real minimap2 in PAIRED mode. Read pairs are an FR fragment of the
+/// THE PE GATE: real bwa-mem3 in PAIRED mode. Read pairs are an FR fragment of the
 /// reference (R1 = forward 5' end with injected 5mC->T methylation; R2 = revcomp of
 /// the 3' end). After `--illumina_5base` PE alignment, every pair yields two records
 /// (R1 FLAG 0x40 forward, R2 FLAG 0x80 reverse) and the R1 CpG calls match ground
-/// truth at every aligned position (the OT/index-0 inverted call, via real minimap2 PE).
+/// truth at every aligned position (the OT/index-0 inverted call).
 #[test]
-fn five_base_pe_groundtruth_real_minimap2() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (PE ground-truth gate)");
+fn five_base_pe_groundtruth_real_aligner_bwamem3() {
+    if !have_bwamem3() {
+        eprintln!("skipping: bwa-mem3 gates off (PE ground-truth gate)");
         return;
     }
     let reference = gen_reference(900);
-    let genome = TempDir::new().unwrap();
-    write_genome(genome.path(), &reference);
-
     let (frag, rl, anchor) = (180usize, 90usize, 10usize);
     let cpgs = cpg_positions(&reference);
-    let mut fq1 = Vec::new();
-    let mut fq2 = Vec::new();
+    let (mut fq1, mut fq2) = (Vec::new(), Vec::new());
     let mut truth: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
-    let n_pairs = reference.len() / frag;
-    for p in 0..n_pairs {
+    // The driver needs 2 genome bases past each mate, so no fragment ends at the contig end.
+    for p in 0..(reference.len() - 2) / frag {
         let start = p * frag;
         let qname = format!("pair{p}");
         // R1: forward 5' end, methylation injected.
@@ -628,48 +741,24 @@ fn five_base_pe_groundtruth_real_minimap2() {
             }
         }
         truth.insert(qname.clone(), here);
+        emit_fastq(&mut fq1, &qname, &r1);
         // R2: reverse-complement of the fragment's 3' end (kept as reference).
-        let r2 = revcomp(&reference[start + frag - rl..start + frag]);
-
-        fq1.extend_from_slice(format!("@{qname}\n").as_bytes());
-        fq1.extend_from_slice(&r1);
-        fq1.extend_from_slice(b"\n+\n");
-        fq1.extend_from_slice(&vec![b'I'; rl]);
-        fq1.push(b'\n');
-        fq2.extend_from_slice(format!("@{qname}\n").as_bytes());
-        fq2.extend_from_slice(&r2);
-        fq2.extend_from_slice(b"\n+\n");
-        fq2.extend_from_slice(&vec![b'I'; rl]);
-        fq2.push(b'\n');
+        emit_fastq(
+            &mut fq2,
+            &qname,
+            &revcomp(&reference[start + frag - rl..start + frag]),
+        );
     }
-    let read1 = genome.path().join("reads_1.fq");
-    let read2 = genome.path().join("reads_2.fq");
-    fs::write(&read1, &fq1).unwrap();
-    fs::write(&read2, &fq2).unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
+    let run = run_gt(Gt::BwaMem3, &reference, fq1, fq2, &[], &[]);
 
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("-1")
-        .arg(&read1)
-        .arg("-2")
-        .arg(&read2)
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .assert()
-        .success();
-
-    let bam = outdir.path().join("reads_1_bismark_mm2_pe.bam");
-    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let mut reader = bismark::io::BamReader::from_path(&run.file("pe.bam")).unwrap();
     let (mut r1_records, mut r2_records, mut checked, mut checked_meth) = (0usize, 0usize, 0, 0);
     for rec in reader.records() {
         let rec = rec.unwrap();
         let inner = rec.inner();
+        if !on_chr1(inner) {
+            continue;
+        }
         let flag = u16::from(inner.flags());
         if flag & 0x80 != 0 {
             r2_records += 1;
@@ -682,27 +771,8 @@ fn five_base_pe_groundtruth_real_minimap2() {
             continue;
         };
         let xm = bismark::io::tags::xm(inner.data()).unwrap();
-        let ref_start = usize::from(inner.alignment_start().unwrap()) - 1;
-        let mut read_at = HashMap::<usize, usize>::new();
-        let (mut ri, mut rp) = (0usize, ref_start);
-        for op in inner.cigar().as_ref().iter() {
-            let len = op.len();
-            use noodles_sam::alignment::record::cigar::op::Kind::*;
-            match op.kind() {
-                Match | SequenceMatch | SequenceMismatch => {
-                    for _ in 0..len {
-                        read_at.insert(rp, ri);
-                        ri += 1;
-                        rp += 1;
-                    }
-                }
-                Insertion | SoftClip => ri += len,
-                Deletion | Skip => rp += len,
-                _ => {}
-            }
-        }
         for &(cpg_pos, methylated) in expect {
-            if let Some(&ri) = read_at.get(&cpg_pos) {
+            if let Some(ri) = read_index_at(inner, cpg_pos) {
                 let call = xm[ri];
                 if methylated {
                     assert_eq!(call, b'Z', "{qname}: methylated CpG at {cpg_pos} must be Z");
@@ -717,10 +787,7 @@ fn five_base_pe_groundtruth_real_minimap2() {
             }
         }
     }
-    assert!(
-        r1_records >= 1 && r2_records >= 1,
-        "PE should emit both mates"
-    );
+    assert_eq!(r1_records, truth.len(), "every fixture pair aligned");
     assert_eq!(r1_records, r2_records, "one R1 per R2");
     assert!(
         checked >= 3,
@@ -728,7 +795,7 @@ fn five_base_pe_groundtruth_real_minimap2() {
     );
     assert!(
         checked_meth >= 1,
-        "should confirm at least one methylated R1 CpG through real minimap2 PE"
+        "should confirm at least one methylated R1 CpG through real bwa-mem3 PE"
     );
 }
 
@@ -822,9 +889,19 @@ fn pct_meth(counts: Option<&(u64, u64)>) -> (f64, u64) {
 /// lambda and ~100% CpG 5mC from CpG-methylated pUC19 (the kit's spike-in truth).
 /// Uses PE duplex emission (same as the consensus gate) to exercise the PE path.
 #[test]
-fn five_base_controls_core_recovers_lambda_and_puc19() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (control gate)");
+fn five_base_controls_core_recovers_lambda_and_puc19_bwamem3() {
+    controls_core(Engine::BwaMem3);
+}
+
+/// The documented default command: `--illumina_5base` with no engine flag and no index flag.
+#[test]
+fn five_base_controls_core_recovers_lambda_and_puc19_default_bwamem3() {
+    controls_core(Engine::BwaMem3Default);
+}
+
+fn controls_core(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -845,12 +922,14 @@ fn five_base_controls_core_recovers_lambda_and_puc19() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     // Core path: no --five_base_consensus / --five_base_duplex.
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .args(engine_flag)
         .arg("-1")
         .arg(&r1)
         .arg("-2")
@@ -860,12 +939,17 @@ fn five_base_controls_core_recovers_lambda_and_puc19() {
         .arg("--output_dir")
         .arg(outdir.path())
         .assert()
-        .success();
+        .success()
+        .stderr(predicate::str::contains(
+            "aligned with bwa-mem3 to the UNCONVERTED",
+        ))
+        .stderr(predicate::str::contains("default engine").not());
 
     // Bucket by qname prefix (`lam`/`puc`) = the control of origin.
-    let counts = count_cpg_keyed(&outdir.path().join("r1_bismark_mm2_pe.bam"), |q| {
-        q.split('_').next().unwrap_or("").to_string()
-    });
+    let bam = outdir
+        .path()
+        .join(format!("r1_bismark_{}_pe.bam", engine.token()));
+    let counts = count_cpg_keyed(&bam, |q| q.split('_').next().unwrap_or("").to_string());
     let (lam_pct, lam_n) = pct_meth(counts.get("lam"));
     let (puc_pct, puc_n) = pct_meth(counts.get("puc"));
     assert!(
@@ -936,9 +1020,13 @@ fn emit_pe_control_duplex(
 /// state — ~0% 5mC for unmethylated lambda, ~100% for CpG-methylated pUC19, on BOTH strands.
 /// This is the exact property validated against DRAGEN, but here against KNOWN truth.
 #[test]
-fn five_base_controls_consensus_preserves_methylation_state() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (consensus control gate)");
+fn five_base_controls_consensus_preserves_methylation_state_bwamem3() {
+    controls_consensus(Engine::BwaMem3);
+}
+
+fn controls_consensus(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (consensus control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -957,11 +1045,13 @@ fn five_base_controls_consensus_preserves_methylation_state() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .args(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_consensus")
         .arg("-1")
@@ -977,7 +1067,10 @@ fn five_base_controls_consensus_preserves_methylation_state() {
 
     // Consensus qname = `dpx:{chrom}:{start}-{end}:{umi}` → bucket by chrom.
     let counts = count_cpg_keyed(
-        &outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam"),
+        &outdir.path().join(format!(
+            "r1_bismark_{}_pe.5base_consensus.bam",
+            engine.token()
+        )),
         |q| q.split(':').nth(1).unwrap_or("").to_string(),
     );
     let (lam_pct, lam_n) = pct_meth(counts.get("lambda"));
@@ -1000,9 +1093,13 @@ fn five_base_controls_consensus_preserves_methylation_state() {
 /// the controls (they carry 5mC, not C>T SNVs), and recover pUC19 as ~100% methylation /
 /// lambda as ~0%. Proves the deconvolution's specificity (no false variants) on known truth.
 #[test]
-fn five_base_controls_deconvolution_no_false_variants() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (deconvolution control gate)");
+fn five_base_controls_deconvolution_no_false_variants_bwamem3() {
+    controls_deconvolution(Engine::BwaMem3);
+}
+
+fn controls_deconvolution(engine: Engine) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (deconvolution control gate)");
         return;
     }
     let Some((lambda, puc19)) = load_controls_or_skip() else {
@@ -1021,11 +1118,13 @@ fn five_base_controls_deconvolution_no_false_variants() {
     fs::write(&r2, &fq2).unwrap();
     let temp = TempDir::new().unwrap();
     let outdir = TempDir::new().unwrap();
+    let engine_flag = engine.prepare(genome.path());
 
     bin()
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
+        .args(engine_flag)
         .arg("--five_base_umi_qname")
         .arg("--five_base_deconvolution")
         .arg("-1")
@@ -1101,114 +1200,93 @@ fn five_base_controls_deconvolution_no_false_variants() {
 /// BAMs. Also cross-checks the emitted simplex count against the duplex pass's own
 /// `singletons` figure, which is the independent count of the same families.
 #[test]
-fn five_base_in_run_both_mode_splits_duplex_and_simplex() {
-    if !have_minimap2() {
-        eprintln!("skipping: minimap2 not on PATH (in-run simplex gate)");
+fn five_base_in_run_both_mode_splits_duplex_and_simplex_bwamem3() {
+    both_mode_gate(Gt::BwaMem3);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_in_run_both_mode_splits_duplex_and_simplex_hermetic() {
+    both_mode_gate(Gt::Hermetic);
+}
+
+fn both_mode_gate(engine: Gt) {
+    if !engine.available() {
+        eprintln!("skipping: {engine:?} not available (in-run simplex gate)");
         return;
     }
     let reference = gen_reference(900);
-    let genome = TempDir::new().unwrap();
-    write_genome(genome.path(), &reference);
     let cpgs = cpg_positions(&reference);
-    let (frag, rl) = (140usize, 100usize);
-    let pick = |frag_start: usize| -> usize {
-        *cpgs
-            .iter()
-            .find(|&&c| c >= frag_start + 45 && c < frag_start + 95)
-            .expect("a CpG in the mate overlap")
-    };
     let (s_dup, s_spx) = (100usize, 500usize);
-    let (t_dup, t_spx) = (pick(s_dup), pick(s_spx));
-
-    let mut fq1 = Vec::new();
-    let mut fq2 = Vec::new();
-    let emit = |fq: &mut Vec<u8>, name: &str, bytes: &[u8]| {
-        fq.extend_from_slice(format!("@{name}\n").as_bytes());
-        fq.extend_from_slice(bytes);
-        fq.extend_from_slice(b"\n+\n");
-        fq.extend_from_slice(&vec![b'I'; bytes.len()]);
-        fq.push(b'\n');
-    };
+    let (mut fq1, mut fq2, mut placements) = (Vec::new(), Vec::new(), Vec::new());
     // `both_strands = false` emits the TOP strand alone: one molecule strand, so PASS 1
     // sees ot>0 && ob==0 and the family is simplex.
-    let mut molecule = |s: usize, t: usize, ua: &str, ub: &str, both_strands: bool| {
-        let mut top = reference[s..s + frag].to_vec();
-        top[t - s] = b'T'; // 5mC -> T
-        let (ot_r1, ot_r2) = (top[0..rl].to_vec(), revcomp(&top[frag - rl..frag]));
-        emit(&mut fq1, &format!("top_{s}:{ua}+{ub}"), &ot_r1);
-        emit(&mut fq2, &format!("top_{s}:{ua}+{ub}"), &ot_r2);
-        if both_strands {
-            let bot = reference[s..s + frag].to_vec(); // unconverted C at t
-            let (ob_r1, ob_r2) = (revcomp(&bot[frag - rl..frag]), bot[0..rl].to_vec());
-            emit(&mut fq1, &format!("bot_{s}:{ub}+{ua}"), &ob_r1);
-            emit(&mut fq2, &format!("bot_{s}:{ub}+{ua}"), &ob_r2);
-        }
-    };
-    molecule(s_dup, t_dup, "AACCGGTT", "TTGGCCAA", true);
-    molecule(s_spx, t_spx, "GGGGAAAA", "CCCCTTTT", false);
-
-    let read1 = genome.path().join("r1.fq");
-    let read2 = genome.path().join("r2.fq");
-    fs::write(&read1, &fq1).unwrap();
-    fs::write(&read2, &fq2).unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    let out = bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--five_base_umi_qname")
-        .arg("--five_base_consensus")
-        .arg("--five_base_emit_multiplicity")
-        .arg("both")
-        .arg("-1")
-        .arg(&read1)
-        .arg("-2")
-        .arg(&read2)
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    for (s, umis, both) in [
+        (s_dup, ("AACCGGTT", "TTGGCCAA"), true),
+        (s_spx, ("GGGGAAAA", "CCCCTTTT"), false),
+    ] {
+        let t = pick_overlap_cpg(&cpgs, s);
+        molecule(
+            &reference,
+            (&mut fq1, &mut fq2, &mut placements),
+            s,
+            t,
+            false,
+            umis,
+            both,
+        );
+    }
+    let run = run_gt(
+        engine,
+        &reference,
+        fq1,
+        fq2,
+        &placements,
+        &[
+            "--five_base_umi_qname",
+            "--five_base_consensus",
+            "--five_base_emit_multiplicity",
+            "both",
+        ],
+    );
 
     // The in-run suffix derivation is what this test exists to pin.
-    let dpx_bam = outdir.path().join("r1_bismark_mm2_pe.5base_consensus.bam");
-    let spx_bam = outdir.path().join("r1_bismark_mm2_pe.5base_simplex.bam");
+    let dpx_bam = run.file("pe.5base_consensus.bam");
+    let spx_bam = run.file("pe.5base_simplex.bam");
     assert!(dpx_bam.exists(), "in-run `both` must write the duplex BAM");
     assert!(
         spx_bam.exists(),
         "in-run `both` must write _pe.5base_simplex.bam beside it; dir held: {:?}",
-        fs::read_dir(outdir.path())
+        fs::read_dir(run.out.path())
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.file_name()))
             .collect::<Vec<_>>()
     );
 
-    let count = |p: &Path| -> usize {
+    // (records on chr1, all records)
+    let count = |p: &Path| -> (usize, usize) {
         let mut r = bismark::io::BamReader::from_path(p).unwrap();
-        let mut n = 0usize;
+        let (mut fixture, mut all) = (0usize, 0usize);
         for rec in r.records() {
-            rec.unwrap(); // a malformed record must fail the test, not be counted
-            n += 1;
+            let rec = rec.unwrap(); // a malformed record must fail the test, not be counted
+            all += 1;
+            fixture += usize::from(on_chr1(rec.inner()));
         }
-        n
+        (fixture, all)
     };
     assert_eq!(
         count(&dpx_bam),
-        2,
+        (2, 2),
         "the duplex molecule emits a forward AND a reverse consensus record"
     );
+    let (spx_fixture, spx_all) = count(&spx_bam);
     assert_eq!(
-        count(&spx_bam),
-        1,
+        spx_fixture, 1,
         "the simplex molecule emits exactly one record, on its own strand"
     );
 
     // The duplex pass counts the same single-strand families independently.
-    let txt = fs::read_to_string(outdir.path().join("r1_bismark_mm2_pe.5base_duplex.txt")).unwrap();
+    let txt = fs::read_to_string(run.file("pe.5base_duplex.txt")).unwrap();
     let singletons: u64 = txt
         .lines()
         .find(|l| l.starts_with("# families"))
@@ -1217,12 +1295,17 @@ fn five_base_in_run_both_mode_splits_duplex_and_simplex() {
         .parse()
         .expect("singleton count");
     assert_eq!(
-        singletons, 1,
-        "the duplex pass must see exactly one single-strand family; report:\n{txt}"
+        singletons, spx_all as u64,
+        "the duplex pass must count one single-strand family per simplex record; report:\n{txt}"
     );
+    if engine == Gt::Hermetic {
+        assert_eq!(singletons, 1, "report:\n{txt}");
+    }
     assert!(
-        stderr.contains(&format!("of {singletons} single-strand family(ies)")),
+        run.stderr
+            .contains(&format!("of {singletons} single-strand family(ies)")),
         "the simplex report's family total must agree with the duplex pass's singletons \
-         ({singletons}); got:\n{stderr}"
+         ({singletons}); got:\n{}",
+        run.stderr
     );
 }

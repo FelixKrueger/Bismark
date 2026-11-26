@@ -127,12 +127,8 @@ pub fn build_aligner_options(
     Ok((options, gp))
 }
 
-fn default_linear_score(cli: &Cli, aligner: Aligner) -> (&'static str, f64) {
-    if cli.illumina_5base && matches!(aligner, Aligner::Bowtie2 | Aligner::Hisat2) {
-        ("L,0,-0.6", -0.6)
-    } else {
-        ("L,0,-0.2", -0.2)
-    }
+fn default_linear_score() -> (&'static str, f64) {
+    ("L,0,-0.2", -0.2)
 }
 
 fn common_aligner_options(
@@ -189,7 +185,7 @@ fn common_aligner_options(
     // 7. --local / --score-min (Perl 7896-7948). Branches:
     //  - Bowtie 2 --local: push `--local` + G-form `--score-min G,<i>,<s>` (default G,20,8).
     //  - HISAT2 --local OR end-to-end (any aligner): L-form `--score-min L,<i>,<s>` (default
-    //    L,0,-0.2; 5-Base Bowtie 2/HISAT2 L,0,-0.6), NO `--local`. HISAT2-local uses the
+    //    L,0,-0.2), NO `--local`. HISAT2-local uses the
     //    SAME L-form as end-to-end (Perl 7912/7947) — its local-ness is the dropped
     //    `--no-softclip` in the HISAT2 tail, NOT this option and NOT the MAPQ ladder (it
     //    takes the end-to-end one, #1080). Its MAPQ scMin is linear, matching this L-form
@@ -232,7 +228,7 @@ fn common_aligner_options(
                 }
                 s.clone()
             }
-            None => default_linear_score(cli, aligner).0.to_string(),
+            None => default_linear_score().0.to_string(),
         };
         opts.push(format!("--score-min {score_min}"));
     }
@@ -282,96 +278,59 @@ pub(crate) fn bwamem3_options(chem: FiveBaseChemistry) -> String {
     )
 }
 
-/// Bowtie 2 / minimap2 tuning that has no bwa-mem3 equivalent.
+/// Bowtie 2 and HISAT2 options that have no bwa-mem3 equivalent.
 fn reject_bwamem3_tuning(cli: &Cli) -> Result<()> {
-    let set: [(bool, &str); 15] = [
-        (cli.local, "--local"),
-        (cli.score_min.is_some(), "--score_min"),
-        (cli.seedmms.is_some(), "-N"),
-        (cli.seedlen.is_some(), "-L"),
-        (cli.seed_extension_fails.is_some(), "-D"),
-        (cli.reseed_repetitive_seeds.is_some(), "-R"),
-        (cli.rdg.is_some(), "--rdg"),
-        (cli.rfg.is_some(), "--rfg"),
-        (cli.minins.is_some(), "--minins"),
-        (cli.maxins.is_some(), "--maxins"),
-        (cli.dovetail, "--dovetail"),
-        (cli.no_dovetail, "--no_dovetail"),
-        (cli.nosplice, "--no-spliced-alignment"),
-        (cli.known_splices.is_some(), "--known-splicesite-infile"),
+    const SCORING: &str = "bwa-mem3 uses its own scoring and infers insert sizes itself";
+    const SPLICING: &str = "bwa-mem3 does not do spliced alignment";
+    let set: [(bool, &str, &str); 15] = [
+        (cli.local, "--local", SCORING),
+        (cli.score_min.is_some(), "--score_min", SCORING),
+        (cli.seedmms.is_some(), "-N", SCORING),
+        (cli.seedlen.is_some(), "-L", SCORING),
+        (cli.seed_extension_fails.is_some(), "-D", SCORING),
+        (cli.reseed_repetitive_seeds.is_some(), "-R", SCORING),
+        (cli.rdg.is_some(), "--rdg", SCORING),
+        (cli.rfg.is_some(), "--rfg", SCORING),
+        (cli.minins.is_some(), "--minins", SCORING),
+        (cli.maxins.is_some(), "--maxins", SCORING),
+        (cli.dovetail, "--dovetail", SCORING),
+        (cli.no_dovetail, "--no_dovetail", SCORING),
+        (cli.nosplice, "--no-spliced-alignment", SPLICING),
+        (
+            cli.known_splices.is_some(),
+            "--known-splicesite-infile",
+            SPLICING,
+        ),
         (
             cli.most_valid_alignments.is_some(),
             "--most_valid_alignments",
+            SCORING,
         ),
     ];
-    let mode = if cli.taps { "--taps" } else { "--bwamem3" };
-    match set.iter().find(|(on, _)| *on) {
-        Some((_, flag)) => Err(AlignerError::Validation(format!(
-            "{flag} is not supported with {mode}: bwa-mem3 uses its own scoring and infers \
-             insert sizes itself."
-        ))),
-        None => Ok(()),
-    }
+    let Some(&(_, flag, why)) = set.iter().find(|(on, _, _)| *on) else {
+        return Ok(());
+    };
+    Err(AlignerError::Validation(format!(
+        "{flag} is not supported with {}: {why}; drop it.",
+        FiveBaseChemistry::of(cli).flag()
+    )))
 }
 
-/// Resolve tuning options for paired-end alignment to the unconverted genome.
-pub(crate) fn build_five_base_aligner_options(
-    cli: &Cli,
-    aligner: Aligner,
-    format: ReadFormat,
-) -> Result<(String, GapPenalties)> {
-    if aligner == Aligner::BwaMem3 {
-        reject_bwamem3_tuning(cli)?;
-        if cli.bowtie_threads.is_some_and(|p| p < 2) {
-            return Err(AlignerError::Validation(
-                "Please select a value for -p of 2 or more!".into(),
-            ));
-        }
-        let gp = GapPenalties {
-            deletion_open: 5,
-            deletion_extend: 3,
-            insertion_open: 5,
-            insertion_extend: 3,
-        };
-        return Ok((bwamem3_options(FiveBaseChemistry::of(cli)), gp));
-    }
-    let (mut opts, gp) = common_aligner_options(cli, aligner, format)?;
+/// The bwa-mem3 options of a 5-Base or TAPS run, after rejecting tuning it has no use for.
+pub(crate) fn build_five_base_aligner_options(cli: &Cli) -> Result<(String, GapPenalties)> {
+    reject_bwamem3_tuning(cli)?;
     if cli.bowtie_threads.is_some_and(|p| p < 2) {
         return Err(AlignerError::Validation(
             "Please select a value for -p of 2 or more!".into(),
         ));
     }
-    if cli.nosplice && aligner != Aligner::Hisat2 {
-        return Err(AlignerError::Validation(
-            "The option --no-spliced-alignment can only be selected in HISAT2 mode!".into(),
-        ));
-    }
-    if cli.known_splices.is_some() {
-        return Err(AlignerError::Validation(
-            "--known-splicesite-infile is not supported with --illumina_5base: 5-Base alignment is unspliced.".into(),
-        ));
-    }
-    // Bowtie 2 defaults to an 800 bp insert cap.
-    let maxins = cli.maxins.or((aligner == Aligner::Bowtie2).then_some(800));
-    if let Some(i) = cli.minins {
-        // Bowtie 2 accepts -I > -X and reports every pair non-concordant.
-        if let Some(x) = maxins.filter(|&x| aligner == Aligner::Bowtie2 && i > x) {
-            return Err(AlignerError::Validation(format!(
-                "-I/--minins ({i}) is larger than the maximum insert size ({x}); raise -X/--maxins"
-            )));
-        }
-        opts.push(format!("--minins {i}"));
-    }
-    if let Some(x) = maxins {
-        opts.push(format!("--maxins {x}"));
-    }
-    if cli.quiet {
-        opts.push("--quiet".into());
-    }
-    if aligner == Aligner::Hisat2 {
-        opts.push("--no-spliced-alignment".into());
-    }
-    Ok((opts.join(" "), gp))
+    let gp = GapPenalties {
+        deletion_open: 5,
+        deletion_extend: 3,
+        insertion_open: 5,
+        insertion_extend: 3,
+    };
+    Ok((bwamem3_options(FiveBaseChemistry::of(cli)), gp))
 }
 
 /// Assemble the minimap2 `aligner_options` from a clean slate (Perl 8358-8413).
@@ -430,10 +389,6 @@ pub fn resolve_mm2_preset(cli: &Cli) -> Result<Mm2Preset> {
             ));
         }
         Ok(Mm2Preset::MapPb)
-    } else if cli.illumina_5base {
-        // #787: Illumina 5-Base is short-read Illumina data → the `sr` preset by
-        // default (no explicit `--mm2_*` given). An explicit preset above still wins.
-        Ok(Mm2Preset::Sr)
     } else {
         // Default OR explicit `--mm2_nanopore` → ONT (Perl 8404-8408).
         Ok(Mm2Preset::MapOnt)
@@ -534,11 +489,7 @@ pub fn score_min_params(cli: &Cli, aligner: Aligner) -> Result<(f64, f64, ScoreM
     let (prefix, default, form) = if cli.local && aligner == Aligner::Bowtie2 {
         ("G,", (20.0, 8.0), ScoreMinForm::Log)
     } else {
-        (
-            "L,",
-            (0.0, default_linear_score(cli, aligner).1),
-            ScoreMinForm::Linear,
-        )
+        ("L,", (0.0, default_linear_score().1), ScoreMinForm::Linear)
     };
     match &cli.score_min {
         None => Ok((default.0, default.1, form)),
@@ -609,234 +560,6 @@ mod tests {
         Cli::parse_from(v)
     }
 
-    #[test]
-    fn five_base_defaults_and_explicit_defaults() {
-        for (engine, flag) in [
-            (Aligner::Bowtie2, "--bowtie2"),
-            (Aligner::Hisat2, "--hisat2"),
-        ] {
-            let cli = cli_from(&["--illumina_5base", flag]);
-            let (opts, _) =
-                build_five_base_aligner_options(&cli, engine, ReadFormat::FastQ).unwrap();
-            assert_eq!(
-                opts,
-                if engine == Aligner::Bowtie2 {
-                    "-q --score-min L,0,-0.6 --maxins 800"
-                } else {
-                    "-q --score-min L,0,-0.6 --no-spliced-alignment"
-                }
-            );
-            assert_eq!(
-                score_min_params(&cli, engine).unwrap(),
-                (0.0, -0.6, ScoreMinForm::Linear)
-            );
-            let cli = cli_from(&["--illumina_5base", flag, "--score_min", "L,0,-0.2"]);
-            let (opts, _) =
-                build_five_base_aligner_options(&cli, engine, ReadFormat::FastQ).unwrap();
-            assert!(opts.contains("--score-min L,0,-0.2"));
-            assert_eq!(
-                score_min_params(&cli, engine).unwrap(),
-                (0.0, -0.2, ScoreMinForm::Linear)
-            );
-        }
-    }
-
-    fn five_base(engine: Aligner, args: &[&str]) -> Result<String> {
-        let flag = if engine == Aligner::Bowtie2 {
-            "--bowtie2"
-        } else {
-            "--hisat2"
-        };
-        let mut v = vec!["--illumina_5base", flag];
-        v.extend_from_slice(args);
-        build_five_base_aligner_options(&cli_from(&v), engine, ReadFormat::FastQ).map(|r| r.0)
-    }
-
-    #[test]
-    fn five_base_forwards_tuning_in_bisulfite_token_order() {
-        let tuning = [
-            "-N",
-            "1",
-            "-L",
-            "10",
-            "-D",
-            "20",
-            "-R",
-            "4",
-            "--rdg",
-            "6,2",
-            "--rfg",
-            "7,3",
-            "-I",
-            "10",
-            "-X",
-            "1000",
-            "--quiet",
-            "--phred64-quals",
-        ];
-        assert_eq!(
-            five_base(Aligner::Bowtie2, &tuning).unwrap(),
-            "-q --phred64 -N 1 -L 10 -D 20 -R 4 --score-min L,0,-0.6 --rdg 6,2 --rfg 7,3 \
-             --minins 10 --maxins 1000 --quiet"
-        );
-        assert_eq!(
-            five_base(Aligner::Hisat2, &tuning).unwrap(),
-            "-q --phred64 -N 1 -L 10 -D 20 -R 4 --score-min L,0,-0.6 --rdg 6,2 --rfg 7,3 \
-             --minins 10 --maxins 1000 --quiet --no-spliced-alignment"
-        );
-        assert_eq!(
-            five_base(Aligner::Bowtie2, &["-I", "10"]).unwrap(),
-            "-q --score-min L,0,-0.6 --minins 10 --maxins 800"
-        );
-        assert_eq!(
-            five_base(Aligner::Bowtie2, &["-X", "1000"]).unwrap(),
-            "-q --score-min L,0,-0.6 --maxins 1000"
-        );
-    }
-
-    #[test]
-    fn five_base_bowtie2_defaults_to_maxins_800() {
-        let bt2 = |args: &[&str]| five_base(Aligner::Bowtie2, args).unwrap();
-        for (args, expected) in [
-            (&[][..], "-q --score-min L,0,-0.6 --maxins 800"),
-            (&["-X", "500"][..], "-q --score-min L,0,-0.6 --maxins 500"),
-            (&["-X", "1200"][..], "-q --score-min L,0,-0.6 --maxins 1200"),
-            (
-                &["-I", "600"][..],
-                "-q --score-min L,0,-0.6 --minins 600 --maxins 800",
-            ),
-            (
-                &["-I", "800"][..],
-                "-q --score-min L,0,-0.6 --minins 800 --maxins 800",
-            ),
-            (
-                &["-I", "900", "-X", "1000"][..],
-                "-q --score-min L,0,-0.6 --minins 900 --maxins 1000",
-            ),
-            (
-                &["--no_dovetail"][..],
-                "-q --score-min L,0,-0.6 --maxins 800",
-            ),
-            (&["--dovetail"][..], "-q --score-min L,0,-0.6 --maxins 800"),
-            (
-                &["--dovetail", "--no_dovetail"][..],
-                "-q --score-min L,0,-0.6 --maxins 800",
-            ),
-            (&["--old_flag"][..], "-q --score-min L,0,-0.6 --maxins 800"),
-            (
-                &["--local"][..],
-                "-q --local --score-min G,20,8 --maxins 800",
-            ),
-            (
-                &["-X", "500", "--no_dovetail", "--quiet"][..],
-                "-q --score-min L,0,-0.6 --maxins 500 --quiet",
-            ),
-        ] {
-            assert_eq!(bt2(args), expected, "{args:?}");
-        }
-        for args in [&[][..], &["--dovetail"][..]] {
-            let opts = five_base(Aligner::Hisat2, args).unwrap();
-            assert_eq!(opts, "-q --score-min L,0,-0.6 --no-spliced-alignment");
-        }
-        // HISAT2 keeps the engine's own handling of -I.
-        assert_eq!(
-            five_base(Aligner::Hisat2, &["-I", "900"]).unwrap(),
-            "-q --score-min L,0,-0.6 --minins 900 --no-spliced-alignment"
-        );
-        let cli = cli_from(&["--illumina_5base"]);
-        let (opts, _) =
-            build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, true, None).unwrap();
-        assert_eq!(opts, "-a --MD --secondary=no -t 2 -x sr -K 250K");
-    }
-
-    #[test]
-    fn five_base_bowtie2_rejects_minins_above_the_insert_cap() {
-        for (args, i, x) in [
-            (&["-I", "900"][..], 900, 800),
-            (&["-I", "801"][..], 801, 800),
-            (&["-I", "900", "-X", "800"][..], 900, 800),
-            (&["-I", "600", "-X", "500"][..], 600, 500),
-        ] {
-            let err = five_base(Aligner::Bowtie2, args).unwrap_err().to_string();
-            assert!(
-                err.contains(&format!(
-                    "-I/--minins ({i}) is larger than the maximum insert size ({x}); raise \
-                     -X/--maxins"
-                )),
-                "{args:?}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn five_base_local_scoring_is_engine_specific() {
-        assert_eq!(
-            five_base(Aligner::Bowtie2, &["--local"]).unwrap(),
-            "-q --local --score-min G,20,8 --maxins 800"
-        );
-        assert_eq!(
-            five_base(Aligner::Bowtie2, &["--local", "--score_min", "G,15,7"]).unwrap(),
-            "-q --local --score-min G,15,7 --maxins 800"
-        );
-        assert!(five_base(Aligner::Bowtie2, &["--local", "--score_min", "L,0,-0.2"]).is_err());
-        assert_eq!(
-            five_base(Aligner::Hisat2, &["--local"]).unwrap(),
-            "-q --score-min L,0,-0.6 --no-spliced-alignment"
-        );
-    }
-
-    #[test]
-    fn five_base_omits_bisulfite_policy_and_runtime_threads() {
-        for engine in [Aligner::Bowtie2, Aligner::Hisat2] {
-            let opts = five_base(engine, &["-p", "4"]).unwrap();
-            for tok in opts.split_whitespace() {
-                assert!(
-                    ![
-                        "--ignore-quals",
-                        "--no-mixed",
-                        "--no-discordant",
-                        "--dovetail",
-                        "-p",
-                        "--reorder",
-                    ]
-                    .contains(&tok),
-                    "{engine:?}: {opts}"
-                );
-            }
-        }
-        let opts = five_base(Aligner::Hisat2, &["--no-spliced-alignment"]).unwrap();
-        assert_eq!(opts.matches("--no-spliced-alignment").count(), 1, "{opts}");
-    }
-
-    #[test]
-    fn five_base_tail_rejects_unsupported_requests() {
-        for engine in [Aligner::Bowtie2, Aligner::Hisat2] {
-            for p in ["0", "1"] {
-                let err = five_base(engine, &["-p", p]).unwrap_err().to_string();
-                assert!(err.contains("-p of 2 or more"), "{err}");
-            }
-            let err = five_base(engine, &["--known-splicesite-infile", "s.txt"])
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("5-Base alignment is unspliced"), "{err}");
-        }
-        let err = five_base(Aligner::Bowtie2, &["--no-spliced-alignment"])
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("only be selected in HISAT2 mode"), "{err}");
-    }
-
-    #[test]
-    fn five_base_minimap2_rejects_p_below_two() {
-        for p in ["0", "1"] {
-            let cli = cli_from(&["--illumina_5base", "-p", p]);
-            let err = build_aligner_options(&cli, Aligner::Minimap2, ReadFormat::FastQ, true, None)
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("-p of 2 or more"), "{err}");
-        }
-    }
-
     fn bwm3(args: &[&str]) -> Result<String> {
         let mut v = vec![
             "--illumina_5base",
@@ -845,8 +568,22 @@ mod tests {
             "/x/g.fa",
         ];
         v.extend_from_slice(args);
-        build_five_base_aligner_options(&cli_from(&v), Aligner::BwaMem3, ReadFormat::FastQ)
-            .map(|r| r.0)
+        build_five_base_aligner_options(&cli_from(&v)).map(|r| r.0)
+    }
+
+    /// minimap2's clean slate drops the Bowtie 2 effort options, so they die.
+    #[test]
+    fn minimap2_rejects_bowtie2_seed_effort_options() {
+        for (flag, aligner) in [("-D", Aligner::Minimap2), ("-R", Aligner::Rammap)] {
+            let cli = cli_from(&[flag, "5"]);
+            let e = build_aligner_options(&cli, aligner, ReadFormat::FastQ, false, None)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                e.contains(&format!("'{flag} <int>'")) && e.contains("seed-effort"),
+                "{e}"
+            );
+        }
     }
 
     #[test]
@@ -867,7 +604,7 @@ mod tests {
         let cli = crate::aligner::config::expand_taps(&cli_from(&v))
             .unwrap()
             .into_owned();
-        build_five_base_aligner_options(&cli, Aligner::BwaMem3, ReadFormat::FastQ).map(|r| r.0)
+        build_five_base_aligner_options(&cli).map(|r| r.0)
     }
 
     #[test]
@@ -899,6 +636,22 @@ mod tests {
                 "{args:?}: {e}"
             );
         }
+        for (args, flag) in [
+            (&["--no-spliced-alignment"][..], "--no-spliced-alignment"),
+            (
+                &["--known-splicesite-infile", "s.txt"],
+                "--known-splicesite-infile",
+            ),
+        ] {
+            assert_eq!(
+                taps_opts(args).unwrap_err().to_string(),
+                format!(
+                    "{flag} is not supported with --taps: bwa-mem3 does not do spliced alignment; \
+                     drop it."
+                ),
+                "{args:?}"
+            );
+        }
     }
 
     #[test]
@@ -921,12 +674,52 @@ mod tests {
             &["--most_valid_alignments", "2"],
         ] {
             let e = bwm3(args).unwrap_err().to_string();
-            assert!(e.contains("--bwamem3"), "{args:?}: {e}");
+            assert!(
+                e.contains("is not supported with --illumina_5base")
+                    && e.ends_with("drop it.")
+                    && !e.contains("--bowtie2")
+                    && !e.contains("--hisat2")
+                    && !e.contains("--minimap2"),
+                "{args:?}: {e}"
+            );
+            let splice = args[0].contains("splice");
+            assert_eq!(
+                e.contains("bwa-mem3 does not do spliced alignment;"),
+                splice,
+                "{args:?}: {e}"
+            );
+            assert_eq!(
+                e.contains("bwa-mem3 uses its own scoring and infers insert sizes itself;"),
+                !splice,
+                "{args:?}: {e}"
+            );
         }
         for p in ["0", "1"] {
             let e = bwm3(&["-p", p]).unwrap_err().to_string();
             assert!(e.contains("-p of 2 or more"), "{e}");
         }
+    }
+
+    #[test]
+    fn bwamem3_tuning_first_match_wins() {
+        assert_eq!(
+            bwm3(&["--local", "--no-spliced-alignment"])
+                .unwrap_err()
+                .to_string(),
+            "--local is not supported with --illumina_5base: bwa-mem3 uses its own scoring and \
+             infers insert sizes itself; drop it."
+        );
+        assert_eq!(
+            bwm3(&[
+                "--no-spliced-alignment",
+                "--known-splicesite-infile",
+                "s.txt"
+            ])
+            .unwrap_err()
+            .to_string(),
+            "--no-spliced-alignment is not supported with --illumina_5base: bwa-mem3 does not do \
+             spliced alignment; drop it."
+        );
     }
 
     /// Perl's `Getopt::Long` is case-insensitive by default, so `'n|seedmms=i'` /
@@ -1394,10 +1187,12 @@ mod tests {
             (&["--mm2_nanopore"], Mm2Preset::MapOnt),
             (&["--mm2_pacbio"], Mm2Preset::MapPb),
             (&["--mm2_short_reads"], Mm2Preset::Sr),
-            // #787: 5-Base defaults to short-read data.
-            (&["--illumina_5base"], Mm2Preset::Sr),
-            // An explicit preset still beats the 5-Base default.
-            (&["--illumina_5base", "--mm2_pacbio"], Mm2Preset::MapPb),
+            // 5-Base aligns with bwa-mem3, so it gets the inert default.
+            (&["--illumina_5base"], Mm2Preset::MapOnt),
+            (
+                &["--mm2_short_reads", "--mm2_maximum_length", "500"],
+                Mm2Preset::Sr,
+            ),
         ];
         for (flags, want) in cases {
             assert_eq!(

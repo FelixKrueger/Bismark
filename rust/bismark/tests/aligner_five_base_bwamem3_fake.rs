@@ -1,7 +1,8 @@
 //! Hermetic `--illumina_5base --bwamem3` tests against a fake `bwa-mem3` script.
 //!
 //! The fake answers `version` with `0.18.0` and otherwise prints a SAM header plus one
-//! R1 (FLAG 99) / R2 (FLAG 147) pair per FASTQ read pair, all mapped to `chr1:1`.
+//! R1 (FLAG 99) / R2 (FLAG 147) pair per FASTQ read pair, all mapped to `chr1:1`. Tests that
+//! need real placements use the table-driven fake in `common/fake_bwamem3.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,9 @@ use std::path::{Path, PathBuf};
 use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
+
+#[path = "common/fake_bwamem3.rs"]
+mod fake_bwamem3;
 
 fn bin() -> Command {
     Command::cargo_bin("bismark").unwrap()
@@ -997,4 +1001,1004 @@ fn taps_five_base_baseq_masks_low_quality_calls() {
         .assert()
         .success();
     assert_eq!(r1(&bam_records(&masked)), b".....z");
+}
+
+/// `--phred64-quals` reaches the 5-Base quality mask: `B` is Q2 in Phred+64 but Q33 in Phred+33.
+#[cfg(unix)]
+#[test]
+fn five_base_phred64_quals_decode_the_base_quality_mask() {
+    let r1 = |run: &FakeRun| {
+        bam_records(run)
+            .into_iter()
+            .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
+            .expect("R1")
+    };
+    let reads = "@p\nATGTAC\n+\nhBhhhh\n";
+    let phred64 = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&phred64)
+        .args(["--phred64-quals", "--five_base_baseq", "30"])
+        .assert()
+        .success();
+    let rec = r1(&phred64);
+    assert_eq!(rec.xm(), b".....z");
+    assert_eq!(
+        rec.inner().quality_scores().as_ref(),
+        [40, 2, 40, 40, 40, 40],
+        "BAM QUAL is the decoded Phred score"
+    );
+    let phred33 = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    bwamem3_cmd(&phred33)
+        .args(["--five_base_baseq", "30"])
+        .assert()
+        .success();
+    assert_eq!(r1(&phred33).xm(), b".Z...z");
+}
+
+// ---- #1282: --unmapped in 5-Base/TAPS mode -------------------------------------------------
+
+/// --unmapped fixture: distinct mates with Illumina comments; `bothun` has both mates unmapped,
+/// `edge` is a proper pair past the 8-bp contig.
+const UNMAPPED_R1: &str = "@good 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n\
+                           @unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n\
+                           @samestrand 1:N:0:ACGT\nATGTAA\n+\nIIIIIF\n\
+                           @outward 1:N:0:ACGT\nATGTAG\n+\nIIIIII\n\
+                           @edge 1:N:0:ACGT\nGTACGT\n+\nIIIIII\n\
+                           @bothun 1:N:0:ACGT\nTTTTTT\n+\nIIIIII\n";
+const UNMAPPED_R2: &str = "@good 2:N:0:ACGT\nGTACAT\n+\nHHHHHH\n\
+                           @unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n\
+                           @samestrand 2:N:0:ACGT\nTTACAT\n+\nHHHHHG\n\
+                           @outward 2:N:0:ACGT\nTTACAA\n+\nHHHHHH\n\
+                           @edge 2:N:0:ACGT\nACGTAC\n+\nHHHHHH\n\
+                           @bothun 2:N:0:ACGT\nGGGGGG\n+\nHHHHHH\n";
+
+/// The records `--unmapped` must write: every pair but `good` and `edge`, verbatim.
+fn expected_unmapped(fastq: &str) -> String {
+    fastq
+        .split_inclusive('\n')
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .filter(|rec| !rec[0].starts_with("@good") && !rec[0].starts_with("@edge"))
+        .map(|rec| rec.concat())
+        .collect()
+}
+
+#[cfg(unix)]
+fn unmapped_run() -> FakeRun {
+    let run = fake_run("", &[("chr1", 8)], SQ_OK);
+    fs::write(&run.r1, UNMAPPED_R1).unwrap();
+    fs::write(&run.r2, UNMAPPED_R2).unwrap();
+    custom_fake(
+        &run,
+        "printf 'good\\t99\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAC\\tIIIIII\\tAS:i:6\\n\
+         good\\t147\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tGTACAT\\tHHHHHH\\tAS:i:6\\n\
+         unmapped\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tACGTAC\\tFFFFFF\\n\
+         unmapped\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tTACGTA\\tEEEEEE\\n\
+         samestrand\\t67\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t6\\tATGTAA\\tIIIIIF\\tAS:i:6\\n\
+         samestrand\\t131\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t-6\\tTTACAT\\tHHHHHG\\tAS:i:6\\n\
+         outward\\t99\\tchr1\\t5\\t60\\t4M2S\\t=\\t1\\t0\\tATGTAG\\tIIIIII\\tAS:i:4\\n\
+         outward\\t147\\tchr1\\t1\\t60\\t4S2M\\t=\\t5\\t0\\tTTACAA\\tHHHHHH\\tAS:i:2\\n\
+         edge\\t99\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t6\\tGTACGT\\tIIIIII\\tAS:i:6\\n\
+         edge\\t147\\tchr1\\t3\\t60\\t6M\\t=\\t3\\t-6\\tACGTAC\\tHHHHHH\\tAS:i:6\\n\
+         bothun\\t77\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tTTTTTT\\tIIIIII\\n\
+         bothun\\t141\\t*\\t0\\t0\\t*\\t*\\t0\\t0\\tGGGGGG\\tHHHHHH\\n'",
+    );
+    run
+}
+
+/// The two unmapped files of a run, decompressed.
+fn unmapped_files(out: &Path) -> (String, String) {
+    let read = |suffix: &str| -> String {
+        let path = fs::read_dir(out)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.to_string_lossy().ends_with(suffix))
+            .unwrap_or_else(|| panic!("no *{suffix} in {}", out.display()));
+        let mut s = String::new();
+        std::io::Read::read_to_string(
+            &mut flate2::read::MultiGzDecoder::new(fs::File::open(path).unwrap()),
+            &mut s,
+        )
+        .unwrap();
+        s
+    };
+    (
+        read("_unmapped_reads_1.fq.gz"),
+        read("_unmapped_reads_2.fq.gz"),
+    )
+}
+
+fn report_value(out: &Path, label: &str) -> u64 {
+    let path = fs::read_dir(out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().ends_with("_PE_report.txt"))
+        .expect("PE report");
+    let rep = fs::read_to_string(path).unwrap();
+    rep.lines()
+        .find(|l| l.starts_with(label))
+        .and_then(|l| l.rsplit('\t').next())
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no '{label}' line:\n{rep}"))
+}
+
+fn qnames(out: &Path) -> Vec<String> {
+    let path = fs::read_dir(out)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.to_string_lossy().ends_with("_pe.bam"))
+        .expect("BAM");
+    let mut reader = bismark::io::BamReader::from_path(&path).unwrap();
+    reader
+        .records()
+        .map(|r| {
+            let r = r.unwrap();
+            String::from_utf8_lossy(r.inner().name().unwrap().as_ref()).into_owned()
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_writes_the_unaligned_pairs_verbatim() {
+    for mode in [
+        &["--illumina_5base", "--bwamem3"][..],
+        &["--illumina_5base"][..],
+        &["--taps"][..],
+    ] {
+        for extra in [&[][..], &["--icpc"][..], &["--five_base_umi_len", "1"][..]] {
+            if mode[0] == "--taps" && extra.first() == Some(&"--five_base_umi_len") {
+                continue; // TAPS rejects --five_base_umi_len.
+            }
+            let run = unmapped_run();
+            bin()
+                .args(mode)
+                .args(extra)
+                .arg("--unmapped")
+                .arg("--five_base_index")
+                .arg(&run.index)
+                .arg("--path_to_bwamem3")
+                .arg(run.bins.path())
+                .arg("--genome")
+                .arg(run.genome.path())
+                .arg("--output_dir")
+                .arg(run.out.path())
+                .arg("-1")
+                .arg(&run.r1)
+                .arg("-2")
+                .arg(&run.r2)
+                .assert()
+                .success();
+            let (u1, u2) = unmapped_files(run.out.path());
+            assert_eq!(u1, expected_unmapped(UNMAPPED_R1), "{mode:?} {extra:?}");
+            assert_eq!(u2, expected_unmapped(UNMAPPED_R2), "{mode:?} {extra:?}");
+            let none = report_value(
+                run.out.path(),
+                "Sequence pairs with no alignments under any condition:",
+            );
+            assert_eq!(none, 4, "{mode:?} {extra:?}");
+            assert_eq!(u1.lines().count() as u64, 4 * none);
+            assert_eq!(
+                report_value(
+                    run.out.path(),
+                    "Sequence pairs which were discarded because genomic sequence could not be extracted:"
+                ),
+                1
+            );
+            assert_eq!(
+                qnames(run.out.path()),
+                ["good", "good"],
+                "{mode:?} {extra:?}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_honours_upto() {
+    let run = unmapped_run();
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--upto", "2"])
+        .assert()
+        .success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    assert_eq!(u1, "@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n");
+    assert_eq!(u2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_honours_skip() {
+    let run = unmapped_run();
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--skip", "2"])
+        .assert()
+        .success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    let drop_unmapped = |s: String| {
+        s.replacen("@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n", "", 1)
+            .replacen("@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n", "", 1)
+    };
+    assert_eq!(u1, drop_unmapped(expected_unmapped(UNMAPPED_R1)));
+    assert_eq!(u2, drop_unmapped(expected_unmapped(UNMAPPED_R2)));
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_leaves_the_bam_unchanged() {
+    let (with, without) = (unmapped_run(), unmapped_run());
+    bwamem3_cmd(&with).arg("--unmapped").assert().success();
+    bwamem3_cmd(&without).assert().success();
+    let recs = |run: &FakeRun| -> Vec<String> {
+        bam_records(run)
+            .iter()
+            .map(|r| format!("{:?}", r.inner()))
+            .collect()
+    };
+    assert_eq!(recs(&with), recs(&without));
+    assert_eq!(recs(&with).len(), 2);
+}
+
+/// A proper pair dropped as a UMI duplicate is not an unaligned pair.
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_skips_umi_duplicates() {
+    let reads = "@a 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n@b 1:N:0:ACGT\nATGTAC\n+\nIIIIII\n";
+    let run = fake_run(reads, &[("chr1", 8)], SQ_OK);
+    custom_fake(&run, PAIRS_AWK);
+    bwamem3_cmd(&run)
+        .args(["--unmapped", "--five_base_umi_len", "1"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("removed 1 duplicate pair(s)"));
+    assert_eq!(
+        unmapped_files(run.out.path()),
+        (String::new(), String::new())
+    );
+    assert_eq!(qnames(run.out.path()), ["a", "a"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_unmapped_adds_a_missing_final_newline() {
+    let run = unmapped_run();
+    let r1 = "@unmapped/1\nACGTAC\n+unmapped/1\nFFFFFF\n";
+    fs::write(&run.r1, r1.trim_end()).unwrap();
+    fs::write(&run.r2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE").unwrap();
+    custom_fake(
+        &run,
+        "printf 'unmapped\\t73\\tchr1\\t1\\t60\\t6M\\t=\\t1\\t0\\tACGTAC\\tFFFFFF\\n\
+         unmapped\\t133\\tchr1\\t1\\t0\\t*\\t=\\t1\\t0\\tTACGTA\\tEEEEEE\\n'",
+    );
+    bwamem3_cmd(&run).arg("--unmapped").assert().success();
+    let (u1, u2) = unmapped_files(run.out.path());
+    assert_eq!(u1, r1);
+    assert_eq!(u2, "@unmapped/2\nTACGTA\n+unmapped/2\nEEEEEE\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_rejects_ambiguous_outputs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for flag in ["--ambiguous", "--ambig_bam"] {
+        bwamem3_cmd(&run)
+            .arg(flag)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "--illumina_5base keeps every proper pair at any MAPQ, so no pair is ambiguous: {flag} does not apply"
+            )));
+        taps_cmd(&run)
+            .arg(flag)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "--taps keeps every proper pair at any MAPQ, so no pair is ambiguous: {flag} does not apply"
+            )));
+    }
+    assert_eq!(
+        fs::read_dir(run.out.path()).unwrap().count(),
+        0,
+        "output written"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_standalone_modes_reject_aux_outputs() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for flag in ["--unmapped", "--ambiguous", "--ambig_bam"] {
+        for mode in [
+            "--five_base_consensus_from_bam",
+            "--five_base_bisulfite_bam",
+        ] {
+            bin()
+                .args(["--illumina_5base", flag, mode, "x.bam", "--genome"])
+                .arg(run.genome.path())
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains(format!(
+                    "{flag} applies to an alignment run"
+                )));
+        }
+    }
+}
+
+// ---- bwa-mem3 as the default `--illumina_5base` engine -----------------------------------
+
+/// `bismark --illumina_5base` with no engine flag, writing to `out`.
+#[cfg(unix)]
+fn default_cmd(run: &FakeRun, out: &Path) -> Command {
+    let mut c = bin();
+    c.arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(out)
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2);
+    c
+}
+
+/// A fake run whose genome folder holds `Bwamem3_Index/`, as `bismark_genome_preparation --bwamem3` writes it.
+#[cfg(unix)]
+fn fake_run_with_genome_index() -> FakeRun {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let dir = run.genome.path().join("Bwamem3_Index");
+    fs::create_dir(&dir).unwrap();
+    make_stub_bwamem3_index(&dir.join("genome.fa"), &[("chr1", 8)]);
+    run
+}
+
+fn records_at(path: &Path) -> Vec<String> {
+    let mut reader = bismark::io::BamReader::from_path(path).unwrap();
+    reader
+        .records()
+        .map(|r| format!("{:?}", r.unwrap().inner()))
+        .collect()
+}
+
+/// The header without the `@PG ID:Bismark` line, whose `CL` holds the command line.
+fn header_without_bismark_pg(path: &Path) -> String {
+    header_text(&read_bam_header(path))
+        .lines()
+        .filter(|l| !l.starts_with("@PG\tID:Bismark\t"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The report's count and methylation lines.
+fn report_counts(path: &Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains(":\t"))
+        .filter(|l| !l.starts_with("Bismark report for") && !l.contains("Option"))
+        .map(str::to_string)
+        .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_is_bwamem3_and_matches_an_explicit_run() {
+    let run = fake_run_with_genome_index();
+    let (def, exp, dumps) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    let argv = dumps.path().join("argv.txt");
+    default_cmd(&run, def.path())
+        .env("FAKE_ARGV_DUMP", &argv)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "aligned with bwa-mem3 to the UNCONVERTED",
+        ))
+        .stderr(predicate::str::contains("default engine").not());
+    assert!(
+        fs::read_to_string(&argv)
+            .unwrap()
+            .contains("mem --meth=5base"),
+        "the default engine is bwa-mem3 --meth=5base"
+    );
+    bin()
+        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("--output_dir")
+        .arg(exp.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("default engine since").not());
+    let bam = "r_1_bismark_bwamem3_pe.bam";
+    let rep = "r_1_bismark_bwamem3_PE_report.txt";
+    assert_eq!(
+        records_at(&def.path().join(bam)),
+        records_at(&exp.path().join(bam))
+    );
+    assert!(!records_at(&def.path().join(bam)).is_empty());
+    assert_eq!(
+        header_without_bismark_pg(&def.path().join(bam)),
+        header_without_bismark_pg(&exp.path().join(bam))
+    );
+    let counts = report_counts(&def.path().join(rep));
+    assert!(
+        counts.iter().any(|l| l.starts_with("Mapping efficiency")),
+        "{counts:?}"
+    );
+    assert_eq!(counts, report_counts(&exp.path().join(rep)));
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_without_an_index_stops_before_writing() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let temp = TempDir::new().unwrap();
+    default_cmd(&run, run.out.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base aligns with bwa-mem3, which needs its methylation index",
+        ))
+        .stderr(predicate::str::contains("bismark prepare --bwamem3"))
+        .stderr(predicate::str::contains(
+            "or pass one as --five_base_index.",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not())
+        .stderr(predicate::str::contains("not on PATH either").not());
+    assert_eq!(
+        fs::read_dir(run.out.path()).unwrap().count(),
+        0,
+        "output written"
+    );
+    assert_eq!(
+        fs::read_dir(temp.path()).unwrap().count(),
+        0,
+        "temp written"
+    );
+
+    // No index and no binary: one message names both, and where bwa-mem3 was looked for.
+    let empty = TempDir::new().unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(empty.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("needs its methylation index"))
+        .stderr(predicate::str::contains(format!(
+            "bwa-mem3 (0.16.0 or later) is not in {} either.",
+            empty.path().display()
+        )))
+        .stderr(predicate::str::contains("not on PATH").not());
+    let file = empty.path().join("bwa-mem3");
+    fs::write(&file, b"").unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--path_to_bwamem3")
+        .arg(&file)
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "--path_to_bwamem3 {} is not a folder",
+            file.display()
+        )));
+    bin()
+        .env("PATH", empty.path())
+        .arg("--illumina_5base")
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("needs its methylation index"))
+        .stderr(predicate::str::contains("not on PATH either"));
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_with_a_partial_genome_index_names_the_rebuild() {
+    let run = fake_run_with_genome_index();
+    fs::remove_file(run.genome.path().join("Bwamem3_Index/genome.fa.meth.pac")).unwrap();
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "genome.fa.meth.pac is missing from",
+        ))
+        .stderr(predicate::str::contains(
+            "bismark_genome_preparation --bwamem3",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not());
+    assert_eq!(fs::read_dir(run.out.path()).unwrap().count(), 0);
+}
+
+/// With or without `--bwamem3`, a missing index gets the same message.
+#[cfg(unix)]
+#[test]
+fn explicit_bwamem3_without_an_index_gets_the_same_message() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    bin()
+        .args(["--illumina_5base", "--bwamem3", "--path_to_bwamem3"])
+        .arg(run.bins.path())
+        .arg("--genome")
+        .arg(run.genome.path())
+        .arg("-1")
+        .arg(&run.r1)
+        .arg("-2")
+        .arg(&run.r2)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base aligns with bwa-mem3, which needs its methylation index",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not());
+}
+
+/// The other aligners' flags stop a 5-Base run before anything is spawned or written,
+/// standalone modes included.
+#[cfg(unix)]
+#[test]
+fn five_base_rejections_spawn_nothing_and_write_nothing() {
+    let other = TempDir::new().unwrap();
+    let o = other.path().to_str().unwrap();
+    let splices = other.path().join("splices.txt");
+    fs::write(&splices, b"").unwrap();
+    let splices = splices.to_str().unwrap();
+    for (extra, why) in [
+        (
+            &["--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--no-spliced-alignment"][..],
+            "--no-spliced-alignment is not supported with --illumina_5base: bwa-mem3 does not do \
+             spliced alignment; drop it.",
+        ),
+        (
+            &["--known-splicesite-infile", splices][..],
+            "--known-splicesite-infile is not supported with --illumina_5base: bwa-mem3 does not \
+             do spliced alignment; drop it.",
+        ),
+        (
+            &["--bowtie2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --bowtie2.",
+        ),
+        (
+            &["--hisat2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --hisat2.",
+        ),
+        (
+            &["--rammap"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --rammap.",
+        ),
+        (
+            &["--bwamem3", "--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--path_to_minimap2", o][..],
+            "--path_to_minimap2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_bowtie2", o][..],
+            "--path_to_bowtie2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_hisat2", o][..],
+            "--path_to_hisat2 has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--path_to_rammap", o][..],
+            "--path_to_rammap has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--mm2_nanopore"][..],
+            "--mm2_nanopore has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--mm2_maximum_length", "5000"][..],
+            "--mm2_maximum_length has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ),
+        (
+            &["--five_base_bisulfite_bam", "x.bam", "--minimap2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --minimap2.",
+        ),
+        (
+            &["--five_base_consensus_from_bam", "x.bam", "--bowtie2"][..],
+            "--illumina_5base aligns with bwa-mem3 only; drop --bowtie2.",
+        ),
+    ] {
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let argv = run.bins.path().join("argv.txt");
+        let out_dir = run.out.path().join("never");
+        let mut c = bin();
+        c.arg("--illumina_5base")
+            .args(extra)
+            .arg("--five_base_index")
+            .arg(&run.index)
+            .arg("--path_to_bwamem3")
+            .arg(run.bins.path())
+            .arg("--genome")
+            .arg(run.genome.path())
+            .arg("--output_dir")
+            .arg(&out_dir)
+            .arg("-1")
+            .arg(&run.r1)
+            .arg("-2")
+            .arg(&run.r2)
+            .env("FAKE_ARGV_DUMP", &argv);
+        c.assert().failure().stderr(predicate::str::contains(why));
+        assert!(!argv.exists(), "{extra:?}: the engine was spawned");
+        assert!(!out_dir.exists(), "{extra:?}: output dir created");
+    }
+}
+
+/// Bowtie 2, HISAT2 and minimap2 options on a 5-Base run say "drop it" and suggest no other
+/// engine.
+#[cfg(unix)]
+#[test]
+fn five_base_option_errors_say_drop_it() {
+    let run = fake_run_with_genome_index();
+    let splices = run.genome.path().join("splices.txt");
+    fs::write(&splices, b"").unwrap();
+    let splices = splices.to_str().unwrap();
+    const SCORING: &str = "bwa-mem3 uses its own scoring and infers insert sizes itself";
+    const SPLICING: &str = "bwa-mem3 does not do spliced alignment";
+    for (extra, flag, why) in [
+        (&["-X", "800"][..], "--maxins", SCORING),
+        (&["--local"][..], "--local", SCORING),
+        (&["-D", "5"][..], "-D", SCORING),
+        (&["--no_dovetail"][..], "--no_dovetail", SCORING),
+        (&["--dovetail"][..], "--dovetail", SCORING),
+        (
+            &["--known-splicesite-infile", splices][..],
+            "--known-splicesite-infile",
+            SPLICING,
+        ),
+        (
+            &["--no-spliced-alignment"][..],
+            "--no-spliced-alignment",
+            SPLICING,
+        ),
+    ] {
+        let mut assert = default_cmd(&run, run.out.path())
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "{flag} is not supported with --illumina_5base: {why}; drop it."
+            )));
+        for other in ["--bowtie2", "--hisat2", "--minimap2", "default"] {
+            assert = assert.stderr(predicate::str::contains(other).not());
+        }
+    }
+    default_cmd(&run, run.out.path())
+        .arg("--mm2_short_reads")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--mm2_short_reads has no effect with --illumina_5base (bwa-mem3 only): drop it.",
+        ))
+        .stderr(predicate::str::contains("unless you also use --minimap2").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_names_itself_in_binary_errors() {
+    let run = fake_run_with_genome_index();
+    write_exec(
+        &run.bins.path().join("bwa-mem3"),
+        "#!/bin/sh\n[ \"$1\" = version ] && { echo 0.15.0; exit 0; }\nexit 1\n",
+    );
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--illumina_5base needs bwa-mem3 >= 0.16.0",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not());
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 0\n");
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("printed no version"))
+        .stderr(predicate::str::contains(
+            "--illumina_5base needs bwa-mem3 >= 0.16.0",
+        ))
+        .stderr(predicate::str::contains("--minimap2").not());
+    write_exec(&run.bins.path().join("bwa-mem3"), "#!/bin/sh\nexit 3\n");
+    default_cmd(&run, run.out.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("bwa-mem3 version')"))
+        .stderr(predicate::str::contains("--version").not())
+        .stderr(predicate::str::contains("--minimap2").not());
+}
+
+#[cfg(unix)]
+#[test]
+fn five_base_names_an_unconverted_index() {
+    for (ext, name) in [
+        ("bt2", "Bowtie 2"),
+        ("bt2l", "Bowtie 2"),
+        ("ht2", "HISAT2"),
+        ("ht2l", "HISAT2"),
+    ] {
+        for explicit in [false, true] {
+            let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+            let idx = run.genome.path().join("plain");
+            fs::write(format!("{}.1.{ext}", idx.display()), b"").unwrap();
+            let mut c = default_cmd(&run, run.out.path());
+            if explicit {
+                c.arg("--bwamem3");
+            }
+            c.arg("--five_base_index")
+                .arg(&idx)
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains(format!(
+                    "is a {name} index; --illumina_5base needs a bwa-mem3 methylation index"
+                )))
+                .stderr(predicate::str::contains("bismark prepare --bwamem3"))
+                .stderr(predicate::str::contains("add --").not());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn default_engine_rejects_options_before_the_index_check() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    for (extra, want) in [
+        (&["-X", "900"][..], "--maxins is not supported"),
+        (&["--local"][..], "--local is not supported"),
+        (&["-p", "1"][..], "-p of 2 or more"),
+    ] {
+        default_cmd(&run, run.out.path())
+            .args(extra)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(want))
+            .stderr(predicate::str::contains("needs its methylation index").not());
+    }
+}
+
+#[test]
+fn bisulfite_minimap2_options_are_not_checked_as_5base() {
+    let (genome, mm2) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    fs::write(genome.path().join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
+    for (dir, mmi) in [
+        ("CT_conversion", "BS_CT.mmi"),
+        ("GA_conversion", "BS_GA.mmi"),
+    ] {
+        let d = genome.path().join("Bisulfite_Genome").join(dir);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join(mmi), b"").unwrap();
+    }
+    let reads = genome.path().join("reads.fq");
+    fs::write(&reads, b"@r\nACGTACGT\n+\nIIIIIIII\n").unwrap();
+    bin()
+        .args(["--minimap2", "-N", "1", "-L", "20", "--path_to_minimap2"])
+        .arg(mm2.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .arg(&reads)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to execute minimap2"))
+        .stderr(predicate::str::contains("has no effect").not());
+}
+
+#[test]
+fn help_describes_five_base_index_and_umi_len() {
+    let out = bin().args(["align", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        help.contains("The bwa-mem3 methylation index of an `--illumina_5base` or `--taps` run"),
+        "{help}"
+    );
+    assert!(!help.contains("Rejected with `--minimap2`"), "{help}");
+    assert!(help.contains("--five_base_index <PATH>"), "{help}");
+    assert!(!help.contains("<BASENAME>"), "{help}");
+    assert!(
+        help.contains("The first N bases of each mate are not called."),
+        "{help}"
+    );
+    assert!(!help.contains("soft-clipping that prefix"), "{help}");
+}
+
+/// Each engine's index is looked up under its own env folder, as the aligners do.
+#[cfg(unix)]
+#[test]
+fn default_engine_finds_an_unconverted_index_under_its_env_folder() {
+    for (ext, var, other, name) in [
+        ("bt2", "BOWTIE2_INDEXES", "HISAT2_INDEXES", "Bowtie 2"),
+        ("ht2", "HISAT2_INDEXES", "BOWTIE2_INDEXES", "HISAT2"),
+    ] {
+        let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+        let (env, cwd) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+        fs::write(env.path().join(format!("plain.1.{ext}")), b"").unwrap();
+        default_cmd(&run, run.out.path())
+            .current_dir(cwd.path())
+            .env(var, env.path())
+            .env_remove(other)
+            .args(["--five_base_index", "plain"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!("is a {name} index")));
+    }
+}
+
+/// A folder holding a bwa-mem3 index is used even when a Bowtie 2 index of the same name exists.
+#[cfg(unix)]
+#[test]
+fn default_engine_uses_a_bwamem3_index_folder_despite_a_same_named_bowtie2_index() {
+    let run = fake_run(ONE_PAIR, &[("chr1", 8)], SQ_OK);
+    let (env, cwd) = (TempDir::new().unwrap(), TempDir::new().unwrap());
+    let folder = cwd.path().join("GRCh38");
+    fs::create_dir(&folder).unwrap();
+    make_stub_bwamem3_index(&folder.join("genome.fa"), &[("chr1", 8)]);
+    fs::write(env.path().join("GRCh38.1.bt2"), b"").unwrap();
+    fs::write(cwd.path().join("GRCh38.1.bt2"), b"").unwrap();
+    default_cmd(&run, run.out.path())
+        .current_dir(cwd.path())
+        .env("BOWTIE2_INDEXES", env.path())
+        .args(["--five_base_index", "GRCh38"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("is a Bowtie 2 index").not());
+}
+
+/// #1125 on bwa-mem3's input: variable mate lengths, Illumina header comments and `--strandID`.
+/// Every pair comes back, in FASTQ order, with YS on both mates. The fake is single-threaded;
+/// `dense_twins_gate` checks the order under real bwa-mem3 threads.
+#[cfg(unix)]
+#[test]
+fn five_base_keeps_every_variable_length_pair_in_order_with_strand_ids() {
+    let mut x: u64 = 0x1125_5BA5_E000_0001;
+    let mut next = |n: u64| {
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (x >> 33) % n
+    };
+    let reference: Vec<u8> = (0..60_000).map(|_| b"ACGT"[next(4) as usize]).collect();
+    let revcomp = |s: &[u8]| -> Vec<u8> {
+        s.iter()
+            .rev()
+            .map(|&b| match b {
+                b'A' => b'T',
+                b'C' => b'G',
+                b'G' => b'C',
+                _ => b'A',
+            })
+            .collect()
+    };
+    let record = |out: &mut String, header: &str, seq: &[u8]| {
+        out.push_str(&format!(
+            "@{header}\n{}\n+\n{}\n",
+            String::from_utf8_lossy(seq),
+            "I".repeat(seq.len())
+        ));
+    };
+    let n_pairs = 3000;
+    let (mut fq1, mut fq2, mut placements) = (String::new(), String::new(), Vec::new());
+    for p in 0..n_pairs {
+        let frag = 200 + next(120) as usize;
+        // The driver needs 2 genome bases past each mate.
+        let start = next((reference.len() - frag - 2) as u64) as usize;
+        let (l1, l2) = (60 + next(66) as usize, 60 + next(66) as usize);
+        record(
+            &mut fq1,
+            &format!("pair{p} 1:N:0:ACGT"),
+            &reference[start..start + l1],
+        );
+        let r2 = revcomp(&reference[start + frag - l2..start + frag]);
+        record(&mut fq2, &format!("pair{p} 2:N:0:ACGT"), &r2);
+        placements.push(fake_bwamem3::Placement {
+            qname: format!("pair{p}"),
+            contig: "chr1".into(),
+            r1: start,
+            r2: start + frag - l2,
+            r1_reverse: false,
+        });
+    }
+    let (genome, bins, out) = (
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+        TempDir::new().unwrap(),
+    );
+    fs::write(
+        genome.path().join("genome.fa"),
+        format!(">chr1\n{}\n", String::from_utf8_lossy(&reference)),
+    )
+    .unwrap();
+    let index = bins.path().join("idx.fa");
+    fake_bwamem3::install(
+        bins.path(),
+        &index,
+        &[("chr1", reference.len())],
+        &placements,
+    );
+    let (r1, r2) = (
+        genome.path().join("reads_1.fq"),
+        genome.path().join("reads_2.fq"),
+    );
+    fs::write(&r1, fq1).unwrap();
+    fs::write(&r2, fq2).unwrap();
+    bin()
+        .arg("--illumina_5base")
+        .arg("--five_base_index")
+        .arg(&index)
+        .arg("--path_to_bwamem3")
+        .arg(bins.path())
+        .arg("--genome")
+        .arg(genome.path())
+        .args(["-p", "4", "--strandID"])
+        .arg("--output_dir")
+        .arg(out.path())
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .assert()
+        .success();
+
+    let bam = out.path().join("reads_1_bismark_bwamem3_pe.bam");
+    let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
+    let (mut r1_names, mut records) = (Vec::new(), 0usize);
+    for rec in reader.records() {
+        let rec = rec.unwrap();
+        let inner = rec.inner();
+        records += 1;
+        let ys = match inner
+            .data()
+            .get(&noodles_sam::alignment::record::data::field::Tag::from(
+                *b"YS",
+            )) {
+            Some(noodles_sam::alignment::record_buf::data::field::Value::String(s)) => {
+                Some(s.to_string())
+            }
+            _ => None,
+        };
+        assert_eq!(ys.as_deref(), Some("OT"), "every mate carries YS:Z:OT");
+        if u16::from(inner.flags()) & 0x40 != 0 {
+            r1_names.push(String::from_utf8_lossy(inner.name().unwrap().as_ref()).into_owned());
+        }
+    }
+    let expected: Vec<String> = (0..n_pairs).map(|p| format!("pair{p}")).collect();
+    assert_eq!(
+        records,
+        2 * n_pairs,
+        "every pair written, none silently dropped"
+    );
+    assert_eq!(r1_names, expected, "pairs come back in FASTQ order");
 }

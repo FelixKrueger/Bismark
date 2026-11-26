@@ -55,7 +55,7 @@ pub enum AlignerError {
 
     /// The aligner binary could not be executed (mirrors Perl 7071–72).
     #[error(
-        "failed to execute {aligner} properly (could not run '{cmd} --version'). Please install \
+        "failed to execute {aligner} properly (could not run '{cmd} {probe}'). Please install \
          {aligner} and make sure it is in the PATH, or specify the path with {path_flag} /path/to/dir"
     )]
     AlignerNotWorking {
@@ -63,6 +63,8 @@ pub enum AlignerError {
         aligner: String,
         /// The command that failed (the resolved binary path).
         cmd: String,
+        /// The version probe argument (`--version`, or `version` for bwa-mem3).
+        probe: String,
         /// The `--path_to_<aligner>` flag to hint in the diagnostic.
         path_flag: String,
     },

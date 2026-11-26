@@ -16,7 +16,7 @@
 //! ## Gating
 //!
 //! Skipped locally when `minimap2` is absent; **panics when `$CI` is set and it is absent**,
-//! so it can never pass vacuously (the #787 pattern in `aligner_five_base_groundtruth.rs`).
+//! so it can never pass vacuously (the #787 pattern).
 //! CI installs minimap2 already (`rust_ci.yml`). Note CI runs the distro package rather than
 //! the 2.31-r1302 the spike measured, so this also extends the evidence to a second version.
 

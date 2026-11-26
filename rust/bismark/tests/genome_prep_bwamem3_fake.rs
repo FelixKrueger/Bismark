@@ -375,12 +375,7 @@ fn writes_no_bisulfite_genome_and_keeps_genomic_composition() {
 #[test]
 fn incompatible_flags_are_rejected() {
     let s = setup();
-    for extra in [
-        "--single_fasta",
-        "--slam",
-        "--large-index",
-        "--combined_genome",
-    ] {
+    for extra in ["--single_fasta", "--large-index", "--combined_genome"] {
         prep(&s)
             .arg(extra)
             .arg(&s.genome)

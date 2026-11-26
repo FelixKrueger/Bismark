@@ -44,16 +44,6 @@ fn make_genome_fasta_only(dir: &Path) {
     fs::write(dir.join("genome.fa"), b">chr1\nACGTACGT\n").unwrap();
 }
 
-/// A complete-looking unconverted Bowtie 2 index at `basename`. `--five_base_index` is checked
-/// for presence only (#1100), so empty files satisfy it and a fake aligner needs no more.
-fn make_stub_bowtie2_index(basename: &Path) {
-    for s in ["1", "2", "3", "4", "rev.1", "rev.2"] {
-        let mut p = basename.as_os_str().to_owned();
-        p.push(format!(".{s}.bt2"));
-        fs::write(PathBuf::from(p), b"").unwrap();
-    }
-}
-
 #[cfg(unix)]
 fn make_fake_bowtie2(dir: &Path) {
     // `--version` → the version banner (Phase-1 detection). Otherwise (alignment)
@@ -1312,6 +1302,61 @@ fn old_flag_and_misplaced_nucleotide_coverage_are_rejected() {
                 .stderr(predicate::str::contains(flag));
         }
     }
+}
+
+/// `--slam` stops every align path with one message, ahead of the TAPS expansion and the
+/// standalone 5-Base paths; `--help` doesn't list it.
+#[cfg(unix)]
+#[test]
+fn slam_is_rejected_on_every_align_path() {
+    let genome = TempDir::new().unwrap();
+    make_genome(genome.path());
+    let bins = TempDir::new().unwrap();
+    make_fake_bowtie2(bins.path());
+    let read = make_read(genome.path());
+    let temp = TempDir::new().unwrap();
+    let want = bismark::aligner::config::SLAM_NOT_SUPPORTED;
+    bin()
+        .arg("--genome")
+        .arg(genome.path())
+        .arg("--path_to_bowtie2")
+        .arg(bins.path())
+        .arg("--temp_dir")
+        .arg(temp.path())
+        .arg("--output_dir")
+        .arg(temp.path())
+        .arg("--slam")
+        .arg(&read)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(want));
+    let g = genome.path().to_str().unwrap();
+    let cases: [&[&str]; 4] = [
+        &[
+            "--taps",
+            "--five_base_min_mapq",
+            "5",
+            "--genome",
+            g,
+            "--slam",
+        ],
+        &["--illumina_5base", "--bowtie2", "--genome", g, "--slam"],
+        &["--five_base_consensus_from_bam", "in.bam", "--slam"],
+        &["--five_base_bisulfite_bam", "in.bam", "--slam"],
+    ];
+    for args in cases {
+        bin()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(want));
+    }
+    bin()
+        .args(["align", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--genome"))
+        .stdout(predicate::str::contains("--slam").not());
 }
 
 /// [`make_genome`] with a chr1 holding every dinucleotide, which bam2nuc needs; the
@@ -7583,120 +7628,56 @@ fn combined_index_se_hisat2_sequential_banner_says_hisat2() {
 
 // ===========================================================================
 // #787 Illumina 5-Base (5mC->T) — PE end-to-end, FROM FASTQ.
-// Hermetic: a fake minimap2 (or bowtie2) that aligns against the UNCONVERTED
-// genome FASTA and emits TWO properly-paired primary records per read pair.
+// Hermetic: a fake bwa-mem3 that "aligns" against the UNCONVERTED genome and
+// emits TWO properly-paired primary records per read pair.
 // The driver re-reads both FASTQ files for the original bases and calls
 // methylation with INVERTED (5-Base) polarity.
 // ===========================================================================
 
-/// A fake `minimap2` for the 5-Base PE path. Invocation:
-///   `<opts> ref.fa r1.fq r2.fq`
-/// Emits two SAM records per pair from r1.fq: R1 (FLAG 99: proper+R1+mate-rev)
-/// and R2 (FLAG 147: proper+R2+rev), both mapped to chr1:1 (RNAME unconverted).
-/// Only r1.fq is iterated; r2.fq is accepted positionally but ignored (the
-/// driver reads it independently from the FASTQ files).
+/// A fake `bwa-mem3` for the 5-Base PE path (`mem <opts> <prefix> r1 r2`) in `dir`, plus a stub
+/// meth index there for the `chr1` = `ACGTACGT` genome; returns the index prefix. Emits R1
+/// (FLAG 99) + R2 (FLAG 147) per pair from r1.fq, both mapped to chr1:1.
 #[cfg(unix)]
-fn make_fake_minimap2_five_base_pe(dir: &Path) {
+fn make_fake_bwamem3_five_base_pe(dir: &Path) -> PathBuf {
     let script = r#"#!/bin/sh
-case "$*" in *--version*) echo "2.31-r1302"; exit 0;; esac
-r1=""; ref=""
-fq_count=0
-for a in "$@"; do
-  case "$a" in
-    *.fa|*.fasta) ref="$a" ;;
-    *.fastq|*.fq)
-      fq_count=$((fq_count + 1))
-      [ "$fq_count" = "1" ] && r1="$a"
-      ;;
-  esac
-done
-printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
-# emit R1 (FLAG 99) then R2 (FLAG 147) per pair; SEQ is a placeholder (driver uses FASTQ).
+[ "$1" = version ] && { echo 0.18.0; exit 0; }
+n=$#
+eval r1=\${$((n-1))}
+printf '@HD\tVN:1.5\n@SQ\tSN:chr1\tLN:8\n'
 awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
      NR%4==2 {
-       print id "\t99\tchr1\t1\t60\t6M\t=\t1\t6\t" $0 "\tFFFFFF\tNM:i:1\tAS:i:10\tMD:Z:1C4"
-       print id "\t147\tchr1\t1\t60\t6M\t=\t1\t-6\t" $0 "\tFFFFFF\tNM:i:1\tAS:i:10\tMD:Z:1C4"
+       print id "\t99\tchr1\t1\t60\t6M\t=\t1\t6\t" $0 "\tFFFFFF\tAS:i:6"
+       print id "\t147\tchr1\t1\t60\t6M\t=\t1\t-6\t" $0 "\tFFFFFF\tAS:i:6"
      }' "$r1"
 "#;
-    write_exec(&dir.join("minimap2"), script);
+    write_exec(&dir.join("bwa-mem3"), script);
+    let idx = dir.join("idx.fa");
+    for s in [
+        "amb",
+        "pac",
+        "meth.amb",
+        "meth.ann",
+        "meth.pac",
+        "meth.bwt.2bit.64",
+    ] {
+        fs::write(format!("{}.{s}", idx.display()), b"").unwrap();
+    }
+    fs::write(
+        format!("{}.ann", idx.display()),
+        "8 1 11\n0 chr1 (null)\n0 8 0\n",
+    )
+    .unwrap();
+    idx
 }
 
-/// A fake `bowtie2` for the 5-Base PE path. Invocation:
-///   `<opts> -x <idx> -1 r1.fq -2 r2.fq`
-/// Emits R1 (FLAG 99) + R2 (FLAG 147) per pair, both mapped to chr1:1 (RNAME
-/// unconverted). Only r1.fq (after `-1`) is iterated by the script.
-#[cfg(unix)]
-fn make_fake_bowtie2_five_base_pe(dir: &Path) {
-    let script = r#"#!/bin/sh
-case "$*" in *--version*) echo "fake-bowtie2 version 2.5.5"; exit 0;; esac
-r1=""; prev=""
-for a in "$@"; do
-  [ "$prev" = "-1" ] && r1="$a"
-  prev="$a"
-done
-printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
-awk 'NR%4==1 { id=$1; sub(/^@/,"",id) }
-     NR%4==2 {
-       print id "\t99\tchr1\t1\t42\t6M\t=\t1\t6\t" $0 "\tFFFFFF\tAS:i:0\tMD:Z:1C4"
-       print id "\t147\tchr1\t1\t42\t6M\t=\t1\t-6\t" $0 "\tFFFFFF\tAS:i:0\tMD:Z:1C4"
-     }' "$r1"
-"#;
-    write_exec(&dir.join("bowtie2"), script);
-}
-
-/// `--upto` must stop the 5-Base engine even when its output outgrows the pipe buffer.
+/// An inline UMI the engine aligned is kept out of the calls by `--five_base_umi_len`.
 #[cfg(unix)]
 #[test]
-fn five_base_pe_upto_terminates_with_a_large_engine_output() {
+fn five_base_umi_bases_are_not_called() {
     let genome = TempDir::new().unwrap();
     make_genome_fasta_only(genome.path());
     let bins = TempDir::new().unwrap();
-    make_fake_minimap2_five_base_pe(bins.path());
-    let reads: String = (0..5000)
-        .map(|i| format!("@p{i}\nATGTAC\n+\nIIIIII\n"))
-        .collect();
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, &reads).unwrap();
-    fs::write(&r2, &reads).unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--upto")
-        .arg("10")
-        .arg("--path_to_minimap2")
-        .arg(bins.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .timeout(std::time::Duration::from_secs(60))
-        .assert()
-        .success();
-    let report =
-        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
-    assert!(
-        report.contains("Sequence pairs analysed in total:\t10\n"),
-        "{report}"
-    );
-}
-
-/// Bowtie 2 aligns end to end, so an inline UMI is aligned; `--five_base_umi_len` keeps it out
-/// of the calls.
-#[cfg(unix)]
-#[test]
-fn five_base_bowtie2_umi_bases_are_not_called() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let idx = TempDir::new().unwrap();
-    make_stub_bowtie2_index(&idx.path().join("puc"));
-    let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
+    let idx = make_fake_bwamem3_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
     let r2 = genome.path().join("reads_2.fq");
     fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
@@ -7706,10 +7687,10 @@ fn five_base_bowtie2_umi_bases_are_not_called() {
         bin()
             .arg("--genome")
             .arg(genome.path())
-            .args(["--illumina_5base", "--bowtie2", "--five_base_umi_len", umi])
+            .args(["--illumina_5base", "--five_base_umi_len", umi])
             .arg("--five_base_index")
-            .arg(idx.path().join("puc"))
-            .arg("--path_to_bowtie2")
+            .arg(&idx)
+            .arg("--path_to_bwamem3")
             .arg(bins.path())
             .arg("--output_dir")
             .arg(outdir.path())
@@ -7719,7 +7700,7 @@ fn five_base_bowtie2_umi_bases_are_not_called() {
             .arg(&r2)
             .assert()
             .success();
-        let bam = outdir.path().join("reads_1_bismark_bt2_pe.bam");
+        let bam = outdir.path().join("reads_1_bismark_bwamem3_pe.bam");
         let mut reader = bismark::io::BamReader::from_path(&bam).unwrap();
         let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
         let r1_rec = recs
@@ -7734,71 +7715,6 @@ fn five_base_bowtie2_umi_bases_are_not_called() {
     assert_eq!(r1_xm("2"), b".....z".to_vec());
 }
 
-/// `--illumina_5base` PE end-to-end via minimap2: a read pair `ATGTAC`/`ATGTAC`
-/// vs genome `ACGTACGT`. The genomic C at position 2 (CpG, read as T) is
-/// METHYLATED in 5-Base logic (Z, inverted polarity). The CpG C at position 6
-/// (read as C) is UNMETHYLATED (z). R1 XM tag = `.Z...z`. The report carries the
-/// `mm2` naming, the `-x sr` option string, and "Bismark was run with minimap2".
-#[cfg(unix)]
-#[test]
-fn five_base_pe_end_to_end_inverts_polarity() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path()); // #1099: no BS_*.mmi — 5-Base must not need one
-    let bins = TempDir::new().unwrap();
-    make_fake_minimap2_five_base_pe(bins.path());
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let temp = TempDir::new().unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--multicore") // sets minimap2 -t deterministically for the assertion
-        .arg("4")
-        .arg("--path_to_minimap2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .success();
-
-    // 5-Base uses the minimap2 (`mm2`) naming + the `sr` preset option string, with
-    // `-t` set from --multicore (4 here; the bisulfite path's faithful -t 2 is lifted).
-    let report =
-        fs::read_to_string(outdir.path().join("reads_1_bismark_mm2_PE_report.txt")).unwrap();
-    assert!(report.contains("Bismark was run with minimap2 against"));
-    assert!(report.contains("-a --MD --secondary=no -t 4 -x sr -K 250K"));
-    assert!(report.contains("Sequence pairs analysed in total:\t1\n"));
-    // PE report appends a trailing space after the percentage (Perl compat).
-    assert!(report.contains("Mapping efficiency:\t100.0% \n"));
-
-    // R1 XM tag carries the INVERTED 5-Base call: `.Z...z`.
-    let bam_path = outdir.path().join("reads_1_bismark_mm2_pe.bam");
-    let mut reader = bismark::io::BamReader::from_path(&bam_path).unwrap();
-    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
-    assert_eq!(recs.len(), 2, "one pair = two BAM records");
-    // Find R1 by FLAG bit 0x40.
-    let r1_rec = recs
-        .iter()
-        .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
-        .expect("R1 record not found");
-    let xm = bismark::io::tags::xm(r1_rec.inner().data()).unwrap();
-    assert_eq!(
-        xm, b".Z...z",
-        "5-Base: read T at a genomic CpG C = methylated Z (inverse of bisulfite)"
-    );
-}
-
 /// `--illumina_5base` v1 scope guards fail loud (the error names --illumina_5base).
 /// Provides a PE pair so the paired-end guard passes; the directional-only guard
 /// fires for --non_directional.
@@ -7806,9 +7722,9 @@ fn five_base_pe_end_to_end_inverts_polarity() {
 #[test]
 fn five_base_rejects_non_directional() {
     let genome = TempDir::new().unwrap();
-    make_genome_mmi(genome.path());
+    make_genome_fasta_only(genome.path());
     let bins = TempDir::new().unwrap();
-    make_fake_minimap2_five_base_pe(bins.path());
+    let idx = make_fake_bwamem3_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
     let r2 = genome.path().join("reads_2.fq");
     fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
@@ -7821,7 +7737,9 @@ fn five_base_rejects_non_directional() {
         .arg(genome.path())
         .arg("--illumina_5base")
         .arg("--non_directional")
-        .arg("--path_to_minimap2")
+        .arg("--five_base_index")
+        .arg(&idx)
+        .arg("--path_to_bwamem3")
         .arg(bins.path())
         .arg("--output_dir")
         .arg(outdir.path())
@@ -7836,224 +7754,6 @@ fn five_base_rejects_non_directional() {
         ));
 }
 
-/// #1100: a missing `--five_base_index` is rejected before anything is spawned or written —
-/// no aligner needed, because the check precedes aligner detection.
-#[cfg(unix)]
-#[test]
-fn five_base_index_missing_fails_early() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-    // A path that does not exist yet, so "nothing written" also covers "never created".
-    let nested = outdir.path().join("a").join("b");
-
-    let out = bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg(genome.path().join("no_such_idx"))
-        .arg("--output_dir")
-        .arg(&nested)
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(stderr.contains("--five_base_index"), "{stderr}");
-    assert!(!stderr.contains("desync"), "{stderr}");
-    assert!(!stderr.contains("panicked"), "{stderr}");
-
-    // Nothing written, and no output tree created at all.
-    assert!(
-        !nested.exists(),
-        "output dir was created for a rejected run"
-    );
-    let leftovers: Vec<_> = fs::read_dir(outdir.path())
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    assert!(leftovers.is_empty(), "output dir not empty: {leftovers:?}");
-}
-
-/// #1100/C1: another index file at the basename must NOT suppress the environment lookup — the
-/// aligner falls back on `<basename>.1.<ext>` alone, and gating wider rejected a working setup.
-#[cfg(unix)]
-#[test]
-fn non_first_index_file_does_not_block_the_env_fallback() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let here = TempDir::new().unwrap();
-    fs::write(here.path().join("puc.2.bt2"), b"").unwrap(); // present, but not `.1`
-    let there = TempDir::new().unwrap();
-    make_stub_bowtie2_index(&there.path().join("puc"));
-    let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-    let temp = TempDir::new().unwrap();
-
-    let out = bin()
-        .current_dir(here.path())
-        .env("BOWTIE2_INDEXES", there.path())
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg("puc")
-        .arg("--path_to_bowtie2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(!stderr.contains("--five_base_index"), "{stderr}");
-}
-
-/// #1100: an index that resolves through `$BOWTIE2_INDEXES` must be accepted. Setting the
-/// variable on the child avoids the shared-process hazard of `set_var` in a test.
-#[cfg(unix)]
-#[test]
-fn five_base_index_resolved_via_env_is_accepted() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let idxdir = TempDir::new().unwrap();
-    make_stub_bowtie2_index(&idxdir.path().join("puc"));
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
-    let outdir = TempDir::new().unwrap();
-    let temp = TempDir::new().unwrap();
-
-    // A BARE basename: only the environment variable can resolve it.
-    let out = bin()
-        .env("BOWTIE2_INDEXES", idxdir.path())
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg("puc")
-        .arg("--path_to_bowtie2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(!stderr.contains("--five_base_index"), "{stderr}");
-}
-
-/// #1100: the aligner consults `$BOWTIE2_INDEXES` only when NOTHING matches the basename, so a
-/// partial index at the basename blocks the fallback. Only observable with a relative basename,
-/// hence a child cwd rather than a unit test.
-#[cfg(unix)]
-#[test]
-fn partial_index_at_the_basename_blocks_the_env_fallback() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let here = TempDir::new().unwrap();
-    fs::write(here.path().join("puc.1.bt2"), b"").unwrap(); // 1 of 6 — partial
-    let there = TempDir::new().unwrap();
-    make_stub_bowtie2_index(&there.path().join("puc")); // complete, but must not be reached
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-
-    let out = bin()
-        .current_dir(here.path())
-        .env("BOWTIE2_INDEXES", there.path())
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg("puc")
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(stderr.contains("--five_base_index"), "{stderr}");
-}
-
-/// #1100: a bare basename resolved from the working directory, with no environment variable —
-/// the remaining positive form, and not unit-testable without mutating the process cwd.
-#[cfg(unix)]
-#[test]
-fn five_base_index_resolved_from_cwd_is_accepted() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path());
-    let here = TempDir::new().unwrap();
-    make_stub_bowtie2_index(&here.path().join("puc"));
-    let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-    let temp = TempDir::new().unwrap();
-
-    let out = bin()
-        .current_dir(here.path())
-        .env_remove("BOWTIE2_INDEXES")
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg("puc")
-        .arg("--path_to_bowtie2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
-    assert!(!stderr.contains("--five_base_index"), "{stderr}");
-}
-
 /// #1100: a missing `--output_dir` is created, with a notice — including nested parents, where
 /// Perl instead died.
 #[cfg(unix)]
@@ -8061,9 +7761,8 @@ fn five_base_index_resolved_from_cwd_is_accepted() {
 fn output_dir_is_created_with_a_notice() {
     let genome = TempDir::new().unwrap();
     make_genome_fasta_only(genome.path());
-    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
     let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
+    let idx = make_fake_bwamem3_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
     let r2 = genome.path().join("reads_2.fq");
     fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
@@ -8076,10 +7775,9 @@ fn output_dir_is_created_with_a_notice() {
         .arg("--genome")
         .arg(genome.path())
         .arg("--illumina_5base")
-        .arg("--bowtie2")
         .arg("--five_base_index")
-        .arg(genome.path().join("normal_idx"))
-        .arg("--path_to_bowtie2")
+        .arg(&idx)
+        .arg("--path_to_bwamem3")
         .arg(bins.path())
         .arg("--temp_dir")
         .arg(temp.path())
@@ -8096,89 +7794,8 @@ fn output_dir_is_created_with_a_notice() {
     assert!(nested.is_dir());
 }
 
-/// `--illumina_5base --bowtie2 --five_base_index` PE end-to-end: aligns the RAW
-/// read pairs to a NORMAL (unconverted) bowtie2 index and emits the same
-/// inverted-polarity BAM as the minimap2 path (read `T` at a genomic CpG C →
-/// methylated `Z`). Uses the `bt2` naming and the plain (non-bisulfite) bowtie2
-/// option string in the report.
-#[cfg(unix)]
-#[test]
-fn five_base_bowtie2_unconverted_index_end_to_end() {
-    let genome = TempDir::new().unwrap();
-    make_genome_fasta_only(genome.path()); // #1099: no CT/GA .bt2 — 5-Base must not need one
-    make_stub_bowtie2_index(&genome.path().join("normal_idx"));
-    let bins = TempDir::new().unwrap();
-    make_fake_bowtie2_five_base_pe(bins.path());
-    let r1 = genome.path().join("reads_1.fq");
-    let r2 = genome.path().join("reads_2.fq");
-    fs::write(&r1, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    fs::write(&r2, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-    let temp = TempDir::new().unwrap();
-
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--five_base_index")
-        .arg(genome.path().join("normal_idx")) // basename; the fake bowtie2 ignores it
-        .arg("--path_to_bowtie2")
-        .arg(bins.path())
-        .arg("--temp_dir")
-        .arg(temp.path())
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg("-1")
-        .arg(&r1)
-        .arg("-2")
-        .arg(&r2)
-        .assert()
-        .success();
-
-    let report =
-        fs::read_to_string(outdir.path().join("reads_1_bismark_bt2_PE_report.txt")).unwrap();
-    assert!(report.contains("Bismark was run with Bowtie 2 against"));
-    assert!(report.contains("-q --score-min L,0,-0.6 --maxins 800")); // the plain 5-Base bowtie2 opts
-    assert!(!report.contains("--norc")); // NOT the bisulfite strand-restricted options
-
-    let bam_path = outdir.path().join("reads_1_bismark_bt2_pe.bam");
-    let mut reader = bismark::io::BamReader::from_path(&bam_path).unwrap();
-    let recs: Vec<_> = reader.records().map(|r| r.unwrap()).collect();
-    assert_eq!(recs.len(), 2, "one pair = two BAM records");
-    // Find R1 by FLAG bit 0x40.
-    let r1_rec = recs
-        .iter()
-        .find(|r| u16::from(r.inner().flags()) & 0x40 != 0)
-        .expect("R1 record not found");
-    let xm = bismark::io::tags::xm(r1_rec.inner().data()).unwrap();
-    assert_eq!(xm, b".Z...z", "5-Base via bowtie2 PE: inverted CpG calls");
-}
-
-/// `--illumina_5base --bowtie2` WITHOUT `--five_base_index` fails loud.
-#[cfg(unix)]
-#[test]
-fn five_base_bowtie2_requires_index() {
-    let genome = TempDir::new().unwrap();
-    make_genome(genome.path());
-    let read = genome.path().join("reads.fq");
-    fs::write(&read, b"@r1\nATGTAC\n+\nIIIIII\n").unwrap();
-    let outdir = TempDir::new().unwrap();
-    bin()
-        .arg("--genome")
-        .arg(genome.path())
-        .arg("--illumina_5base")
-        .arg("--bowtie2")
-        .arg("--output_dir")
-        .arg(outdir.path())
-        .arg(&read)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("requires --five_base_index"));
-}
-
 /// `--five_base_umi_len N` PE: deduplicates pairs sharing (R1 UMI, R2 UMI, chrom,
-/// pos, strand). Three read pairs map to chr1:1 (fake minimap2 PE): pairs p1/p2
+/// pos, strand). Three read pairs map to chr1:1 (fake bwa-mem3): pairs p1/p2
 /// share R1 UMI `AAA` and R2 UMI `TTT` (one is a duplicate, dropped), pair p3 has
 /// R1 UMI `CCC` (kept). BAM ends with 4 records (2 pairs); the run reports
 /// "removed 1 duplicate pair(s)".
@@ -8186,9 +7803,9 @@ fn five_base_bowtie2_requires_index() {
 #[test]
 fn five_base_umi_dedup_drops_duplicates() {
     let genome = TempDir::new().unwrap();
-    make_genome_mmi(genome.path());
+    make_genome_fasta_only(genome.path());
     let bins = TempDir::new().unwrap();
-    make_fake_minimap2_five_base_pe(bins.path());
+    let idx = make_fake_bwamem3_five_base_pe(bins.path());
     let r1 = genome.path().join("reads_1.fq");
     let r2 = genome.path().join("reads_2.fq");
     // p1/p2 share R1 UMI "AAA" and R2 UMI "TTT" (same chrom/pos/strand) -> one dup.
@@ -8212,7 +7829,9 @@ fn five_base_umi_dedup_drops_duplicates() {
         .arg("--illumina_5base")
         .arg("--five_base_umi_len")
         .arg("3")
-        .arg("--path_to_minimap2")
+        .arg("--five_base_index")
+        .arg(&idx)
+        .arg("--path_to_bwamem3")
         .arg(bins.path())
         .arg("--temp_dir")
         .arg(temp.path())
@@ -8226,7 +7845,7 @@ fn five_base_umi_dedup_drops_duplicates() {
         .success()
         .stderr(predicate::str::contains("removed 1 duplicate pair(s)"));
 
-    let bam_path = outdir.path().join("reads_1_bismark_mm2_pe.bam");
+    let bam_path = outdir.path().join("reads_1_bismark_bwamem3_pe.bam");
     let mut reader = bismark::io::BamReader::from_path(&bam_path).unwrap();
     assert_eq!(
         reader.records().count(),
@@ -8419,462 +8038,6 @@ fn positional_paired_vbq_accepts_minins_maxins() {
     assert!(report.contains("--minins 10 --maxins 800"), "{report}");
 }
 
-#[cfg(unix)]
-struct FiveBaseOptionsFixture {
-    dir: TempDir,
-    engine: &'static str,
-}
-
-#[cfg(unix)]
-impl FiveBaseOptionsFixture {
-    fn new(engine: &'static str) -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("5base options ")
-            .tempdir()
-            .unwrap();
-        let root = dir.path();
-        fs::create_dir(root.join("genome")).unwrap();
-        fs::create_dir(root.join("bin")).unwrap();
-        make_genome_fasta_only(&root.join("genome"));
-        if engine == "bowtie2" {
-            make_stub_bowtie2_index(&root.join("plain index"));
-        } else {
-            for i in 1..=8 {
-                fs::write(root.join(format!("plain index.{i}.ht2")), b"").unwrap();
-            }
-        }
-        for mate in [1, 2] {
-            fs::write(
-                root.join(format!("reads_{mate}.fq")),
-                b"@r1\nATGTAC\n+\nIIIIII\n",
-            )
-            .unwrap();
-        }
-        let script = r#"#!/bin/sh
-case "$*" in *--version*) echo "VERSION"; exit 0;; esac
-printf '%s\n' "$@" > "$BISMARK_TEST_ARGV"
-printf 'alignment\n' >> "$BISMARK_TEST_CALLS"
-r1=""; r2=""; prev=""
-for a in "$@"; do
-  [ "$prev" = "-1" ] && r1="$a"
-  [ "$prev" = "-2" ] && r2="$a"
-  prev="$a"
-done
-printf '@HD\tVN:1.0\n@SQ\tSN:chr1\tLN:8\n'
-awk -v clip="$BISMARK_TEST_SOFTCLIP" -v r2="$r2" '
- function rc(s,  i, o, c) {
-   o = "";
-   for (i = length(s); i > 0; i--) {
-     c = substr(s, i, 1);
-     o = o (c == "A" ? "T" : c == "C" ? "G" : c == "G" ? "C" : c == "T" ? "A" : "N");
-   }
-   return o;
- }
- NR%4==1 { id=$1; sub(/^@/,"",id); for (k = 0; k < 4; k++) { getline m[k] < r2 } }
- NR%4==2 {
-   cigar = clip == "1" ? "1S5M" : "6M";
-   tlen = clip == "1" ? 5 : 6;
-   q = $0; gsub(/./, "5", q);
-   print id "\t99\tchr1\t1\t42\t" cigar "\t=\t1\t" tlen "\t" $0 "\t" q "\tAS:i:0";
-   print id "\t147\tchr1\t1\t42\t" cigar "\t=\t1\t-" tlen "\t" rc(m[1]) "\t" q "\tAS:i:0";
- }' "$r1"
-"#;
-        let banner = if engine == "bowtie2" {
-            "bowtie2-align-s version 2.5.5"
-        } else {
-            "hisat2-align-s version 2.2.2"
-        };
-        write_exec(
-            &root.join("bin").join(engine),
-            &script.replace("VERSION", banner),
-        );
-        Self { dir, engine }
-    }
-
-    fn command(&self) -> Command {
-        let root = self.dir.path();
-        let mut cmd = bin();
-        cmd.arg("--illumina_5base")
-            .arg(format!("--{}", self.engine))
-            .arg("--genome")
-            .arg(root.join("genome"))
-            .arg("--five_base_index")
-            .arg(root.join("plain index"))
-            .arg(format!("--path_to_{}", self.engine))
-            .arg(root.join("bin"))
-            .arg("--output_dir")
-            .arg(root.join("output"))
-            .arg("--temp_dir")
-            .arg(root.join("temp"))
-            .arg("-1")
-            .arg(root.join("reads_1.fq"))
-            .arg("-2")
-            .arg(root.join("reads_2.fq"))
-            .env("BISMARK_TEST_ARGV", root.join("argv"))
-            .env("BISMARK_TEST_CALLS", root.join("calls"));
-        cmd
-    }
-
-    fn argv(&self) -> Vec<String> {
-        fs::read_to_string(self.dir.path().join("argv"))
-            .unwrap()
-            .lines()
-            .map(String::from)
-            .collect()
-    }
-
-    fn token(&self) -> &str {
-        if self.engine == "bowtie2" {
-            "bt2"
-        } else {
-            "hisat2"
-        }
-    }
-
-    fn check_report(&self, stderr: &[u8]) {
-        let args = self.argv();
-        let end = args.iter().position(|a| a == "-x").unwrap();
-        let opts = args[..end].join(" ");
-        let report = fs::read_to_string(self.dir.path().join(format!(
-            "output/reads_1_bismark_{}_PE_report.txt",
-            self.token()
-        )))
-        .unwrap();
-        assert!(
-            report.contains("against the unconverted genome of"),
-            "{report}"
-        );
-        assert!(
-            report.contains(&format!("with the specified options: {opts}\n")),
-            "{report}"
-        );
-        assert!(String::from_utf8_lossy(stderr).contains(&format!("aligner_options: {opts}\n")));
-        assert_eq!(
-            fs::read_to_string(self.dir.path().join("calls")).unwrap(),
-            "alignment\n"
-        );
-        for (flag, path) in [
-            ("-x", self.dir.path().join("plain index")),
-            ("-1", self.dir.path().join("reads_1.fq")),
-            ("-2", self.dir.path().join("reads_2.fq")),
-        ] {
-            assert!(
-                args.windows(2)
-                    .any(|w| w[0] == flag && w[1] == path.to_str().unwrap()),
-                "{args:?}"
-            );
-        }
-    }
-}
-
-#[cfg(unix)]
-fn assert_option(args: &[String], name: &str, value: &str) {
-    assert_eq!(args.iter().filter(|a| *a == name).count(), 1, "{args:?}");
-    assert!(
-        args.windows(2).any(|w| w[0] == name && w[1] == value),
-        "{args:?}"
-    );
-}
-
-#[cfg(unix)]
-type OptionCase<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
-
-#[cfg(unix)]
-#[test]
-fn five_base_1134_default_argv_is_exact() {
-    for (engine, expected) in [
-        (
-            "bowtie2",
-            "-q --score-min L,0,-0.6 --maxins 800 -p 4 --reorder",
-        ),
-        (
-            "hisat2",
-            "-q --score-min L,0,-0.6 --no-spliced-alignment -p 4 --reorder",
-        ),
-    ] {
-        let f = FiveBaseOptionsFixture::new(engine);
-        let out = f.command().args(["-p", "4"]).assert().success();
-        let args = f.argv();
-        let end = args.iter().position(|a| a == "-x").unwrap();
-        assert_eq!(args[..end].join(" "), expected, "{engine}");
-        let name = if engine == "bowtie2" {
-            "Bowtie 2"
-        } else {
-            "HISAT2"
-        };
-        let stderr = String::from_utf8_lossy(&out.get_output().stderr);
-        let notice = stderr
-            .lines()
-            .find(|l| l.starts_with("Note: --illumina_5base"))
-            .unwrap_or_else(|| panic!("{engine}: no 5-Base notice in {stderr}"));
-        assert!(
-            notice.contains(&format!("aligned with {name} to the UNCONVERTED genome")),
-            "{notice}"
-        );
-        assert!(!stderr.contains("aligned with minimap2"), "{stderr}");
-        f.check_report(&out.get_output().stderr);
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_bowtie2_maxins_default_reaches_argv() {
-    let cases: &[(&str, &[&str], Option<&str>)] = &[
-        ("bowtie2", &[], Some("800")),
-        ("bowtie2", &["--dovetail"], Some("800")),
-        ("bowtie2", &["--no_dovetail"], Some("800")),
-        ("bowtie2", &["-X", "500"], Some("500")),
-        ("bowtie2", &["-X", "1200", "--no_dovetail"], Some("1200")),
-        ("hisat2", &[], None),
-        ("hisat2", &["-X", "500"], Some("500")),
-    ];
-    for (engine, cli, maxins) in cases {
-        let f = FiveBaseOptionsFixture::new(engine);
-        let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
-        let args = f.argv();
-        let count = |tok: &str| args.iter().filter(|a| *a == tok).count();
-        assert_eq!(count("--dovetail"), 0, "{cli:?}: {args:?}");
-        match maxins {
-            Some(x) => assert_option(&args, "--maxins", x),
-            None => assert_eq!(count("--maxins"), 0, "{args:?}"),
-        }
-        for tok in ["--no-mixed", "--no-discordant", "--local"] {
-            assert_eq!(count(tok), 0, "{args:?}");
-        }
-        f.check_report(&out.get_output().stderr);
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_1134_tuning_reaches_each_aligner_and_report() {
-    let cases: &[OptionCase] = &[
-        (&["-L", "10"], &[("-L", "10")]),
-        (&["-N", "1"], &[("-N", "1")]),
-        (&["-D", "20"], &[("-D", "20")]),
-        (&["--score_min", "L,0,-0.2"], &[("--score-min", "L,0,-0.2")]),
-        (&["-I", "10"], &[("--minins", "10")]),
-        (&["-X", "1000"], &[("--maxins", "1000")]),
-        (
-            &["-I", "10", "-X", "1000"],
-            &[("--minins", "10"), ("--maxins", "1000")],
-        ),
-        (
-            &[
-                "-L",
-                "10",
-                "-N",
-                "1",
-                "-D",
-                "20",
-                "-R",
-                "4",
-                "--rdg",
-                "6,2",
-                "--rfg",
-                "7,3",
-                "--score_min",
-                "L,0,-0.2",
-                "-I",
-                "10",
-                "-X",
-                "1000",
-                "--quiet",
-                "--phred33-quals",
-            ],
-            &[
-                ("-L", "10"),
-                ("-N", "1"),
-                ("-D", "20"),
-                ("-R", "4"),
-                ("--rdg", "6,2"),
-                ("--rfg", "7,3"),
-                ("--score-min", "L,0,-0.2"),
-                ("--minins", "10"),
-                ("--maxins", "1000"),
-            ],
-        ),
-    ];
-    for engine in ["bowtie2", "hisat2"] {
-        for (cli, expected) in cases {
-            let f = FiveBaseOptionsFixture::new(engine);
-            let out = f.command().args(["-p", "4"]).args(*cli).assert().success();
-            let args = f.argv();
-            for (flag, value) in *expected {
-                assert_option(&args, flag, value);
-            }
-            assert!(!args.iter().any(|a| a == "--dovetail"), "{args:?}");
-            if cli.contains(&"--quiet") {
-                assert_eq!(args.iter().filter(|a| *a == "--quiet").count(), 1);
-            }
-            if cli.contains(&"--phred33-quals") {
-                assert_eq!(args.iter().filter(|a| *a == "--phred33").count(), 1);
-            }
-            f.check_report(&out.get_output().stderr);
-        }
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_1134_threads_survive_cli_resolution() {
-    let cases: &[(&[&str], Option<&str>)] = &[
-        (&[], None),
-        (&["--multicore", "1"], None),
-        (&["--multicore", "4"], Some("4")),
-        (&["-p", "8"], Some("8")),
-        (&["--multicore", "4", "-p", "8"], Some("8")),
-    ];
-    for engine in ["bowtie2", "hisat2"] {
-        for (cli, expected) in cases {
-            let f = FiveBaseOptionsFixture::new(engine);
-            let out = f.command().args(*cli).assert().success();
-            let args = f.argv();
-            assert_eq!(args.iter().filter(|a| *a == "--reorder").count(), 1);
-            assert_eq!(args.iter().filter(|a| *a == "-p").count(), 1);
-            let cpus = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(2)
-                .to_string();
-            assert_option(&args, "-p", expected.unwrap_or(cpus.as_str()));
-            assert!(
-                !String::from_utf8_lossy(&out.get_output().stderr)
-                    .contains("interpreted as a single HISAT2")
-            );
-            f.check_report(&out.get_output().stderr);
-        }
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_1134_local_and_phred64_produce_usable_bam() {
-    use noodles_sam::alignment::record::cigar::op::Kind;
-    for engine in ["bowtie2", "hisat2"] {
-        for score in [
-            None,
-            Some(if engine == "bowtie2" {
-                "G,15,7"
-            } else {
-                "L,0,-0.3"
-            }),
-        ] {
-            let f = FiveBaseOptionsFixture::new(engine);
-            for mate in [1, 2] {
-                fs::write(
-                    f.dir.path().join(format!("reads_{mate}.fq")),
-                    b"@r1\nATGTAC\n+\nhhhhhh\n",
-                )
-                .unwrap();
-            }
-            let mut cmd = f.command();
-            cmd.args(["--local", "--phred64-quals", "-p", "4"])
-                .env("BISMARK_TEST_SOFTCLIP", "1");
-            if let Some(s) = score {
-                cmd.args(["--score_min", s]);
-            }
-            let out = cmd.assert().success();
-            let args = f.argv();
-            assert_option(
-                &args,
-                "--score-min",
-                score.unwrap_or(if engine == "bowtie2" {
-                    "G,20,8"
-                } else {
-                    "L,0,-0.6"
-                }),
-            );
-            assert_eq!(args.iter().any(|a| a == "--local"), engine == "bowtie2");
-            assert!(!args.iter().any(|a| a == "--no-softclip"));
-            assert_eq!(args.iter().filter(|a| *a == "--phred64").count(), 1);
-            let mut reader = bismark::io::BamReader::from_path(
-                &f.dir
-                    .path()
-                    .join(format!("output/reads_1_bismark_{}_pe.bam", f.token())),
-            )
-            .unwrap();
-            let records: Vec<_> = reader.records().map(Result::unwrap).collect();
-            assert_eq!(records.len(), 2);
-            for rec in records {
-                assert_eq!(rec.inner().quality_scores().as_ref(), &[40u8; 6]);
-                let ops: Vec<_> = rec
-                    .inner()
-                    .cigar()
-                    .as_ref()
-                    .iter()
-                    .map(|op| (op.kind(), op.len()))
-                    .collect();
-                assert_eq!(ops, vec![(Kind::SoftClip, 1), (Kind::Match, 5)]);
-            }
-            f.check_report(&out.get_output().stderr);
-        }
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn five_base_1134_invalid_tuning_fails_before_output_creation() {
-    let invalid: &[(&[&str], &str)] = &[
-        (&["-N", "2"], "can be 0 or 1"),
-        (&["--rdg", "bad"], "--rdg <int1>,<int2>"),
-        (&["--rfg", "bad"], "--rfg <int1>,<int2>"),
-        (
-            &["--phred33-quals", "--phred64-quals"],
-            "one type of quality value",
-        ),
-        (&["--multicore", "0"], "Core usage needs to be set to 1"),
-        (&["-p", "0"], "-p of 2 or more"),
-        (&["-p", "1"], "-p of 2 or more"),
-        (&["--score_min", "G,20,8"], "<L,value,value>"),
-        (
-            &["--known-splicesite-infile", "SPLICE"],
-            "5-Base alignment is unspliced",
-        ),
-    ];
-    let rejects = |engine, cli: &[&str], message: &str| {
-        let f = FiveBaseOptionsFixture::new(engine);
-        let splice = f.dir.path().join("known.splice");
-        fs::write(&splice, "chr1\t2\t5\t+\n").unwrap();
-        let cli: Vec<&str> = cli
-            .iter()
-            .map(|a| {
-                if *a == "SPLICE" {
-                    splice.to_str().unwrap()
-                } else {
-                    a
-                }
-            })
-            .collect();
-        f.command()
-            .args(&cli)
-            .assert()
-            .failure()
-            .stderr(predicate::str::contains(message));
-        assert!(!f.dir.path().join("output").exists());
-        assert!(!f.dir.path().join("argv").exists());
-    };
-    for engine in ["bowtie2", "hisat2"] {
-        for (cli, message) in invalid {
-            rejects(engine, cli, message);
-        }
-    }
-    rejects(
-        "bowtie2",
-        &["--no-spliced-alignment"],
-        "only be selected in HISAT2 mode",
-    );
-    rejects(
-        "bowtie2",
-        &["--local", "--score_min", "L,0,-0.2"],
-        "<G,value,value>",
-    );
-    rejects(
-        "bowtie2",
-        &["-I", "900"],
-        "-I/--minins (900) is larger than the maximum insert size (800); raise -X/--maxins",
-    );
-}
-
 /// The sorted file names in `dir`.
 #[cfg(unix)]
 fn dir_names(dir: &Path) -> Vec<String> {
@@ -9006,12 +8169,12 @@ fn five_base_failed_input_keeps_the_finished_inputs_post_pass_outputs() {
     let genome = TempDir::new().unwrap();
     make_genome_fasta_only(genome.path());
     let bins = TempDir::new().unwrap();
-    make_fake_minimap2_five_base_pe(bins.path());
+    let idx = make_fake_bwamem3_five_base_pe(bins.path());
     // Wrap the fake engine so it fails on the second input.
-    let real = bins.path().join("minimap2.real");
-    fs::rename(bins.path().join("minimap2"), &real).unwrap();
+    let real = bins.path().join("bwa-mem3.real");
+    fs::rename(bins.path().join("bwa-mem3"), &real).unwrap();
     write_exec(
-        &bins.path().join("minimap2"),
+        &bins.path().join("bwa-mem3"),
         &format!(
             "#!/bin/sh\ncase \"$*\" in *b_1.fq*) exit 1;; esac\nexec {} \"$@\"\n",
             real.display()
@@ -9042,7 +8205,9 @@ fn five_base_failed_input_keeps_the_finished_inputs_post_pass_outputs() {
         .arg("--five_base_deconvolution")
         .args(["--five_base_duplex", "--five_base_consensus"])
         .args(["--five_base_emit_multiplicity", "both"])
-        .arg("--path_to_minimap2")
+        .arg("--five_base_index")
+        .arg(&idx)
+        .arg("--path_to_bwamem3")
         .arg(bins.path())
         .arg("--output_dir")
         .arg(outdir.path())
@@ -9056,12 +8221,12 @@ fn five_base_failed_input_keeps_the_finished_inputs_post_pass_outputs() {
     assert_eq!(
         dir_names(outdir.path()),
         [
-            "a_1_bismark_mm2_PE_report.txt",
-            "a_1_bismark_mm2_pe.5base_consensus.bam",
-            "a_1_bismark_mm2_pe.5base_deconvolution.txt",
-            "a_1_bismark_mm2_pe.5base_duplex.txt",
-            "a_1_bismark_mm2_pe.5base_simplex.bam",
-            "a_1_bismark_mm2_pe.bam",
+            "a_1_bismark_bwamem3_PE_report.txt",
+            "a_1_bismark_bwamem3_pe.5base_consensus.bam",
+            "a_1_bismark_bwamem3_pe.5base_deconvolution.txt",
+            "a_1_bismark_bwamem3_pe.5base_duplex.txt",
+            "a_1_bismark_bwamem3_pe.5base_simplex.bam",
+            "a_1_bismark_bwamem3_pe.bam",
         ]
     );
 }

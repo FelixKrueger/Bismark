@@ -27,9 +27,9 @@ const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED
 )]
 pub struct Cli {
     // ---- genome + reads ----------------------------------------------------
-    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base`
-    /// needs only the FASTA). May also be
-    /// given as the first positional argument.
+    /// Genome folder (prepared with bismark_genome_preparation; `--illumina_5base` and `--taps`
+    /// need the FASTA plus `Bwamem3_Index/` from `bismark_genome_preparation --bwamem3`, unless
+    /// `--five_base_index` is given). May also be given as the first positional argument.
     #[arg(long = "genome", visible_alias = "genome_folder", value_name = "PATH")]
     pub genome: Option<PathBuf>,
 
@@ -58,7 +58,8 @@ pub struct Cli {
     /// threading (Approach B-faithful — HISAT2 splice discovery is not chunk-invariant).
     #[arg(long)]
     pub hisat2: bool,
-    /// Align with minimap2 (single-end only; paired-end is rejected).
+    /// Align with minimap2 (single-end only; paired-end is rejected). Not with
+    /// `--illumina_5base` or `--taps`, which align with bwa-mem3.
     #[arg(long = "minimap2", visible_alias = "mm2")]
     pub minimap2: bool,
     /// Align with rammap, the pure-Rust minimap2 reimplementation (single-end
@@ -66,22 +67,23 @@ pub struct Cli {
     /// concordance-validated — NOT byte-identical to minimap2.
     #[arg(long = "rammap", visible_alias = "ram")]
     pub rammap: bool,
-    /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware). Needs
-    /// --illumina_5base and a `bwa-mem3 index --meth` index: `<genome>/Bwamem3_Index/` from
-    /// `bismark_genome_preparation --bwamem3`, or one given as --five_base_index.
-    /// Implied by `--taps`.
+    /// `[5-Base]` Align with bwa-mem3 `--meth=5base` (methylation-aware), the only
+    /// `--illumina_5base` engine, so the flag is optional there. Needs a `bwa-mem3 index --meth`
+    /// index: `<genome>/Bwamem3_Index/` from `bismark_genome_preparation --bwamem3`, or one given
+    /// as --five_base_index. Implied by `--taps`.
     #[arg(long = "bwamem3")]
     pub bwamem3: bool,
-    /// Folder containing the `bowtie2` executable (not the executable itself).
+    /// Folder containing the `bowtie2` executable, not the executable itself (not with
+    /// `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_bowtie2", value_name = "PATH")]
     pub path_to_bowtie2: Option<PathBuf>,
-    /// Folder containing `hisat2`.
+    /// Folder containing `hisat2` (not with `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_hisat2", value_name = "PATH")]
     pub path_to_hisat2: Option<PathBuf>,
-    /// Folder containing `minimap2`.
+    /// Folder containing `minimap2` (not with `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_minimap2", value_name = "PATH")]
     pub path_to_minimap2: Option<PathBuf>,
-    /// Folder containing `rammap`.
+    /// Folder containing `rammap` (not with `--illumina_5base` or `--taps`).
     #[arg(long = "path_to_rammap", value_name = "PATH")]
     pub path_to_rammap: Option<PathBuf>,
     /// Folder containing `bwa-mem3`.
@@ -105,12 +107,11 @@ pub struct Cli {
     /// `[v2, opt-in, never-silent, concordance-gated]` Illumina 5-Base (5mC->T)
     /// mode. Unlike bisulfite, the 5-Base chemistry converts METHYLATED C to T and
     /// leaves unmethylated C intact, so reads keep full complexity and align to the
-    /// UNCONVERTED genome with a standard aligner; methylation is then called with
-    /// inverted polarity (a read T at a genomic C = methylated). Paired-end only
-    /// (the 5-Base library is paired-end); single-end input is rejected. Aligns with
-    /// minimap2 (`-x sr`) against the raw genome FASTA by default; bowtie2/hisat2 via
-    /// `--five_base_index`; `--bwamem3` (methylation-aware) via a bwa-mem3 meth index
-    /// (`<genome>/Bwamem3_Index/` or `--five_base_index`). NOT byte-identical (Perl Bismark has no 5-Base oracle);
+    /// UNCONVERTED genome; methylation is then called with inverted polarity (a read T
+    /// at a genomic C = methylated). Paired-end only (the 5-Base library is paired-end);
+    /// single-end input is rejected. Aligns with bwa-mem3 (methylation-aware), the only
+    /// 5-Base engine, via a bwa-mem3 meth index (`<genome>/Bwamem3_Index/` or
+    /// `--five_base_index`). NOT byte-identical (Perl Bismark has no 5-Base oracle);
     /// validated by concordance with DRAGEN. See FelixKrueger/Bismark#787.
     #[arg(long = "illumina_5base", visible_alias = "five_base")]
     pub illumina_5base: bool,
@@ -132,26 +133,18 @@ pub struct Cli {
     /// `--illumina_5base`. Concordance-gated (not byte-identical); see the 5-Base guide.
     #[arg(long = "five_base_deconvolution", visible_alias = "five_base_deconv")]
     pub five_base_deconvolution: bool,
-    /// `[#787]` Basename of a NORMAL (unconverted) bowtie2/hisat2 index of the genome,
-    /// used by `--illumina_5base --bowtie2`/`--hisat2`. 5-Base reads keep full
-    /// complexity, so they align to the plain genome index (build it once with
-    /// `bowtie2-build`/`hisat2-build genome.fa <basename>`). Without an engine flag,
-    /// 5-Base uses minimap2 against the genome FASTA directly and this is not needed.
-    /// Checked before the run starts, and — as the aligner itself does — also resolved
-    /// via `$BOWTIE2_INDEXES` / `$HISAT2_INDEXES`. With `--bwamem3` or `--taps` it is instead
-    /// the FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder
-    /// written by `bismark_genome_preparation --bwamem3`; optional when `<genome>/Bwamem3_Index/`
-    /// exists.
-    #[arg(long = "five_base_index", value_name = "BASENAME")]
+    /// `[#787]` The bwa-mem3 methylation index of an `--illumina_5base` or `--taps` run: the
+    /// FASTA path a `bwa-mem3 index --meth <genome.fa>` index was built from, or a folder written
+    /// by `bismark_genome_preparation --bwamem3`. Checked before the run starts; optional when
+    /// `<genome>/Bwamem3_Index/` exists.
+    #[arg(long = "five_base_index", value_name = "PATH")]
     pub five_base_index: Option<PathBuf>,
     /// `[#787]` Inline UMI length at the 5' of each 5-Base read (e.g. `8`, the 7 bp UMI
     /// plus 1 spacer of the Illumina 5-Base `OverrideCycles U7N1Y#`). When greater than
     /// zero, reads are deduplicated by (UMI, chromosome, position, strand): PCR/optical
     /// duplicates are dropped (the first survives), removing methylation bias. 0 = off
-    /// (the default). When greater than zero, the UMI prefix is taken from the raw read,
-    /// so the methylation call relies on the aligner soft-clipping that prefix (minimap2
-    /// `-x sr` and bowtie2/hisat2-local do; soft-clipped bases produce no call). A
-    /// non-soft-clipping aligner would mis-frame the call. Requires `--illumina_5base`.
+    /// (the default). The first N bases of each mate are not called.
+    /// Requires `--illumina_5base`.
     #[arg(long = "five_base_umi_len", value_name = "int", default_value_t = 0)]
     pub five_base_umi_len: usize,
     /// `[#787]` Minimum Phred base quality for a 5-Base methylation call. Read bases
@@ -256,8 +249,8 @@ pub struct Cli {
     /// PBAT library.
     #[arg(long)]
     pub pbat: bool,
-    /// SLAM-seq mode.
-    #[arg(long)]
+    /// Not supported (hidden): stops with an error.
+    #[arg(long, hide = true)]
     pub slam: bool,
     /// EXPERIMENTAL (v2, opt-in, never-silent): align against a single combined
     /// CT+GA index (`Bisulfite_Genome/Combined/BS_combined`, built by

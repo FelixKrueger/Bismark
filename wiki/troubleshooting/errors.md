@@ -1,45 +1,54 @@
 ---
 type: troubleshooting
 title: Errors that stop a run
-description: The messages that stop a run (including bwa-mem3 and streamed-run errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.
-tags: [troubleshooting, errors, bwa-mem3, streaming]
+description: The messages that stop a run (including bwa-mem3, streamed-run and output-name collision errors), the warnings that do not, and streamed runs that stop on Bismark 3.2.0 and 3.3.0.
+tags: [troubleshooting, errors, bwa-mem3, streaming, output-names]
 page_id: errors
 subject_status: current
-updated: 2026-11-21
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
-    commit: a199ad4
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: a199ad4
+    commit: 12634a2
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
-    commit: a199ad4
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: a199ad4
+    commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/mod.rs
-    commit: a199ad4
+    commit: a96f6db
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/stream.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/parallel.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/io/error.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/mod.rs
-    commit: a199ad4
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/extractor/state.rs
-    commit: a199ad4
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/cli.rs
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/extractor/error.rs
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/genome_prep/bwamem3.rs
-    commit: a199ad4
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/genome_prep/cli.rs
+    commit: a96f6db
 ---
 
 # Errors that stop a run
@@ -53,23 +62,37 @@ Each row gives the start of a message that stops a run, its cause in the code, a
 | Message starts with | Cause | Fix |
 |---|---|---|
 | `the Bowtie 2 index of the C->T-converted genome seems to be faulty` | An index file is missing (`FaultyIndex` in `aligner/error.rs`) | Run `bismark prepare` for the same aligner: [usage/prepare-a-genome.md](../usage/prepare-a-genome.md) |
-| `failed to execute Bowtie 2 properly` | The aligner is not on `PATH` (`AlignerNotWorking`) | Install it, or pass `--path_to_bowtie2 <dir>` |
+| `failed to execute Bowtie 2 properly` | The aligner is not on `PATH` (`AlignerNotWorking`; the message names the probe that ran: `--version`, or `version` for bwa-mem3) | Install it, or pass `--path_to_bowtie2 <dir>` |
 | `input BAM is coordinate-sorted` | Paired-end dedup or paired-end extraction got a coordinate-sorted BAM (`UnsortedInput` in `io/error.rs`) | Use the BAM straight from the aligner, or name-sort it |
 | `--umi_mismatches needs …`, `--umi_mismatches reads each input twice …`, `input changed while it was being deduplicated`, `the second pass read …` | `bismark dedup --umi_mismatches` errors | See [usage/deduplicate-alignments.md](../usage/deduplicate-alignments.md#errors) |
 | `library-mode auto-detection failed` | The extractor could not tell SE from PE (`process_one_file` in `extractor/mod.rs`) | Pass `-s` or `-p` |
 | `--include_overlap requires --paired-end` | `--include_overlap` with `-s`, or on a file auto-detected as single-end (`process_one_file` in `extractor/mod.rs`) | Drop `--include_overlap`: single-end reads have no read 2 |
+| `<a> and <b> would both write <file>, so the second would overwrite the first` | Two `bismark extract` inputs would write the same splitting report, M-bias or bedGraph file, for example `a/s.bam` with `b/s.cram`, or one file given twice (`reject_output_name_collision` in `extractor/cli.rs`, `OutputNameCollision` in `extractor/error.rs`) | Rename one input, or run each with its own `--output_dir`: [usage/extract-methylation-calls.md](../usage/extract-methylation-calls.md) |
 | `Please select a value for -p of 2 or more!` | `-p 1` | Drop `-p`, or use 2 or more |
-| `-I/--minins (<i>) is larger than the maximum insert size (<x>)` | A 5-Base Bowtie 2 run with `-I` above `-X`, or above the 800 bp default (`build_five_base_aligner_options` in `aligner/options.rs`) | Lower `-I`, or raise `-X` |
-| `bwa-mem3 index file <file> is missing` | A `--bwamem3` index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
-| `--illumina_5base --bwamem3 requires --five_base_index <prefix>` (or `--taps requires …`), or `--five_base_index <dir> is a folder; did you mean <dir>/Bwamem3_Index?` | No `--five_base_index` and no `Bwamem3_Index/` in the genome folder, or a genome folder given as the index (`resolve_five_base_index` in `aligner/config.rs`) | Build the index with `bismark prepare --bwamem3 <genome>` ([usage/prepare-a-genome.md](../usage/prepare-a-genome.md)), then leave out `--five_base_index`; or pass the index prefix or its `Bwamem3_Index` folder |
+| `--slam is not supported: Bismark 3.x has no SLAM-seq mode.` | `bismark align --slam`; the hidden flag is checked before any other option (`reject_slam` in `aligner/config.rs`, called first by `run` in `aligner/mod.rs` and by `resolve`) | Drop `--slam` |
+| `--slam was removed in Bismark 3.5.0: the Bismark 3.x aligner has no SLAM-seq mode.` | `bismark prepare --slam`; the hidden flag is checked before the genome folder is read (`Cli::validate` in `genome_prep/cli.rs`) | Drop `--slam` |
+| `<a> and <b> would both write their output to the name '<name>'` | Two aligner inputs (read 1 for paired-end) get the same output name, or `--basename` was given with more than one input (`reject_output_name_collision` in `aligner/config.rs`) | Rename one input, or run each with its own `--output_dir`; how outputs are named: [usage/align-reads.md](../usage/align-reads.md) |
+| `<a> and <b> would both write their mate-2 reads to '<file>'` | `--unmapped` or `--ambiguous` with two `-1`/`-2` pairs whose read-2 files have the same file name (`reject_output_name_collision` in `aligner/config.rs`) | Rename one read-2 file, or run each pair with its own `--output_dir` |
+| `bwa-mem3 index file <file> is missing` | A bwa-mem3 index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
+| `--illumina_5base aligns with bwa-mem3, which needs its methylation index` (or `--taps aligns …`), or `--five_base_index <dir> is a folder; did you mean <dir>/Bwamem3_Index?` | No `--five_base_index` and no `Bwamem3_Index/` in the genome folder, or a genome folder given as the index; when bwa-mem3 is missing too, the message adds where it was looked for (`resolve_five_base_index` in `aligner/config.rs`) | Build the index with `bismark prepare --bwamem3 <genome>` ([usage/prepare-a-genome.md](../usage/prepare-a-genome.md)), then leave out `--five_base_index`; or pass the index prefix or its `Bwamem3_Index` folder |
+| `--five_base_index <X> is a Bowtie 2 index; --illumina_5base needs a bwa-mem3 methylation index` (or HISAT2, or `--taps`) | A Bowtie 2 or HISAT2 index, a bisulfite `BS_CT`/`BS_GA` one included, given as `--five_base_index` (`resolve_five_base_index`, `unconverted_index_kind`) | Build the bwa-mem3 index with `bismark prepare --bwamem3 <genome>`, or pass its prefix |
+| `<option> is not supported with --illumina_5base: bwa-mem3 uses its own scoring and infers insert sizes itself; drop it.` (or `--taps`) | `--local`, `--most_valid_alignments`, a Bowtie 2/HISAT2 scoring, seed or insert-size option, or `--dovetail`/`--no_dovetail` on a 5-Base or TAPS run (`reject_bwamem3_tuning` in `aligner/options.rs`) | Drop the option |
+| `<option> is not supported with --illumina_5base: bwa-mem3 does not do spliced alignment; drop it.` (or `--taps`) | `--no-spliced-alignment` or `--known-splicesite-infile` on a 5-Base or TAPS run (`reject_bwamem3_tuning`) | Drop the option |
+| `--illumina_5base aligns with bwa-mem3 only; drop <flag>.` (or `--taps aligns …`) | `--bowtie2`, `--hisat2`, `--minimap2` or `--rammap` on a 5-Base or TAPS run, also with `--five_base_consensus_from_bam` or `--five_base_bisulfite_bam` (`reject_non_bwamem3_flags`, called from `expand_taps` in `aligner/config.rs`) | Drop the flag; if the genome folder has no `Bwamem3_Index/`, build it once with `bismark prepare --bwamem3 <genome>` |
+| `--bwamem3 is only supported as a 5-Base engine (--illumina_5base).` | `--bwamem3` without `--illumina_5base` or `--taps` (`resolve_aligner` in `aligner/config.rs`) | Add `--illumina_5base`, or drop `--bwamem3` |
+| `You may not select both --bwamem3 and <flag>. Make your pick!` | `--bwamem3` with another aligner flag outside 5-Base and TAPS (`resolve_aligner`) | Drop one of them |
+| `--five_base_index only applies to --illumina_5base and --taps (a bwa-mem3 methylation index).` | `--five_base_index` without either (`resolve_aligner`) | Add `--illumina_5base` or `--taps`, or drop `--five_base_index` |
+| `--five_base_index <dir> is a folder; pass the index prefix …` | A `--five_base_index` folder that holds no bwa-mem3 index and no `Bwamem3_Index/` (`resolve_five_base_index`) | Pass the FASTA path the index was built from, or a folder written by `bismark prepare --bwamem3` |
+| `<flag> has no effect with --illumina_5base (bwa-mem3 only): drop it.` (or `--taps`) | `--path_to_bowtie2`, `--path_to_hisat2`, `--path_to_minimap2`, `--path_to_rammap` or an `--mm2_*` option on a 5-Base or TAPS run (`reject_non_bwamem3_flags`) | Drop it; bwa-mem3's folder is set with `--path_to_bwamem3` |
 | `the bwa-mem3 index does not match the genome folder` (or `output header`) | The index was built from another FASTA or assembly; contig names or lengths differ (`check_contigs_match` in `aligner/mod.rs`) | Rebuild the index from the FASTA in the `--genome` folder |
 | `bwa-mem3 ended before writing its SAM header; bwa-mem3 exited with signal 9` | bwa-mem3 was killed while loading its index, usually for lack of memory (`five_base_align_and_call_pe`, `describe_exit` in `aligner/mod.rs`) | Give the job more memory |
 | `<file>.meth.fa in the genome folder is a bwa-mem3 index file` | The bwa-mem3 index sits in the `--genome` folder (`run_pe_five_base` in `aligner/mod.rs`) | Move the index to its own folder |
-| `bwa-mem3 <version> is too old or unrecognised` | `--bwamem3` or `--taps` found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.18.0 (`mamba install -c bioconda -c conda-forge bwa-mem3`), or pass `--path_to_bwamem3 <dir>` |
+| `bwa-mem3 <version> is too old or unrecognised` | A 5-Base or TAPS run found a bwa-mem3 older than 0.16.0 (`detect_aligner` in `aligner/aligner.rs`) | Install bwa-mem3 0.18.0 (`mamba install -c bioconda -c conda-forge bwa-mem3`), or pass `--path_to_bwamem3 <dir>` |
 | `bismark prepare --bwamem3`: `<file>: contig <name>, line <n>: …`, or `bwa-mem3 needs more memory than its budget to index <genome>` | A sequence line that bwa-mem3 reads differently from Bismark, such as whitespace, a non-ASCII byte or an empty contig (`stage_input`, `seq_line_len` in `genome_prep/bwamem3.rs`); or `bwa-mem3 index` exited 3 (`run_index`) | Fix that FASTA line (every rejected input: [usage/prepare-a-genome.md](../usage/prepare-a-genome.md)); for memory, raise `--bwamem3_max_memory` or use a machine with more memory |
-| `--taps aligns with bwa-mem3 only` | `--taps` was given another aligner flag (`expand_taps` in `aligner/config.rs`) | Drop the aligner flag |
 | `<option> is validated for Illumina 5-Base only, not TAPS` | `--taps` with duplex, consensus, deconvolution, `--five_base_umi_qname` or `--five_base_emit_multiplicity` (`expand_taps`) | Drop the option: [usage/align-taps-reads.md](../usage/align-taps-reads.md) |
 | `--five_base_umi_len handles the Illumina 5-Base inline-UMI read structure …` or `--five_base_min_mapq only filters the duplex/consensus pass …` | `--taps` with a non-zero `--five_base_umi_len` or `--five_base_min_mapq` (`expand_taps`) | Drop the option |
+| `--illumina_5base keeps every proper pair at any MAPQ, so no pair is ambiguous: --ambiguous does not apply` (or `--taps`, `--ambig_bam`) | `--ambiguous` or `--ambig_bam` in a 5-Base or TAPS run (`resolve` in `aligner/config.rs`) | Drop the option; filter on MAPQ downstream if needed. `--unmapped` works |
+| `--unmapped applies to an alignment run; --five_base_consensus_from_bam and --five_base_bisulfite_bam align no reads` (or `--ambiguous`, `--ambig_bam`) | The option with a standalone 5-Base BAM mode (`run` in `aligner/mod.rs`) | Drop the option |
 | `<R2> has fewer reads than <R1>` (or `more`), `<engine> produced more records than read pairs` | In a 5-Base run, R1, R2 and the engine output differ in length (`five_base_align_and_call_pe`) | Check that the two files are mates from one run, and read the engine's own errors |
 | `<file> has Windows (CRLF) line endings` | A read file ends its first line with `\r\n` (`reject_crlf_inputs` in `aligner/mod.rs`) | Convert it, for example with `dos2unix` |
 | `the aligner reading <file> returned read names that stop matching the input` | The aligner's read names stopped matching the input (`check_merged` in `aligner/mod.rs`, `finish_checked` in `aligner/stream.rs`) | Check the input for CRLF line endings; in a streamed run, see the next row |

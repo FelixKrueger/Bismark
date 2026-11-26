@@ -25,7 +25,7 @@ cargo install bismark --features rammap-inprocess,binseq-input
 ```
 
 **External tools:** only alignment and genome preparation call an external program on your `PATH`:
-**Bowtie 2** (default), or optionally **HISAT2** or **minimap2**. `--taps`, `--illumina_5base --bwamem3` and
+**Bowtie 2** (default), or optionally **HISAT2** or **minimap2**. `--taps`, `--illumina_5base` (since 3.5.0) and
 `bismark prepare --bwamem3` also need **bwa-mem3** 0.16.0 or later (CI and the container use 0.18.0). The bioconda
 package (from 3.3.0) and the container include it; with `cargo install`, add it with
 `mamba install -c bioconda -c conda-forge bwa-mem3`. All BAM/SAM/CRAM I/O is pure-Rust (`noodles`), so

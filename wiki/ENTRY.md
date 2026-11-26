@@ -10,12 +10,14 @@ Bismark aligns bisulfite, EM-seq, Illumina 5-Base and TAPS sequencing reads to a
 | genome index, `bismark_genome_preparation`, `Bisulfite_Genome`, `Bwamem3_Index`, `prepare --bwamem3` | `usage/prepare-a-genome.md` |
 | align, map reads, paired-end, Bowtie 2, HISAT2, minimap2, threads | `usage/align-reads.md`, `reference/aligner-cli.md` |
 | directional, non-directional, PBAT, library type | `usage/align-reads.md`, `troubleshooting/data-quality.md` |
-| 5-Base, `--illumina_5base`, bwa-mem3, `--bwamem3`, UMI, duplex, consensus | `usage/align-5-base-reads.md`, `reference/aligner-cli.md` |
+| 5-Base, `--illumina_5base`, bwa-mem3, `--bwamem3`, 5-Base engine, 5-Base `--minimap2`/`--bowtie2` rejected, UMI, duplex, consensus, 5-Base `--unmapped` | `usage/align-5-base-reads.md`, `reference/aligner-cli.md` |
 | 5-Base low coverage, methylated CpG islands, CpG-dense regions | `troubleshooting/data-quality.md`, `usage/align-5-base-reads.md` |
 | TAPS, `--taps`, TET-assisted pyridine borane | `usage/align-taps-reads.md`, `usage/align-5-base-reads.md` |
 | temp disk space, `--temp_dir`, named pipes, FIFO, `--no_stream_converted`, a streamed run that hangs | `usage/align-reads.md`, `troubleshooting/errors.md` |
 | CRLF, Windows line endings, read names stop matching | `troubleshooting/errors.md` |
+| two inputs with the same name, "would both write", output overwritten, `--basename` with several inputs | `troubleshooting/errors.md`, `usage/align-reads.md`, `usage/extract-methylation-calls.md` |
 | an aligner option, a rejected flag | `reference/aligner-cli.md` |
+| SLAM-seq, `--slam` | `troubleshooting/errors.md`, `overview.md` |
 | XM, XR, XG, FLAG, BAM tags, methylation call string | `reference/bam-output.md` |
 | mapping efficiency, alignment report, deduplication report | `reference/run-reports.md`, `troubleshooting/data-quality.md` |
 | duplicates, `deduplicate_bismark`, UMI, `--umi_mismatches`, UMI mismatches, RRBS | `usage/deduplicate-alignments.md` |

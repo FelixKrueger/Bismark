@@ -40,6 +40,10 @@ impl Aligner {
 /// `--help` footer: the per-tool last-modified date (embedded by build.rs).
 const HELP_FOOTER: &str = concat!("Last modified: ", env!("BISMARK_LAST_MODIFIED"));
 
+/// Error for the hidden `--slam` flag.
+pub const SLAM_REMOVED: &str =
+    "--slam was removed in Bismark 3.5.0: the Bismark 3.x aligner has no SLAM-seq mode.";
+
 #[derive(Parser, Debug)]
 #[command(
     name = "bismark_genome_preparation",
@@ -66,7 +70,7 @@ pub struct Cli {
     pub minimap2: bool,
 
     /// Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`) of the unconverted genome in
-    /// `<genome>/Bwamem3_Index/`, for `bismark --illumina_5base --bwamem3` and `bismark --taps`.
+    /// `<genome>/Bwamem3_Index/`, for `bismark --illumina_5base` and `bismark --taps`.
     /// Writes no bisulfite-converted genome.
     #[arg(long)]
     pub bwamem3: bool,
@@ -90,9 +94,8 @@ pub struct Cli {
     #[arg(long = "single_fasta")]
     pub single_fasta: bool,
 
-    /// DEPRECATED (slated for removal): SLAM-seq mode — T→C / A→G instead of
-    /// C→T / G→A.
-    #[arg(long)]
+    /// Removed (hidden): stops with an error.
+    #[arg(long, hide = true)]
     pub slam: bool,
 
     /// Force a large index (Bowtie 2 / HISAT2).
@@ -139,8 +142,6 @@ pub struct ResolvedConfig {
     pub bwamem3_max_memory: Option<String>,
     /// Per-chromosome output instead of MFA.
     pub single_fasta: bool,
-    /// SLAM mode (deprecated).
-    pub slam: bool,
     /// Force large index.
     pub large_index: bool,
     /// `--genomic_composition` requested — write the nucleotide-frequency table.
@@ -156,6 +157,9 @@ impl Cli {
     /// [`ResolvedConfig`]. Does NOT touch the filesystem beyond absolutising
     /// the genome folder.
     pub fn validate(&self) -> Result<ResolvedConfig, GenomePrepError> {
+        if self.slam {
+            return Err(GenomePrepError::Validation(SLAM_REMOVED.to_string()));
+        }
         let genome_folder = self.genome_folder.clone().ok_or_else(|| {
             GenomePrepError::Validation(
                 "please specify a genome folder to be used for bisulfite conversion".to_string(),
@@ -184,7 +188,6 @@ impl Cli {
         if aligner == Aligner::BwaMem3 {
             for (set, flag) in [
                 (self.single_fasta, "--single_fasta"),
-                (self.slam, "--slam"),
                 (self.large_index, "--large-index"),
                 (self.combined_genome, "--combined_genome"),
             ] {
@@ -214,12 +217,6 @@ impl Cli {
             if self.single_fasta {
                 return Err(GenomePrepError::Validation(
                     "minimap2 mode does not work in conjunction with --single_fasta — please respecify"
-                        .to_string(),
-                ));
-            }
-            if self.slam {
-                return Err(GenomePrepError::Validation(
-                    "minimap2 mode does not work in conjunction with --slam — please respecify"
                         .to_string(),
                 ));
             }
@@ -264,7 +261,6 @@ impl Cli {
             parallel: self.parallel,
             bwamem3_max_memory: self.bwamem3_max_memory.clone(),
             single_fasta: self.single_fasta,
-            slam: self.slam,
             large_index: self.large_index,
             genomic_composition: self.genomic_composition,
             combined_genome: self.combined_genome,
@@ -297,6 +293,26 @@ mod tests {
     }
 
     #[test]
+    fn slam_is_rejected_first() {
+        let d = tempdir().unwrap();
+        let g = d.path().to_str().unwrap();
+        let missing = d.path().join("no_such_folder");
+        let missing = missing.to_str().unwrap();
+        let cases: [&[&str]; 6] = [
+            &["--slam", g],
+            &["--slam", "--bwamem3", g],
+            &["--slam", "--minimap2", g],
+            &["--slam", "--bowtie2", "--hisat2", g],
+            &["--slam"],
+            &["--slam", missing],
+        ];
+        for args in cases {
+            let e = cli(args).validate().unwrap_err().to_string();
+            assert!(e.contains(SLAM_REMOVED), "{args:?}: {e}");
+        }
+    }
+
+    #[test]
     fn conflicting_aligners_error() {
         let d = tempdir().unwrap();
         let c = cli(&["--bowtie2", "--hisat2", d.path().to_str().unwrap()]);
@@ -304,9 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn minimap2_excludes_single_fasta_slam_large_index() {
+    fn minimap2_excludes_single_fasta_large_index() {
         let d = tempdir().unwrap();
-        for extra in ["--single_fasta", "--slam", "--large-index"] {
+        for extra in ["--single_fasta", "--large-index"] {
             let c = cli(&["--minimap2", extra, d.path().to_str().unwrap()]);
             assert!(
                 matches!(c.validate(), Err(GenomePrepError::Validation(_))),
@@ -356,12 +372,7 @@ mod tests {
                 "{e}"
             );
         }
-        for extra in [
-            "--single_fasta",
-            "--slam",
-            "--large-index",
-            "--combined_genome",
-        ] {
+        for extra in ["--single_fasta", "--large-index", "--combined_genome"] {
             let e = cli(&["--bwamem3", extra, g])
                 .validate()
                 .unwrap_err()

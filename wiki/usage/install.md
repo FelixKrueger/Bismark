@@ -5,30 +5,33 @@ description: The four ways to get the bismark binary, and the external aligners 
 tags: [install, bioconda, cargo, container, nf-core]
 page_id: install
 subject_status: current
-updated: 2026-11-20
+updated: 2026-11-25
 sources:
   - repo: FelixKrueger/Bismark
     path: Dockerfile
-    commit: 855b812
+    commit: d48c830
   - repo: FelixKrueger/Bismark
     path: rust/bismark/Cargo.toml
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: .github/workflows/release.yml
-    commit: 855b812
+    commit: 3225cc7
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/aligner.rs
-    commit: 855b812
+    commit: 457509a
   - repo: FelixKrueger/Bismark
     path: docker/bismark-canonical-wrapper.sh
-    commit: 855b812
+    commit: 3225cc7
+  - repo: FelixKrueger/Bismark
+    path: rust/bismark/src/aligner/config.rs
+    commit: d48c830
 ---
 
 # Install Bismark
 
 ## Summary
 
-Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base `--bwamem3` and TAPS `--taps` runs.
+Bismark is one binary, `bismark`, that holds all 12 tools. The developer says people get it from Bioconda, crates.io, the GHCR container, or through nf-core/methylseq. The aligner step also needs an external aligner on `PATH`: Bowtie 2 by default, or HISAT2 or minimap2, or bwa-mem3 for 5-Base (`--illumina_5base`) and TAPS (`--taps`) runs.
 
 ## Ways to get it
 
