@@ -5,14 +5,14 @@ description: The messages that stop a run (including bwa-mem3, streamed-run and 
 tags: [troubleshooting, errors, bwa-mem3, streaming, output-names]
 page_id: errors
 subject_status: current
-updated: 2026-11-25
+updated: 2026-11-26
 sources:
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/error.rs
     commit: 6b6f0b4
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/options.rs
-    commit: d48c830
+    commit: 12634a2
   - repo: FelixKrueger/Bismark
     path: rust/bismark/src/aligner/config.rs
     commit: d48c830
@@ -71,7 +71,8 @@ Each row gives the start of a message that stops a run, its cause in the code, a
 | `bwa-mem3 index file <file> is missing` | A bwa-mem3 index file is missing (`check_bwamem3_index_files` in `aligner/config.rs`) | For `<genome>/Bwamem3_Index/`, rebuild it with `bismark prepare --bwamem3 <genome>`; for a hand-built index, rebuild it with `bwa-mem3 index --meth <genome.fa>` |
 | `--illumina_5base aligns with bwa-mem3, which needs its methylation index` (or `--taps aligns …`), or `--five_base_index <dir> is a folder; did you mean <dir>/Bwamem3_Index?` | No `--five_base_index` and no `Bwamem3_Index/` in the genome folder, or a genome folder given as the index; when bwa-mem3 is missing too, the message adds where it was looked for (`resolve_five_base_index` in `aligner/config.rs`) | Build the index with `bismark prepare --bwamem3 <genome>` ([usage/prepare-a-genome.md](../usage/prepare-a-genome.md)), then leave out `--five_base_index`; or pass the index prefix or its `Bwamem3_Index` folder |
 | `--five_base_index <X> is a Bowtie 2 index; --illumina_5base needs a bwa-mem3 methylation index` (or HISAT2, or `--taps`) | A Bowtie 2 or HISAT2 index, a bisulfite `BS_CT`/`BS_GA` one included, given as `--five_base_index` (`resolve_five_base_index`, `unconverted_index_kind`) | Build the bwa-mem3 index with `bismark prepare --bwamem3 <genome>`, or pass its prefix |
-| `<option> is not supported with --illumina_5base: bwa-mem3 uses its own scoring and infers insert sizes itself; drop it.` (or `--taps`) | A Bowtie 2 or HISAT2 tuning option on a 5-Base or TAPS run (`reject_bwamem3_tuning` in `aligner/options.rs`) | Drop the option |
+| `<option> is not supported with --illumina_5base: bwa-mem3 uses its own scoring and infers insert sizes itself; drop it.` (or `--taps`) | `--local`, `--most_valid_alignments`, a Bowtie 2/HISAT2 scoring, seed or insert-size option, or `--dovetail`/`--no_dovetail` on a 5-Base or TAPS run (`reject_bwamem3_tuning` in `aligner/options.rs`) | Drop the option |
+| `<option> is not supported with --illumina_5base: bwa-mem3 does not do spliced alignment; drop it.` (or `--taps`) | `--no-spliced-alignment` or `--known-splicesite-infile` on a 5-Base or TAPS run (`reject_bwamem3_tuning`) | Drop the option |
 | `--illumina_5base aligns with bwa-mem3 only; drop <flag>.` (or `--taps aligns …`) | `--bowtie2`, `--hisat2`, `--minimap2` or `--rammap` on a 5-Base or TAPS run, also with `--five_base_consensus_from_bam` or `--five_base_bisulfite_bam` (`reject_non_bwamem3_flags`, called from `expand_taps` in `aligner/config.rs`) | Drop the flag; if the genome folder has no `Bwamem3_Index/`, build it once with `bismark prepare --bwamem3 <genome>` |
 | `--bwamem3 is only supported as a 5-Base engine (--illumina_5base).` | `--bwamem3` without `--illumina_5base` or `--taps` (`resolve_aligner` in `aligner/config.rs`) | Add `--illumina_5base`, or drop `--bwamem3` |
 | `You may not select both --bwamem3 and <flag>. Make your pick!` | `--bwamem3` with another aligner flag outside 5-Base and TAPS (`resolve_aligner`) | Drop one of them |
