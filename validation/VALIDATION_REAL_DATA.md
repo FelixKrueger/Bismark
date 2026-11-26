@@ -325,8 +325,8 @@ GENOME=/path/to/GRCh38            # with Bwamem3_Index/ from `bismark prepare --
 S=NA12878                         # then repeat with S=HG002
 OUT=/scratch/5base/$S
 
-# bwa-mem3 is the engine from 3.5.0; add --minimap2 to every bismark line for the engine
-# the GA figures below were measured with
+# 3.5.0 aligns with bwa-mem3 only; the GA figures below were measured with minimap2, which
+# needs a 3.4.0 or earlier binary and --minimap2 on every bismark line
 # core per-read path (for the methylation concordance)
 bismark --illumina_5base --genome "$GENOME" -1 ${S}_R1.fastq.gz -2 ${S}_R2.fastq.gz \
         --output_dir "$OUT" --temp_dir "$OUT/tmp" --multicore 8
@@ -401,8 +401,8 @@ Sample8, 8 lanes, whole GRCh38) against the matching DRAGEN v4.4.6 reference, pl
 deterministic lambda/pUC19 control gates that run in CI. Numbers below are the measured
 results from this document's runs (core: the 55M-CpG table above; deconvolution:
 `deconv_vs_vcf.py` over 8 lanes; consensus: the per-molecule duplex view). They are
-minimap2 figures; the bwa-mem3 default is measured in
-[bwa-mem3 as the default engine](#bwa-mem3-as-the-default-engine-350) below.
+minimap2 figures; bwa-mem3, the only engine from 3.5.0, is measured in
+[bwa-mem3 replaces minimap2](#bwa-mem3-replaces-minimap2-350) below.
 
 | mode | depth | shared CpGs / SNVs | Pearson r | call agree @50 | precision | recall |
 |---|---|---|---|---|---|---|
@@ -476,7 +476,7 @@ This is not required for the core/deconvolution GA contract — the NA12878 full
 plus the reproducible lambda/pUC19 CI gates already establish it — but it is strong
 independent cross-sample corroboration.
 
-## bwa-mem3 as the default engine (3.5.0)
+## bwa-mem3 replaces minimap2 (3.5.0)
 
 Before bwa-mem3 replaced minimap2 as the `--illumina_5base` default, both engines were
 compared on lane 1 of two samples with the same Bismark binary (`f701c86`), bwa-mem3 0.18.0
