@@ -8,6 +8,14 @@
 - **Breaking: `--illumina_5base` now aligns with bwa-mem3 only, which needs `bismark prepare --bwamem3` and names outputs `_bismark_bwamem3_`; `--minimap2`, `--bowtie2`, `--hisat2`, `--rammap` and their `--path_to_*` and tuning options are rejected ([#1285](https://github.com/FelixKrueger/Bismark/pull/1285), [#1291](https://github.com/FelixKrueger/Bismark/pull/1291)).**
 - **`--unmapped` now writes the unaligned pairs of `--illumina_5base` and `--taps` runs (they were empty files), and `--ambiguous`/`--ambig_bam`, which only ever made empty files there, stop the run instead, as do all three with `--five_base_consensus_from_bam` or `--five_base_bisulfite_bam` ([#1283](https://github.com/FelixKrueger/Bismark/pull/1283)).**
 
+### bismark_genome_preparation
+
+- **Breaking: `bismark prepare --slam` no longer builds a SLAM-seq (T→C) genome and stops with an error, as `bismark align --slam` always has in 3.x ([#1298](https://github.com/FelixKrueger/Bismark/pull/1298)).**
+
+### Rust library
+
+- **Breaking: `genome_prep::convert::map_into`, `convert_split`, `write_combined` and `genome_prep::combined::build` lose their `slam` parameter, and `genome_prep::cli::ResolvedConfig` loses its `slam` field ([#1298](https://github.com/FelixKrueger/Bismark/pull/1298)).**
+
 ## Bismark 3.4.0 (released 2026-11-21)
 
 ### bismark (aligner)

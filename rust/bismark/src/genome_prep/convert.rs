@@ -7,9 +7,8 @@
 //! is written first, as Perl does, so the header stays on its own line.
 //!
 //! Per sequence byte: uppercase → map anything not in `{A,T,C,G,N,\r,\n}` to
-//! `N` → then `tr` (`C→T`/`G→A`, or slam `T→C`/`A→G`). Headers are rewritten as
-//! `>{name}_CT_converted\n` / `>{name}_GA_converted\n` (always LF), with the
-//! name's fixed suffix even in slam mode.
+//! `N` → then `tr` (`C→T`/`G→A`). Headers are rewritten as `>{name}_CT_converted\n` /
+//! `>{name}_GA_converted\n` (always LF).
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -24,25 +23,25 @@ use crate::genome_prep::error::GenomePrepError;
 /// Which converted strand a record is being written for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// C→T (top strand). Slam: T→C.
+    /// C→T (top strand).
     Ct,
-    /// G→A (bottom strand). Slam: A→G.
+    /// G→A (bottom strand).
     Ga,
 }
 
 /// Conversion counts (for the STDOUT totals line; not byte-gated).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counts {
-    /// Number of CT-side transliterations (`C→T`, or slam `T→C`).
+    /// Number of CT-side transliterations (`C→T`).
     pub ct: u64,
-    /// Number of GA-side transliterations (`G→A`, or slam `A→G`).
+    /// Number of GA-side transliterations (`G→A`).
     pub ga: u64,
 }
 
 /// Convert one raw line into `out` for the given `side`. Returns the number of
 /// `tr` transliterations performed (for stats). Preserves the line terminator
 /// (`\r`/`\n` are in the keep-set and untouched by `tr`).
-pub fn map_into(raw: &[u8], side: Side, slam: bool, out: &mut Vec<u8>) -> u64 {
+pub fn map_into(raw: &[u8], side: Side, out: &mut Vec<u8>) -> u64 {
     out.clear();
     out.reserve(raw.len());
     let mut conv = 0u64;
@@ -53,9 +52,9 @@ pub fn map_into(raw: &[u8], side: Side, slam: bool, out: &mut Vec<u8>) -> u64 {
             b'A' | b'T' | b'C' | b'G' | b'N' | b'\r' | b'\n' => u,
             _ => b'N',
         };
-        // (II) tr — C→T / G→A (bisulfite) or T→C / A→G (slam)
-        let mapped = match (side, slam) {
-            (Side::Ct, false) => {
+        // (II) tr — C→T / G→A
+        let mapped = match side {
+            Side::Ct => {
                 if n == b'C' {
                     conv += 1;
                     b'T'
@@ -63,26 +62,10 @@ pub fn map_into(raw: &[u8], side: Side, slam: bool, out: &mut Vec<u8>) -> u64 {
                     n
                 }
             }
-            (Side::Ct, true) => {
-                if n == b'T' {
-                    conv += 1;
-                    b'C'
-                } else {
-                    n
-                }
-            }
-            (Side::Ga, false) => {
+            Side::Ga => {
                 if n == b'G' {
                     conv += 1;
                     b'A'
-                } else {
-                    n
-                }
-            }
-            (Side::Ga, true) => {
-                if n == b'A' {
-                    conv += 1;
-                    b'G'
                 } else {
                     n
                 }
@@ -93,10 +76,7 @@ pub fn map_into(raw: &[u8], side: Side, slam: bool, out: &mut Vec<u8>) -> u64 {
     conv
 }
 
-/// Write the rewritten converted header `>{name}_{CT|GA}_converted\n` into
-/// `out`. The `_CT_`/`_GA_` suffix is fixed **even in slam mode** (Perl never
-/// changed it — the `### TODO: Change this for GrandSlam` that was never acted
-/// on).
+/// Write the rewritten converted header `>{name}_{CT|GA}_converted\n` into `out`.
 fn header_line(name: &[u8], side: Side, out: &mut Vec<u8>) {
     out.clear();
     out.push(b'>');
@@ -207,7 +187,6 @@ pub fn convert_split(
     ct_dir: &Path,
     ga_dir: &Path,
     single_fasta: bool,
-    slam: bool,
 ) -> Result<Counts, GenomePrepError> {
     let mut seen: HashSet<Vec<u8>> = HashSet::new();
     let mut counts = Counts::default();
@@ -272,9 +251,9 @@ pub fn convert_split(
                     &mut open_line,
                 )?;
             } else {
-                counts.ct += map_into(&line, Side::Ct, slam, &mut ctbuf);
+                counts.ct += map_into(&line, Side::Ct, &mut ctbuf);
                 ct_w.write_all(&ctbuf)?;
-                counts.ga += map_into(&line, Side::Ga, slam, &mut gabuf);
+                counts.ga += map_into(&line, Side::Ga, &mut gabuf);
                 ga_w.write_all(&gabuf)?;
                 open_line = line.last() != Some(&b'\n');
             }
@@ -291,11 +270,7 @@ pub fn convert_split(
 /// well-defined in both MFA and `--single_fasta` modes. A `\n` separates the
 /// two halves when the last file ends without one. No uniqueness re-check
 /// (already validated by [`convert_split`]).
-pub fn write_combined(
-    files: &[PathBuf],
-    combined_path: &Path,
-    slam: bool,
-) -> Result<(), GenomePrepError> {
+pub fn write_combined(files: &[PathBuf], combined_path: &Path) -> Result<(), GenomePrepError> {
     let mut w = BufWriter::new(File::create(combined_path)?);
     let mut buf = Vec::new();
     // True when the last sequence line written did not end in `\n`.
@@ -328,7 +303,7 @@ pub fn write_combined(
                     header_line(&name, side, &mut buf);
                     w.write_all(&buf)?;
                 } else {
-                    map_into(&line, side, slam, &mut buf);
+                    map_into(&line, side, &mut buf);
                     w.write_all(&buf)?;
                     open_line = line.last() != Some(&b'\n');
                 }
@@ -345,67 +320,60 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn ct(raw: &[u8], slam: bool) -> Vec<u8> {
+    fn ct(raw: &[u8]) -> Vec<u8> {
         let mut o = Vec::new();
-        map_into(raw, Side::Ct, slam, &mut o);
+        map_into(raw, Side::Ct, &mut o);
         o
     }
-    fn ga(raw: &[u8], slam: bool) -> Vec<u8> {
+    fn ga(raw: &[u8]) -> Vec<u8> {
         let mut o = Vec::new();
-        map_into(raw, Side::Ga, slam, &mut o);
+        map_into(raw, Side::Ga, &mut o);
         o
     }
 
     #[test]
     fn uppercases_and_converts() {
         // lowercase → upper, then C→T (CT side): "acgt" → "ACGT" → "ATGT".
-        assert_eq!(ct(b"acgt\n", false), b"ATGT\n");
-        assert_eq!(ga(b"acgt\n", false), b"ACAT\n");
+        assert_eq!(ct(b"acgt\n"), b"ATGT\n");
+        assert_eq!(ga(b"acgt\n"), b"ACAT\n");
     }
 
     #[test]
     fn ct_ga_basic() {
-        assert_eq!(ct(b"ACGT\n", false), b"ATGT\n");
-        assert_eq!(ga(b"ACGT\n", false), b"ACAT\n");
+        assert_eq!(ct(b"ACGT\n"), b"ATGT\n");
+        assert_eq!(ga(b"ACGT\n"), b"ACAT\n");
     }
 
     #[test]
     fn ambiguity_and_non_ascii_to_n() {
         // IUPAC ambiguity codes → N (after uppercasing); high byte → N.
-        assert_eq!(ct(b"RYSWKMBDHV\n", false), b"NNNNNNNNNN\n");
-        assert_eq!(ct(&[0xC3, 0x28, b'A', b'\n'], false), b"NNA\n");
+        assert_eq!(ct(b"RYSWKMBDHV\n"), b"NNNNNNNNNN\n");
+        assert_eq!(ct(&[0xC3, 0x28, b'A', b'\n']), b"NNA\n");
     }
 
     #[test]
     fn crlf_preserved() {
         // \r is in the keep-set → CRLF stays CRLF.
-        assert_eq!(ct(b"ACGT\r\n", false), b"ATGT\r\n");
-        assert_eq!(ga(b"ACGT\r\n", false), b"ACAT\r\n");
+        assert_eq!(ct(b"ACGT\r\n"), b"ATGT\r\n");
+        assert_eq!(ga(b"ACGT\r\n"), b"ACAT\r\n");
     }
 
     #[test]
     fn final_line_without_newline_preserved() {
-        assert_eq!(ct(b"ACGT", false), b"ATGT");
-        assert_eq!(ct(b"", false), b"");
+        assert_eq!(ct(b"ACGT"), b"ATGT");
+        assert_eq!(ct(b""), b"");
     }
 
     #[test]
     fn interior_whitespace_becomes_n() {
         // A stray space/tab is not in the keep-set → N (then tr applies).
-        assert_eq!(ct(b"AC GT\n", false), b"ATNGT\n");
-        assert_eq!(ct(b"AC\tGT\n", false), b"ATNGT\n");
+        assert_eq!(ct(b"AC GT\n"), b"ATNGT\n");
+        assert_eq!(ct(b"AC\tGT\n"), b"ATNGT\n");
     }
 
     #[test]
     fn empty_seq_line_passthrough() {
-        assert_eq!(ct(b"\n", false), b"\n");
-    }
-
-    #[test]
-    fn slam_direction() {
-        // slam: CT file does T→C, GA file does A→G.
-        assert_eq!(ct(b"ACGT\n", true), b"ACGC\n");
-        assert_eq!(ga(b"ACGT\n", true), b"GCGT\n");
+        assert_eq!(ct(b"\n"), b"\n");
     }
 
     #[test]
@@ -432,7 +400,7 @@ mod tests {
         // Two records, second has lowercase + an ambiguity code + no trailing \n.
         fs::write(gdir.join("g.fa"), b">chr1 desc\nACGTN\nacgt\n>chr2\nGGCCR").unwrap();
         let files = vec![gdir.join("g.fa")];
-        convert_split(&files, &ct_dir, &ga_dir, false, false).unwrap();
+        convert_split(&files, &ct_dir, &ga_dir, false).unwrap();
 
         let ct = fs::read(ct_dir.join("genome_mfa.CT_conversion.fa")).unwrap();
         assert_eq!(
@@ -457,7 +425,7 @@ mod tests {
         }
         fs::write(gdir.join("g.fa"), b">chr1\nACGT\n>chr2\nTTAA\n").unwrap();
         let files = vec![gdir.join("g.fa")];
-        convert_split(&files, &ct_dir, &ga_dir, true, false).unwrap();
+        convert_split(&files, &ct_dir, &ga_dir, true).unwrap();
         assert_eq!(
             fs::read(ct_dir.join("chr1.CT_conversion.fa")).unwrap(),
             b">chr1_CT_converted\nATGT\n".to_vec()
@@ -484,9 +452,9 @@ mod tests {
         fs::write(gdir.join("a.fa"), b">chr1\nACGT\n").unwrap();
         fs::write(gdir.join("b.fa"), b">chr2\nGGCC\n").unwrap();
         let files = vec![gdir.join("a.fa"), gdir.join("b.fa")];
-        convert_split(&files, &ct_dir, &ga_dir, false, false).unwrap();
+        convert_split(&files, &ct_dir, &ga_dir, false).unwrap();
         let combined_path = d.path().join("combined.fa");
-        write_combined(&files, &combined_path, false).unwrap();
+        write_combined(&files, &combined_path).unwrap();
 
         let mut expected = fs::read(ct_dir.join("genome_mfa.CT_conversion.fa")).unwrap();
         expected.extend(fs::read(ga_dir.join("genome_mfa.GA_conversion.fa")).unwrap());
@@ -506,7 +474,7 @@ mod tests {
         fs::write(gdir.join("a.fa"), b">chr1\nACGT\n>chr2\nAC").unwrap();
         fs::write(gdir.join("b.fa"), b">chr3\nGG\n").unwrap();
         let files = vec![gdir.join("a.fa"), gdir.join("b.fa")];
-        convert_split(&files, &ct_dir, &ga_dir, false, false).unwrap();
+        convert_split(&files, &ct_dir, &ga_dir, false).unwrap();
         let ct = b">chr1_CT_converted\nATGT\n>chr2_CT_converted\nAT\n>chr3_CT_converted\nGG\n";
         let ga = b">chr1_GA_converted\nACAT\n>chr2_GA_converted\nAC\n>chr3_GA_converted\nAA\n";
         assert_eq!(
@@ -518,7 +486,7 @@ mod tests {
             ga.to_vec()
         );
         let combined_path = d.path().join("combined.fa");
-        write_combined(&files, &combined_path, false).unwrap();
+        write_combined(&files, &combined_path).unwrap();
         assert_eq!(
             fs::read(&combined_path).unwrap(),
             [&ct[..], &ga[..]].concat()
@@ -532,7 +500,7 @@ mod tests {
         fs::create_dir_all(&gdir).unwrap();
         fs::write(gdir.join("a.fa"), b">chr1\nACGT").unwrap();
         let combined_path = d.path().join("combined.fa");
-        write_combined(&[gdir.join("a.fa")], &combined_path, false).unwrap();
+        write_combined(&[gdir.join("a.fa")], &combined_path).unwrap();
         assert_eq!(
             fs::read(&combined_path).unwrap(),
             b">chr1_CT_converted\nATGT\n>chr1_GA_converted\nACAT".to_vec()
@@ -550,7 +518,7 @@ mod tests {
         }
         fs::write(gdir.join("g.fa"), b">chr1\nACGT\n>chr1\nTTAA\n").unwrap();
         let files = vec![gdir.join("g.fa")];
-        let r = convert_split(&files, &ct_dir, &ga_dir, false, false);
+        let r = convert_split(&files, &ct_dir, &ga_dir, false);
         assert!(matches!(r, Err(GenomePrepError::DuplicateChromosome(_))));
     }
 
@@ -565,7 +533,7 @@ mod tests {
         }
         fs::write(gdir.join("empty.fa"), b"").unwrap();
         let files = vec![gdir.join("empty.fa")];
-        let r = convert_split(&files, &ct_dir, &ga_dir, false, false);
+        let r = convert_split(&files, &ct_dir, &ga_dir, false);
         assert!(matches!(r, Err(GenomePrepError::NotFasta(_))));
     }
 }

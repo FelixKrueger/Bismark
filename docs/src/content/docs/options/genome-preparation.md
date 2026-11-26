@@ -33,7 +33,7 @@ A full list of options can also be viewed by typing: `bismark prepare --help`
 
 - `--hisat2`
 
-  This will create bisulfite indexes for use with HISAT2. At the time of writing, this is still largely unchartered territory, and only recommended for specialist applications such as RNA-methylation analyses or SLAM-seq type applications (see also: --slam). (Default: OFF).
+  This will create bisulfite indexes for use with HISAT2. At the time of writing, this is still largely unchartered territory, and only recommended for specialist applications such as RNA-methylation analyses. (Default: OFF).
 
 - `--minimap2/--mm2`
 
@@ -41,7 +41,7 @@ This will create bisulfite indexes for use with minimap2 (https://github.com/lh3
 
 - `--bwamem3`
 
-  Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`, with `--meth-only` on bwa-mem3 0.18.0 or later; needs bwa-mem3 0.16.0 or later) of the unconverted genome in `<genome_folder>/Bwamem3_Index/`, for `bismark --taps` and `bismark --illumina_5base`, which find it there without `--five_base_index`. No bisulfite-converted genome is written. A human genome takes about 1 h, about 104 GB of RAM and about 35 GB of free disk while building (up to 70 GB with bwa-mem3 0.16.0 or 0.17.0); the finished index is about 23 GB. Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine. Does not work in conjunction with `--single_fasta`, `--slam`, `--large-index` or `--combined_genome`. (Default: OFF).
+  Build a bwa-mem3 methylation index (`bwa-mem3 index --meth`, with `--meth-only` on bwa-mem3 0.18.0 or later; needs bwa-mem3 0.16.0 or later) of the unconverted genome in `<genome_folder>/Bwamem3_Index/`, for `bismark --taps` and `bismark --illumina_5base`, which find it there without `--five_base_index`. No bisulfite-converted genome is written. A human genome takes about 1 h, about 104 GB of RAM and about 35 GB of free disk while building (up to 70 GB with bwa-mem3 0.16.0 or 0.17.0); the finished index is about 23 GB. Genome preparation rejects, before indexing, sequence lines with spaces, tabs, other whitespace or non-ASCII bytes, lines starting with `+` or `@`, empty contigs and CR-only line ends, all of which bwa-mem3 reads differently from Bismark; LF and CRLF files are fine. Does not work in conjunction with `--single_fasta`, `--large-index` or `--combined_genome`. (Default: OFF).
 
 - `--bwamem3_max_memory SIZE`
 
@@ -58,10 +58,6 @@ Use several threads for each indexing process to speed up the genome preparation
 - `--genomic_composition`
 
   Calculate and extract the genomic sequence composition for mono- and di-nucleotides and write the genomic composition table _genomic_nucleotide_frequencies.txt_ to the genome folder. This may be useful later on when using `bismark bam2nuc` or the Bismark option `--nucleotide_coverage`.
-
-- `--slam`
-
-  Instead of performing an in-silico bisulfite conversion, this mode transforms T to C (forward strand), or A to G (reverse strand). The folder structure and rest of the indexing process is currently exactly the same as for bisulfite sequences, but this might change at some point. This means that a genome prepared in --slam mode is currently indistinguishable from a true Bisulfite Genome, so please make sure you name the genome folder appropriately to avoid confusion.
 
 - `--large-index`
 
