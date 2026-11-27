@@ -28,6 +28,7 @@ pub mod align;
 pub mod aligner;
 pub mod aux_out;
 pub mod binseq_decode;
+pub(crate) mod child_signal;
 pub mod cli;
 pub mod combined;
 pub mod config;
@@ -147,7 +148,7 @@ pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::Ex
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
-            std::process::ExitCode::from(1)
+            std::process::ExitCode::from(child_signal::failure_exit_code())
         }
     }
 }
@@ -2062,6 +2063,7 @@ impl EngineChild {
         let status = self.child.wait()?;
         self.reaped = true;
         if !status.success() {
+            child_signal::observe(&status);
             return Err(AlignerError::Validation(format!(
                 "{} exited with {}",
                 self.name,
@@ -2084,6 +2086,7 @@ impl EngineChild {
         let ended = match status {
             Some(s) => {
                 self.reaped = true;
+                child_signal::observe(&s);
                 format!("; {} exited with {}", self.name, describe_exit(s))
             }
             None => String::new(),
@@ -4453,7 +4456,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
     // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode (EXPERIMENTAL, concordance-gated — NOT byte-identical to the \
+            ">>> Combined-index mode (concordance-gated — NOT byte-identical to the \
              faithful per-strand path): one both-strands {} pass over {} (-k 2) <<<",
             config.aligner.name(),
             combined_basename.display()
@@ -4496,7 +4499,7 @@ fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
         // Never-silent: mark the report as combined-index mode.
         writeln!(
             report,
-            "Combined-index mode (experimental, concordance-gated; NOT byte-identical to the \
+            "Combined-index mode (concordance-gated; NOT byte-identical to the \
              faithful per-strand path)"
         )?;
 
@@ -4554,7 +4557,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
     // Never-silent banner (STDERR).
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, PBAT (EXPERIMENTAL, concordance-gated — NOT byte-identical \
+            ">>> Combined-index mode, PBAT (concordance-gated — NOT byte-identical \
              to the faithful 2-instance path): one both-strands {} pass over {} (-k 2) on \
              the G->A-converted reads → CTOT/CTOB <<<",
             config.aligner.name(),
@@ -4598,7 +4601,7 @@ fn run_se_combined_pbat(config: &RunConfig, reads: &[String]) -> Result<()> {
         // Never-silent: mark the report as combined-index PBAT mode.
         writeln!(
             report,
-            "Combined-index mode, PBAT (experimental, concordance-gated; NOT byte-identical to the \
+            "Combined-index mode, PBAT (concordance-gated; NOT byte-identical to the \
              faithful 2-instance per-strand path)"
         )?;
 
@@ -4857,7 +4860,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
     // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, NON-DIRECTIONAL (EXPERIMENTAL, concordance-gated — NOT \
+            ">>> Combined-index mode, NON-DIRECTIONAL (concordance-gated — NOT \
              byte-identical to the faithful 4-instance path): two both-strands {} passes \
              (C->T + G->A reads) over {} (-k 2), unioned per read <<<",
             config.aligner.name(),
@@ -4901,7 +4904,7 @@ fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
         // Never-silent: mark the report as combined-index non-directional mode.
         writeln!(
             report,
-            "Combined-index mode, non-directional (experimental, concordance-gated; NOT \
+            "Combined-index mode, non-directional (concordance-gated; NOT \
              byte-identical to the faithful 4-instance per-strand path)"
         )?;
 
@@ -5287,7 +5290,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
     // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, concordance-gated — \
+            ">>> Combined-index mode, NON-DIRECTIONAL SEQUENTIAL (concordance-gated — \
              BAM byte-identical to the --combined_index_parallel model (a), NOT to the faithful \
              4-instance path; the default since #1018): two both-strands {} passes (C->T then G->A) \
              over {} (-k 2) run ONE AT A TIME — pass 1 exits before pass 2 starts, so one combined \
@@ -5334,7 +5337,7 @@ fn run_se_combined_nondir_sequential(config: &RunConfig, reads: &[String]) -> Re
         // Never-silent: mark the report as combined-index non-directional SEQUENTIAL.
         writeln!(
             report,
-            "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
+            "Combined-index mode, non-directional SEQUENTIAL (concordance-gated; \
              BAM byte-identical to the --combined_index_parallel model (a), one index resident at a \
              time; NOT byte-identical to the faithful 4-instance per-strand path; the default since #1018)"
         )?;
@@ -6746,7 +6749,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
     // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, paired-end (EXPERIMENTAL, concordance-gated — NOT \
+            ">>> Combined-index mode, paired-end (concordance-gated — NOT \
              byte-identical to the faithful per-strand path): one both-strands {} pass over \
              {} (-k 2) <<<",
             config.aligner.name(),
@@ -6790,7 +6793,7 @@ fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> 
         // Never-silent: mark the report as combined-index mode.
         writeln!(
             report,
-            "Combined-index mode (experimental, concordance-gated; NOT byte-identical to the \
+            "Combined-index mode (concordance-gated; NOT byte-identical to the \
              faithful per-strand path)"
         )?;
 
@@ -6854,7 +6857,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
     // Never-silent banner (STDERR). The resolve guard guarantees the index exists.
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, paired-end PBAT (EXPERIMENTAL, concordance-gated — NOT \
+            ">>> Combined-index mode, paired-end PBAT (concordance-gated — NOT \
              byte-identical to the faithful 2-instance path): one both-strands {} PE pass over \
              {} (-k 2) on the G->A-converted reads (-1 G->A_R1 -2 C->T_R2) → CTOT/CTOB <<<",
             config.aligner.name(),
@@ -6898,7 +6901,7 @@ fn run_pe_combined_pbat(config: &RunConfig, mates1: &[String], mates2: &[String]
         // Never-silent: mark the report as combined-index PBAT mode.
         writeln!(
             report,
-            "Combined-index mode, PBAT (experimental, concordance-gated; NOT byte-identical to the \
+            "Combined-index mode, PBAT (concordance-gated; NOT byte-identical to the \
              faithful 2-instance per-strand path)"
         )?;
 
@@ -7210,7 +7213,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
 
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, paired-end NON-DIRECTIONAL (EXPERIMENTAL, concordance-gated \
+            ">>> Combined-index mode, paired-end NON-DIRECTIONAL (concordance-gated \
              — NOT byte-identical to the faithful 4-instance path): two both-strands {} passes \
              (C->T + G->A reads) over {} (-k 2), unioned per pair <<<",
             config.aligner.name(),
@@ -7253,7 +7256,7 @@ fn run_pe_combined_nondir(config: &RunConfig, mates1: &[String], mates2: &[Strin
         )?;
         writeln!(
             report,
-            "Combined-index mode, non-directional (experimental, concordance-gated; NOT \
+            "Combined-index mode, non-directional (concordance-gated; NOT \
              byte-identical to the faithful 4-instance per-strand path)"
         )?;
 
@@ -7781,8 +7784,7 @@ fn run_pe_combined_nondir_sequential(
 
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (EXPERIMENTAL, \
-             concordance-gated — BAM byte-identical to the --combined_index_parallel model (a), \
+            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (concordance-gated — BAM byte-identical to the --combined_index_parallel model (a), \
              NOT to the faithful 4-instance path; the default since #1018): two both-strands {} PE \
              passes (C->T then G->A reads) over {} (-k 2) run ONE AT A TIME — pass 1 exits before \
              pass 2 starts, so one combined index is resident at a time (~half the peak RSS; wall \
@@ -7828,7 +7830,7 @@ fn run_pe_combined_nondir_sequential(
         // Never-silent: mark the report as combined-index non-directional SEQUENTIAL.
         writeln!(
             report,
-            "Combined-index mode, non-directional SEQUENTIAL (experimental, concordance-gated; \
+            "Combined-index mode, non-directional SEQUENTIAL (concordance-gated; \
              BAM byte-identical to the --combined_index_parallel model (a), one index resident at a \
              time; NOT byte-identical to the faithful 4-instance per-strand path; the default since #1018)"
         )?;

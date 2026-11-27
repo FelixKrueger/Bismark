@@ -1,6 +1,13 @@
 # Bismark Changelog
 
 
+## Bismark 3.5.1 (unreleased)
+
+### bismark (aligner)
+
+- **`bismark align` exits 128 + N when an aligner is killed by signal N (137 for an out-of-memory kill), including through the `bowtie2`/`hisat2` wrapper scripts, so workflow managers can retry it; other failures still exit 1 ([#NNNN](https://github.com/FelixKrueger/Bismark/pull/NNNN)).**
+- **The combined-index report line and banner no longer call the mode experimental ([#NNNN](https://github.com/FelixKrueger/Bismark/pull/NNNN)).**
+
 ## Bismark 3.5.0 (released 2026-11-26)
 
 ### bismark (aligner)

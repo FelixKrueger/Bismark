@@ -15,6 +15,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::aligner::config::Aligner;
 use crate::aligner::error::{AlignerError, Result};
@@ -230,6 +232,8 @@ pub struct AlignerStream {
     /// sibling lagged until the v2.x combined-index sequential path drove HISAT2 SE
     /// through this stream (PLAN 06102026 phase 7).
     aligner: Aligner,
+    /// Set before Bismark kills the child, so its stderr relay ignores the kill.
+    killed: Arc<AtomicBool>,
 }
 
 /// Build the per-instance argv (excluding the binary path) for one single-end
@@ -381,7 +385,7 @@ impl AlignerStream {
         let mut cmd = Command::new(bin);
         cmd.args(build_se_argv(aligner, options, orient, index, input))
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {
             AlignerError::Validation(format!(
@@ -393,6 +397,10 @@ impl AlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
+        let killed = Arc::new(AtomicBool::new(false));
+        if let Some(stderr) = child.stderr.take() {
+            crate::aligner::child_signal::relay(stderr, Arc::clone(&killed));
+        }
 
         Ok(UnprimedAlignerStream(AlignerStream {
             child,
@@ -402,6 +410,7 @@ impl AlignerStream {
             finished: false,
             records: 0,
             aligner,
+            killed,
         }))
     }
 
@@ -436,6 +445,9 @@ impl AlignerStream {
         })?;
         let status = self.child.wait()?;
         self.finished = true;
+        if !status.success() {
+            crate::aligner::child_signal::observe(&status);
+        }
         if status.success() {
             Ok(Emitted {
                 records: self.records + drained,
@@ -451,7 +463,11 @@ impl AlignerStream {
 
     /// Has this child already exited, and with what status? Non-blocking.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        Ok(self.child.try_wait()?)
+        let status = self.child.try_wait()?;
+        if let Some(s) = status.filter(|s| !s.success()) {
+            crate::aligner::child_signal::observe(&s);
+        }
+        Ok(status)
     }
 
     /// The error for this child if it has already exited unsuccessfully.
@@ -481,6 +497,7 @@ impl AlignerStream {
 impl Drop for AlignerStream {
     fn drop(&mut self) {
         if !self.finished {
+            self.killed.store(true, Ordering::SeqCst);
             kill_and_reap(&mut self.child);
         }
     }
@@ -524,10 +541,13 @@ fn exited_unsuccessfully(
     aligner: Aligner,
 ) -> Option<AlignerError> {
     match child.try_wait() {
-        Ok(Some(status)) if !status.success() => Some(AlignerError::Validation(format!(
-            "{} exited unsuccessfully ({status})",
-            aligner.name()
-        ))),
+        Ok(Some(status)) if !status.success() => {
+            crate::aligner::child_signal::observe(&status);
+            Some(AlignerError::Validation(format!(
+                "{} exited unsuccessfully ({status})",
+                aligner.name()
+            )))
+        }
         _ => None,
     }
 }
@@ -713,6 +733,8 @@ pub struct PairedAlignerStream {
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2").
     aligner: Aligner,
+    /// Set before Bismark kills the child, so its stderr relay ignores the kill.
+    killed: Arc<AtomicBool>,
 }
 
 /// A spawned-but-unread [`PairedAlignerStream`]; the PE sibling of
@@ -783,7 +805,7 @@ impl PairedAlignerStream {
             aligner, options, orient, index, input1, input2,
         ))
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {
             AlignerError::Validation(format!(
@@ -795,6 +817,10 @@ impl PairedAlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
+        let killed = Arc::new(AtomicBool::new(false));
+        if let Some(stderr) = child.stderr.take() {
+            crate::aligner::child_signal::relay(stderr, Arc::clone(&killed));
+        }
 
         Ok(UnprimedPairedAlignerStream(PairedAlignerStream {
             child,
@@ -803,6 +829,7 @@ impl PairedAlignerStream {
             finished: false,
             records: 0,
             aligner,
+            killed,
         }))
     }
 
@@ -835,6 +862,9 @@ impl PairedAlignerStream {
         let drained = drain_lines(&mut self.reader, |_| true)? / 2;
         let status = self.child.wait()?;
         self.finished = true;
+        if !status.success() {
+            crate::aligner::child_signal::observe(&status);
+        }
         if status.success() {
             Ok(Emitted {
                 records: self.records + drained,
@@ -850,7 +880,11 @@ impl PairedAlignerStream {
 
     /// Has this child already exited, and with what status? Non-blocking.
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
-        Ok(self.child.try_wait()?)
+        let status = self.child.try_wait()?;
+        if let Some(s) = status.filter(|s| !s.success()) {
+            crate::aligner::child_signal::observe(&s);
+        }
+        Ok(status)
     }
 
     /// The error for this child if it has already exited unsuccessfully.
@@ -877,6 +911,7 @@ impl PairedAlignerStream {
 impl Drop for PairedAlignerStream {
     fn drop(&mut self) {
         if !self.finished {
+            self.killed.store(true, Ordering::SeqCst);
             kill_and_reap(&mut self.child);
         }
     }
