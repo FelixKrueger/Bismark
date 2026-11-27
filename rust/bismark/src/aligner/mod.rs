@@ -150,10 +150,11 @@ pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::Ex
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
-            if let Some(cause) = child_signal::root_cause_message() {
+            let (code, cause) = child_signal::failure();
+            if let Some(cause) = cause {
                 eprintln!("error: {cause}");
             }
-            std::process::ExitCode::from(child_signal::failure_exit_code())
+            std::process::ExitCode::from(code)
         }
     }
 }

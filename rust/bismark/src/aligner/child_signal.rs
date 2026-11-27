@@ -1,9 +1,5 @@
 //! The first signal that killed an aligner child, so `bismark align` can exit 128 + N.
-//!
-//! The `bowtie2`/`hisat2` wrapper scripts turn a signal that kills the real aligner into
-//! exit status 1 and a `… died with signal N` line on stderr, which each stream's
-//! [`Relay`] watches for. Directly spawned aligners report the signal in their exit
-//! status ([`observe`]). The first signal recorded wins.
+//! Seen in a child's exit status ([`observe`]) or a wrapper's `died with signal N` line ([`Relay`]).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::ExitStatus;
@@ -59,24 +55,20 @@ pub(crate) fn wrapper_signal(line: &str) -> Option<i32> {
     digits.parse().ok().filter(|s| (1..=127).contains(s))
 }
 
-/// Exit code for a failed run: 128 + the first recorded signal, else 1.
-pub(crate) fn failure_exit_code() -> u8 {
+/// Exit code (128 + the first recorded signal, else 1) and root-cause line for a failed run.
+pub(crate) fn failure() -> (u8, Option<String>) {
     match first() {
-        Some((sig, _)) => u8::try_from(128 + sig).unwrap_or(255),
-        None => 1,
+        Some((sig, who)) => {
+            let oom = if sig == 9 {
+                " (a kill by signal 9 usually means it ran out of memory)"
+            } else {
+                ""
+            };
+            let code = u8::try_from(128 + sig).unwrap_or(255);
+            (code, Some(format!("{who} was killed by signal {sig}{oom}")))
+        }
+        None => (1, None),
     }
-}
-
-/// The root-cause line printed after a failed run's error, when a signal was recorded.
-pub(crate) fn root_cause_message() -> Option<String> {
-    first().map(|(sig, who)| {
-        let oom = if sig == 9 {
-            " (a kill by signal 9 usually means it ran out of memory)"
-        } else {
-            ""
-        };
-        format!("{who} was killed by signal {sig}{oom}")
-    })
 }
 
 /// Copies one aligner's stderr to Bismark's stderr, noting a wrapper's signal line.

@@ -50,10 +50,8 @@ fn write_reads(dir: &Path, n: usize) -> PathBuf {
     p
 }
 
-/// A wrapper-like fake `bowtie2`; `ct`/`ga` pick each instance's inner process:
-/// `ok` one unmapped record per read; `slow` the same at 10 records/s; `misnamed` records
-/// for reads that don't exist; `oom` SIGKILLed; `oomnoisy` SIGKILLed after ~110 KB of
-/// stderr; `fail` exits 1; `hang` sleeps 5 s; `selfkill` kills the wrapper itself.
+/// A wrapper-like fake `bowtie2`; `ct`/`ga` pick each instance's inner process from the
+/// `case "$mode"` arms below.
 fn make_fake_bowtie2(dir: &Path, ct: &str, ga: &str) {
     let script = format!(
         r#"#!/bin/sh
@@ -71,6 +69,7 @@ case "$mode" in
   selfkill) kill -9 $$ ;;
   ok)       awk "$rec" "$inp" & ;;
   slow)     awk 'NR%4==1 {{ system("sleep 0.1"); id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"; fflush() }}' "$inp" & ;;
+  crawl)    awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"; fflush(); system("sleep 1") }}' "$inp" & ;;
   misnamed) awk 'NR%4==1 {{ print "nosuchread" NR "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" & ;;
   oom)      sh -c 'kill -9 $$' & ;;
   oomnoisy) sh -c 'awk "BEGIN {{ for (i = 0; i < 2000; i++) print \"Warning: skipping read r\" i \" because it was < 2 characters long\" > \"/dev/stderr\" }}"; kill -9 $$' & ;;
@@ -94,6 +93,7 @@ exit $rc
 struct Outcome {
     code: i32,
     stderr: String,
+    elapsed: Duration,
 }
 
 /// Run `bismark` against the fakes.
@@ -128,6 +128,7 @@ fn run(ct: &str, ga: &str, extra: &[&str]) -> Outcome {
             return Outcome {
                 code: status.code().expect("bismark itself exited normally"),
                 stderr: fs::read_to_string(&stderr_path).unwrap(),
+                elapsed: start.elapsed(),
             };
         }
         if start.elapsed() > TIMEOUT {
@@ -204,4 +205,18 @@ fn plain_failure_exits_1() {
             o.stderr
         );
     }
+}
+
+#[test]
+fn a_failure_kills_a_live_sibling_and_exits_1() {
+    // Streamed only: `--no_stream_converted` drains the sibling.
+    let o = run("fail", "crawl", &[]);
+    assert_eq!(o.code, 1, "{}", o.stderr);
+    assert!(!o.stderr.contains("was killed by signal"), "{}", o.stderr);
+    assert!(
+        o.elapsed < Duration::from_secs(10),
+        "{:?}\n{}",
+        o.elapsed,
+        o.stderr
+    );
 }
