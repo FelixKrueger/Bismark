@@ -15,8 +15,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::aligner::child_signal::{self, Relay};
 
 use crate::aligner::config::Aligner;
 use crate::aligner::error::{AlignerError, Result};
@@ -232,8 +232,8 @@ pub struct AlignerStream {
     /// sibling lagged until the v2.x combined-index sequential path drove HISAT2 SE
     /// through this stream (PLAN 06102026 phase 7).
     aligner: Aligner,
-    /// Set before Bismark kills the child, so its stderr relay ignores the kill.
-    killed: Arc<AtomicBool>,
+    /// Relays the child's stderr and notes a wrapper's signal line.
+    relay: Relay,
 }
 
 /// Build the per-instance argv (excluding the binary path) for one single-end
@@ -356,8 +356,7 @@ impl UnprimedAlignerStream {
 impl AlignerStream {
     /// Spawn one aligner instance (Bowtie 2 / HISAT2 / minimap2) and read up to the
     /// first alignment record. The argv shape is per-aligner ([`build_se_argv`]).
-    /// stdout is piped; stderr is **inherited** (the aligner's summary → terminal,
-    /// as in Perl — so only stdout is piped and it is always drained).
+    /// stdout is piped and drained; stderr is relayed line by line to Bismark's stderr.
     pub fn spawn(
         aligner: Aligner,
         bin: &Path,
@@ -397,10 +396,10 @@ impl AlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let killed = Arc::new(AtomicBool::new(false));
-        if let Some(stderr) = child.stderr.take() {
-            crate::aligner::child_signal::relay(stderr, Arc::clone(&killed));
-        }
+        let stderr = child.stderr.take().ok_or_else(|| {
+            AlignerError::Validation(format!("{} stderr was not captured", aligner.name()))
+        })?;
+        let relay = Relay::spawn(stderr, aligner.name());
 
         Ok(UnprimedAlignerStream(AlignerStream {
             child,
@@ -410,7 +409,7 @@ impl AlignerStream {
             finished: false,
             records: 0,
             aligner,
-            killed,
+            relay,
         }))
     }
 
@@ -445,15 +444,14 @@ impl AlignerStream {
         })?;
         let status = self.child.wait()?;
         self.finished = true;
-        if !status.success() {
-            crate::aligner::child_signal::observe(&status);
-        }
+        self.relay.finish();
         if status.success() {
             Ok(Emitted {
                 records: self.records + drained,
                 unconsumed: u64::from(self.current.as_ref().is_some_and(is_primary)) + drained,
             })
         } else {
+            child_signal::observe(&status, self.aligner.name());
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
                 self.aligner.name()
@@ -465,7 +463,7 @@ impl AlignerStream {
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         let status = self.child.try_wait()?;
         if let Some(s) = status.filter(|s| !s.success()) {
-            crate::aligner::child_signal::observe(&s);
+            child_signal::observe(&s, self.aligner.name());
         }
         Ok(status)
     }
@@ -496,9 +494,8 @@ impl AlignerStream {
 
 impl Drop for AlignerStream {
     fn drop(&mut self) {
-        if !self.finished {
-            self.killed.store(true, Ordering::SeqCst);
-            kill_and_reap(&mut self.child);
+        if !self.finished && !kill_and_reap(&mut self.child, &self.relay) {
+            self.relay.finish();
         }
     }
 }
@@ -521,9 +518,11 @@ fn drain_lines(reader: &mut impl BufRead, mut counts: impl FnMut(&[u8]) -> bool)
 /// children are killed first; killing only the wrapper would orphan the aligner.
 /// Best-effort: without `pkill` only the direct child is killed. A child that
 /// was already reaped is left alone, since its pid may now belong to someone
-/// else. Wait after the kill, or it is left a zombie.
-fn kill_and_reap(child: &mut std::process::Child) {
-    if let Ok(None) = child.try_wait() {
+/// else. Wait after the kill, or it is left a zombie. Returns whether it killed the child.
+fn kill_and_reap(child: &mut std::process::Child, relay: &Relay) -> bool {
+    let alive = matches!(child.try_wait(), Ok(None));
+    if alive {
+        relay.mark_killed();
         let _ = Command::new("pkill")
             .args(["-KILL", "-P", &child.id().to_string()])
             .stdout(Stdio::null())
@@ -532,6 +531,7 @@ fn kill_and_reap(child: &mut std::process::Child) {
         let _ = child.kill();
     }
     let _ = child.wait();
+    alive
 }
 
 /// The error for a child that has already exited unsuccessfully, if it has.
@@ -542,7 +542,7 @@ fn exited_unsuccessfully(
 ) -> Option<AlignerError> {
     match child.try_wait() {
         Ok(Some(status)) if !status.success() => {
-            crate::aligner::child_signal::observe(&status);
+            child_signal::observe(&status, aligner.name());
             Some(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
                 aligner.name()
@@ -733,8 +733,8 @@ pub struct PairedAlignerStream {
     /// The backend, for aligner-aware error messages (never-silent: a HISAT2 failure
     /// must not report "Bowtie 2").
     aligner: Aligner,
-    /// Set before Bismark kills the child, so its stderr relay ignores the kill.
-    killed: Arc<AtomicBool>,
+    /// Relays the child's stderr and notes a wrapper's signal line.
+    relay: Relay,
 }
 
 /// A spawned-but-unread [`PairedAlignerStream`]; the PE sibling of
@@ -772,7 +772,7 @@ impl PairedAlignerStream {
     ///
     /// Args mirror Perl 6474: `<aligner_options> <orient> -x <index> -1 <input1>
     /// -2 <input2>` ([`build_pe_argv`]) — identical for Bowtie 2 and HISAT2. stdout
-    /// piped; stderr inherited (only stdout is drained).
+    /// piped; stderr relayed (see [`AlignerStream::spawn`]).
     pub fn spawn(
         aligner: Aligner,
         bin: &Path,
@@ -817,10 +817,10 @@ impl PairedAlignerStream {
         let stdout = child.stdout.take().ok_or_else(|| {
             AlignerError::Validation(format!("{} stdout was not captured", aligner.name()))
         })?;
-        let killed = Arc::new(AtomicBool::new(false));
-        if let Some(stderr) = child.stderr.take() {
-            crate::aligner::child_signal::relay(stderr, Arc::clone(&killed));
-        }
+        let stderr = child.stderr.take().ok_or_else(|| {
+            AlignerError::Validation(format!("{} stderr was not captured", aligner.name()))
+        })?;
+        let relay = Relay::spawn(stderr, aligner.name());
 
         Ok(UnprimedPairedAlignerStream(PairedAlignerStream {
             child,
@@ -829,7 +829,7 @@ impl PairedAlignerStream {
             finished: false,
             records: 0,
             aligner,
-            killed,
+            relay,
         }))
     }
 
@@ -862,15 +862,14 @@ impl PairedAlignerStream {
         let drained = drain_lines(&mut self.reader, |_| true)? / 2;
         let status = self.child.wait()?;
         self.finished = true;
-        if !status.success() {
-            crate::aligner::child_signal::observe(&status);
-        }
+        self.relay.finish();
         if status.success() {
             Ok(Emitted {
                 records: self.records + drained,
                 unconsumed: u64::from(self.current.is_some()) + drained,
             })
         } else {
+            child_signal::observe(&status, self.aligner.name());
             Err(AlignerError::Validation(format!(
                 "{} exited unsuccessfully ({status})",
                 self.aligner.name()
@@ -882,7 +881,7 @@ impl PairedAlignerStream {
     pub fn try_wait(&mut self) -> Result<Option<std::process::ExitStatus>> {
         let status = self.child.try_wait()?;
         if let Some(s) = status.filter(|s| !s.success()) {
-            crate::aligner::child_signal::observe(&s);
+            child_signal::observe(&s, self.aligner.name());
         }
         Ok(status)
     }
@@ -910,9 +909,8 @@ impl PairedAlignerStream {
 
 impl Drop for PairedAlignerStream {
     fn drop(&mut self) {
-        if !self.finished {
-            self.killed.store(true, Ordering::SeqCst);
-            kill_and_reap(&mut self.child);
+        if !self.finished && !kill_and_reap(&mut self.child, &self.relay) {
+            self.relay.finish();
         }
     }
 }

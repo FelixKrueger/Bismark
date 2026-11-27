@@ -114,7 +114,8 @@ pub fn version_string() -> String {
 /// meta-crate's `bismark` bin (so `cargo install bismark` and `cargo install
 /// bismark-aligner` behave identically). Captures the verbatim argv for the
 /// `@PG` `CL:` string BEFORE parsing, handles `--version`, then runs. Exit: `0`
-/// ok · `1` [`AlignerError`] (clap handles `2` parse errors). The
+/// ok · `128 + N` when an aligner was killed by signal N · `1` any other
+/// [`AlignerError`] (clap handles `2` parse errors). The
 /// `#[global_allocator]` stays in each binary crate root.
 #[must_use]
 pub fn run_main() -> std::process::ExitCode {
@@ -140,6 +141,7 @@ pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::Ex
         return code;
     }
     let cli = crate::aligner::cli::Cli::parse_from(&argv);
+    child_signal::reset();
     if cli.version {
         println!("{}", version_string());
         return std::process::ExitCode::SUCCESS;
@@ -148,6 +150,9 @@ pub fn run_dispatch(argv: Vec<String>, command_line: String) -> std::process::Ex
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e}");
+            if let Some(cause) = child_signal::root_cause_message() {
+                eprintln!("error: {cause}");
+            }
             std::process::ExitCode::from(child_signal::failure_exit_code())
         }
     }
@@ -2063,7 +2068,7 @@ impl EngineChild {
         let status = self.child.wait()?;
         self.reaped = true;
         if !status.success() {
-            child_signal::observe(&status);
+            child_signal::observe(&status, self.name);
             return Err(AlignerError::Validation(format!(
                 "{} exited with {}",
                 self.name,
@@ -2086,7 +2091,7 @@ impl EngineChild {
         let ended = match status {
             Some(s) => {
                 self.reaped = true;
-                child_signal::observe(&s);
+                child_signal::observe(&s, self.name);
                 format!("; {} exited with {}", self.name, describe_exit(s))
             }
             None => String::new(),
@@ -4438,8 +4443,7 @@ type SelectFnPe = fn(
 
 /// SE combined-index pipeline (single-core directional). Mirrors [`run_se`] but
 /// drives ONE both-strands instance over the combined index
-/// ([`process_se_chunk_combined`]) and announces the experimental,
-/// concordance-gated mode (never-silent) on STDERR + in the report.
+/// ([`process_se_chunk_combined`]) and announces the concordance-gated mode (never-silent) on STDERR + in the report.
 fn run_se_combined(config: &RunConfig, reads: &[String]) -> Result<()> {
     let started = Instant::now();
     let opts = convert::ConvertOptions::from_config(config);
@@ -4841,7 +4845,7 @@ fn drive_merge_combined<S: SamStream>(
 /// [`run_se_combined`] but drives TWO both-strands Bowtie 2 passes over the
 /// combined index — one on the C→T-converted reads (→ OT/OB) and one on the
 /// G→A-converted reads (→ CTOT/CTOB) — unioned per read
-/// ([`process_se_chunk_combined_nondir`]). Announces the experimental,
+/// ([`process_se_chunk_combined_nondir`]). Announces the
 /// concordance-gated non-directional mode (never-silent); the report prints the
 /// 4-strand (OT/OB/CTOT/CTOB) split (`directional=false`).
 fn run_se_combined_nondir(config: &RunConfig, reads: &[String]) -> Result<()> {
@@ -6730,7 +6734,7 @@ fn route_pe_decision(
 
 /// PE combined-index pipeline (single-core, directional Bowtie 2). Mirrors [`run_pe`]
 /// but drives ONE both-strands instance over the combined index
-/// ([`process_pe_chunk_combined`]) and announces the experimental, concordance-gated
+/// ([`process_pe_chunk_combined`]) and announces the concordance-gated
 /// mode (never-silent) on STDERR + in the report. The scope guard
 /// (`reject_combined_index_unsupported`) guarantees directional Bowtie 2 here.
 fn run_pe_combined(config: &RunConfig, mates1: &[String], mates2: &[String]) -> Result<()> {
@@ -7784,7 +7788,8 @@ fn run_pe_combined_nondir_sequential(
 
     if let Some(combined_basename) = &config.genome.combined_index_basename {
         eprintln!(
-            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (concordance-gated — BAM byte-identical to the --combined_index_parallel model (a), \
+            ">>> Combined-index mode, paired-end NON-DIRECTIONAL SEQUENTIAL (concordance-gated — \
+             BAM byte-identical to the --combined_index_parallel model (a), \
              NOT to the faithful 4-instance path; the default since #1018): two both-strands {} PE \
              passes (C->T then G->A reads) over {} (-k 2) run ONE AT A TIME — pass 1 exits before \
              pass 2 starts, so one combined index is resident at a time (~half the peak RSS; wall \

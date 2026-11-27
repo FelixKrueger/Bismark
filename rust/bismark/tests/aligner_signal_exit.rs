@@ -1,8 +1,7 @@
 //! `bismark align` exits 128 + N when an aligner is killed by signal N, and 1 otherwise.
 //!
-//! The fake `bowtie2` behaves like the real wrapper script: it runs an inner process,
-//! and when that dies from a signal it prints `bowtie2-align died with signal N` and
-//! exits 1. Each converted-genome instance (CT or GA index) gets its own behaviour.
+//! The fake `bowtie2` behaves like the real wrapper script: it runs an inner process, and
+//! when that dies from a signal it prints `bowtie2-align died with signal N` and exits 1.
 #![cfg(unix)]
 
 use std::fs;
@@ -51,10 +50,10 @@ fn write_reads(dir: &Path, n: usize) -> PathBuf {
     p
 }
 
-/// A wrapper-like fake `bowtie2`. `ct`/`ga` pick each instance's behaviour:
-/// `ok` writes one unmapped record per read; `oom` has its inner process SIGKILLed;
-/// `fail` has its inner process exit 1; `hang` writes the header and sleeps 3 s;
-/// `selfkill` kills the wrapper itself with SIGKILL (no wrapper message).
+/// A wrapper-like fake `bowtie2`; `ct`/`ga` pick each instance's inner process:
+/// `ok` one unmapped record per read; `slow` the same at 10 records/s; `misnamed` records
+/// for reads that don't exist; `oom` SIGKILLed; `oomnoisy` SIGKILLed after ~110 KB of
+/// stderr; `fail` exits 1; `hang` sleeps 5 s; `selfkill` kills the wrapper itself.
 fn make_fake_bowtie2(dir: &Path, ct: &str, ga: &str) {
     let script = format!(
         r#"#!/bin/sh
@@ -67,12 +66,16 @@ for a in "$@"; do
 done
 case "$idx" in *BS_CT*) mode="{ct}";; *) mode="{ga}";; esac
 printf '@HD\tVN:1.0\n'
+rec='NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"; fflush() }}'
 case "$mode" in
   selfkill) kill -9 $$ ;;
-  ok)   awk 'NR%4==1 {{ id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" & ;;
-  oom)  sh -c 'kill -9 $$' & ;;
-  fail) sh -c 'exit 1' & ;;
-  hang) sleep 3 & ;;
+  ok)       awk "$rec" "$inp" & ;;
+  slow)     awk 'NR%4==1 {{ system("sleep 0.1"); id=$1; sub(/^@/,"",id); print id "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI"; fflush() }}' "$inp" & ;;
+  misnamed) awk 'NR%4==1 {{ print "nosuchread" NR "\t4\t*\t0\t0\t*\t*\t0\t0\t*\tI" }}' "$inp" & ;;
+  oom)      sh -c 'kill -9 $$' & ;;
+  oomnoisy) sh -c 'awk "BEGIN {{ for (i = 0; i < 2000; i++) print \"Warning: skipping read r\" i \" because it was < 2 characters long\" > \"/dev/stderr\" }}"; kill -9 $$' & ;;
+  fail)     sh -c 'exit 1' & ;;
+  hang)     sleep 5 & ;;
 esac
 wait $!
 rc=$?
@@ -88,14 +91,21 @@ exit $rc
     write_exec(&dir.join("bowtie2"), &script);
 }
 
-/// Run `bismark` against the fakes and return its exit code.
-fn exit_code(ct: &str, ga: &str, extra: &[&str]) -> i32 {
+struct Outcome {
+    code: i32,
+    stderr: String,
+}
+
+/// Run `bismark` against the fakes.
+fn run(ct: &str, ga: &str, extra: &[&str]) -> Outcome {
     let genome = TempDir::new().unwrap();
     let bins = TempDir::new().unwrap();
     let work = TempDir::new().unwrap();
     make_genome(genome.path());
     make_fake_bowtie2(bins.path(), ct, ga);
     let reads = write_reads(work.path(), 50);
+    let stderr_path = work.path().join("stderr.txt");
+    let start = Instant::now();
     let mut child = Command::new(bin())
         .arg("--genome")
         .arg(genome.path())
@@ -110,13 +120,15 @@ fn exit_code(ct: &str, ga: &str, extra: &[&str]) -> i32 {
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(&stderr_path).unwrap())
         .spawn()
         .unwrap();
-    let start = Instant::now();
     loop {
         if let Some(status) = child.try_wait().unwrap() {
-            return status.code().expect("bismark itself exited normally");
+            return Outcome {
+                code: status.code().expect("bismark itself exited normally"),
+                stderr: fs::read_to_string(&stderr_path).unwrap(),
+            };
         }
         if start.elapsed() > TIMEOUT {
             let _ = Command::new("kill")
@@ -130,37 +142,66 @@ fn exit_code(ct: &str, ga: &str, extra: &[&str]) -> i32 {
 
 const MODES: [&[&str]; 2] = [&[], &["--no_stream_converted"]];
 
+fn assert_killed(o: &Outcome, extra: &[&str]) {
+    assert_eq!(o.code, 137, "{extra:?}\n{}", o.stderr);
+    assert!(
+        o.stderr
+            .contains("error: Bowtie 2 was killed by signal 9 (a kill by signal 9 usually means it ran out of memory)"),
+        "{extra:?}\n{}",
+        o.stderr
+    );
+}
+
 #[test]
 fn wrapper_reported_sigkill_exits_137() {
     for extra in MODES {
-        assert_eq!(exit_code("oom", "ok", extra), 137, "{extra:?}");
+        assert_killed(&run("oom", "ok", extra), extra);
+    }
+}
+
+#[test]
+fn wrapper_reported_sigkill_after_a_full_pipe_of_stderr_exits_137() {
+    for extra in MODES {
+        assert_killed(&run("oomnoisy", "ok", extra), extra);
     }
 }
 
 #[test]
 fn aligner_killed_directly_exits_137() {
     for extra in MODES {
-        assert_eq!(exit_code("selfkill", "ok", extra), 137, "{extra:?}");
+        assert_killed(&run("selfkill", "ok", extra), extra);
     }
 }
 
 #[test]
-fn sigkill_wins_over_the_teardown_of_its_sibling() {
+fn sigkill_wins_over_a_sibling_still_running() {
     for extra in MODES {
-        assert_eq!(exit_code("oom", "hang", extra), 137, "{extra:?}");
+        assert_killed(&run("oom", "hang", extra), extra);
     }
 }
 
 #[test]
-fn siblings_killed_in_teardown_do_not_count() {
+fn a_failure_beside_a_slow_sibling_exits_1() {
     for extra in MODES {
-        assert_eq!(exit_code("fail", "hang", extra), 1, "{extra:?}");
+        let o = run("misnamed", "slow", extra);
+        assert_eq!(o.code, 1, "{extra:?}\n{}", o.stderr);
+        assert!(
+            !o.stderr.contains("was killed by signal"),
+            "{extra:?}\n{}",
+            o.stderr
+        );
     }
 }
 
 #[test]
 fn plain_failure_exits_1() {
     for extra in MODES {
-        assert_eq!(exit_code("fail", "ok", extra), 1, "{extra:?}");
+        let o = run("fail", "ok", extra);
+        assert_eq!(o.code, 1, "{extra:?}\n{}", o.stderr);
+        assert!(
+            !o.stderr.contains("was killed by signal"),
+            "{extra:?}\n{}",
+            o.stderr
+        );
     }
 }
