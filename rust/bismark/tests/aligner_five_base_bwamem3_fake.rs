@@ -312,8 +312,9 @@ fn bwamem3_killed_engine_reports_exit_status() {
     custom_fake(&run, &body);
     bwamem3_cmd(&run)
         .assert()
-        .failure()
+        .code(137)
         .stderr(predicate::str::contains("bwa-mem3 exited with signal 9"))
+        .stderr(predicate::str::contains("bwa-mem3 was killed by signal 9"))
         .stderr(predicate::str::contains("ran out of memory"));
 }
 
@@ -328,7 +329,7 @@ fn bwamem3_killed_before_the_header_is_an_engine_failure_not_an_index_mismatch()
     );
     bwamem3_cmd(&run)
         .assert()
-        .failure()
+        .code(137)
         .stderr(predicate::str::contains(
             "bwa-mem3 ended before writing its SAM header",
         ))
@@ -344,9 +345,10 @@ fn bwamem3_nonzero_exit_names_the_status_without_an_oom_hint() {
     custom_fake(&run, &format!("{PAIRS_AWK}\nexit 3"));
     bwamem3_cmd(&run)
         .assert()
-        .failure()
+        .code(1)
         .stderr(predicate::str::contains("bwa-mem3 exited with status 3"))
         .stderr(predicate::str::contains("exit status:").not())
+        .stderr(predicate::str::contains("was killed by signal").not())
         .stderr(predicate::str::contains("out of memory").not());
 }
 

@@ -4798,7 +4798,7 @@ fn combined_index_ot_read_end_to_end() {
         .assert()
         .success()
         .stderr(
-            predicate::str::contains("Combined-index mode (EXPERIMENTAL")
+            predicate::str::contains("Combined-index mode (concordance-gated")
                 .and(predicate::str::contains("unique best alignments:   1")),
         );
 
@@ -5053,7 +5053,7 @@ fn combined_index_report_totals_and_counter_ownership() {
         .stderr(predicate::str::contains("unique best alignments:   2"));
 
     let report = fs::read_to_string(outdir.path().join("reads_bismark_bt2_SE_report.txt")).unwrap();
-    assert!(report.contains("Combined-index mode (experimental"));
+    assert!(report.contains("Combined-index mode (concordance-gated"));
     // Never-silent (L1): the report advertises the real options incl. `-k 2`.
     assert!(report.contains("-k 2"));
     assert!(report.contains("Sequences analysed in total:\t4\n"));
@@ -5248,7 +5248,7 @@ fn combined_index_pe_ot_pair_end_to_end() {
         .assert()
         .success()
         .stderr(
-            predicate::str::contains("Combined-index mode, paired-end (EXPERIMENTAL")
+            predicate::str::contains("Combined-index mode, paired-end (concordance-gated")
                 .and(predicate::str::contains("unique best alignments:   1")),
         );
 
@@ -5535,7 +5535,7 @@ fn combined_index_pe_pbat_strands_end_to_end() {
         .assert()
         .success()
         .stderr(
-            predicate::str::contains("Combined-index mode, paired-end PBAT (EXPERIMENTAL")
+            predicate::str::contains("Combined-index mode, paired-end PBAT (concordance-gated")
                 .and(predicate::str::contains("unique best alignments:   2")),
         );
 
